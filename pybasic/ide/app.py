@@ -120,6 +120,17 @@ class App:
         defaults = REGISTRY[spec["type"]].prop_defaults()
         return [("name", obj)] + [(prop, spec.get(prop, default)) for prop, default in defaults.items()]
 
+    def choices_for(self, obj, prop):
+        """The allowed values of a property limited to fixed choices, or None."""
+        spec = self.design.control(obj)
+        return REGISTRY[spec["type"]].prop_choices.get(prop) if spec else None
+
+    def _spec(self, name) -> dict:
+        spec = self.design.control(name)
+        if spec is None:
+            raise KeyError(name)
+        return spec
+
     def select(self, obj):
         self.selected = obj
         self.surface.show_selection(obj)
@@ -130,6 +141,9 @@ class App:
         current = dict(self.props_for(obj))[prop]
         try:
             value = _convert(raw, type(current))
+            choices = self.choices_for(obj, prop)
+            if choices and value not in choices:
+                raise ValueError(f"{prop} must be one of: {', '.join(choices)}")
             if prop in ("width", "height") and value < GRID:
                 raise ValueError(f"{prop} must be at least {GRID}")
             if prop == "name":
@@ -138,8 +152,15 @@ class App:
                 setattr(self.design, prop, value)
                 self.surface.refresh_form()
             else:
-                self.design.control(obj)[prop] = value
+                spec = self._spec(obj)
+                spec[prop] = value
+                if prop == "multiline" and not value and "\n" in spec.get("text", ""):
+                    spec["text"] = " ".join(spec["text"].splitlines())  # a single line can't hold line breaks
                 self.surface.refresh_control(obj)
+                if prop in REGISTRY[spec["type"]].recreate_props:
+                    # Rebuild the rows (the text row changes editor) without committing their old values.
+                    self.properties.clear()
+                    self.properties.show(obj)
         except ValueError as e:
             messagebox.showerror("Invalid property value", str(e), parent=self.root)
             return None
@@ -157,8 +178,11 @@ class App:
             self.design.name = new
             return FORM
         check_name(new, [n for n in self.object_names() if n != obj])
-        spec = self.design.control(obj)
+        spec = self._spec(obj)
         spec["name"] = new
+        for child in self.design.controls:
+            if child.get("container") == obj:
+                child["container"] = new
         events = [e.name for e in REGISTRY[spec["type"]].events]
         self.code.replace_source(codegen.rename_control(source, obj, new, events))
         self.surface.rename(obj, new)
@@ -168,7 +192,10 @@ class App:
         return new
 
     def geometry_changed(self, name, geometry):
-        self.design.control(name).update(zip(("left", "top", "width", "height"), geometry))
+        spec = self._spec(name)
+        for key, value in zip(("left", "top", "width", "height"), geometry):
+            if key in spec:  # a Timer has no size
+                spec[key] = value
         self.properties.update_values()
         self.update_title()
 
@@ -178,12 +205,12 @@ class App:
         self.properties.update_values()
         self.update_title()
 
-    def add_control(self, type_name, left, top, width=None, height=None):
+    def add_control(self, type_name, left, top, width=None, height=None, container=None):
         names = set(self.object_names())
         n = 1
         while f"{type_name}{n}" in names:
             n += 1
-        spec = REGISTRY[type_name].new_spec(f"{type_name}{n}", left, top, width, height)
+        spec = REGISTRY[type_name].new_spec(f"{type_name}{n}", left, top, width, height, container)
         self.design.controls.append(spec)
         self.surface.add(spec)
         self.properties.refresh_objects()
@@ -197,9 +224,15 @@ class App:
         self.add_control(type_name, snap((self.design.width - width) / 2), snap((self.design.height - height) / 2))
 
     def delete_control(self, name):
-        # Like VB, the control's handlers stay in the code.
-        self.design.controls.remove(self.design.control(name))
-        self.surface.remove(name)
+        """Delete a control, and everything inside it if it's a Frame. Like VB, handlers stay in the code."""
+        doomed = {name}
+        for spec in self.design.controls:  # containers come before their contents
+            if spec.get("container") in doomed:
+                doomed.add(spec["name"])
+        for spec in reversed(list(self.design.controls)):  # contents first
+            if spec["name"] in doomed:
+                self.design.controls.remove(spec)
+                self.surface.remove(spec["name"])
         self.properties.refresh_objects()
         self.code.refresh_objects()
         self.select(FORM)
@@ -327,18 +360,20 @@ class App:
             return
         if not self.save():
             return
-        assert self.path is not None  # save() succeeded, so there is a path
+        path = self.path
+        assert path is not None  # save() succeeded, so there is a path
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [_PACKAGE_ROOT, env.get("PYTHONPATH")]))
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        self.process = subprocess.Popen(
-            [sys.executable, "-m", "pybasic.run", "--immediate", str(self.path)],
+        process = subprocess.Popen(
+            [sys.executable, "-m", "pybasic.run", "--immediate", str(path)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", cwd=self.path.parent, env=env,
+            text=True, encoding="utf-8", cwd=path.parent, env=env,
         )
-        threading.Thread(target=_pump, args=(self.process.stdout, self._output), daemon=True).start()
-        self.immediate.write(f"--- Running {self.path.name}. Type Python below to inspect it. ---\n")
+        self.process = process
+        threading.Thread(target=_pump, args=(process.stdout, self._output), daemon=True).start()
+        self.immediate.write(f"--- Running {path.name}. Type Python below to inspect it. ---\n")
         self.root.after(50, self._poll_output)
 
     def stop(self):
@@ -352,7 +387,7 @@ class App:
             except queue.Empty:
                 break
             if item is None:
-                code = self.process.wait()
+                code = self.process.wait() if self.process else None
                 self.process = None
                 self.immediate.write(f"--- Ended (exit code {code}) ---\n")
                 return
@@ -409,6 +444,8 @@ def _pump(stream, output):
 
 
 def _convert(raw, kind):
+    if kind is list:
+        return [line for line in raw.splitlines() if line.strip()]
     if kind is bool:
         if raw not in ("True", "False"):
             raise ValueError("Choose True or False")

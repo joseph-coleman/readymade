@@ -17,14 +17,26 @@ class Toolbox(ttk.Frame):
         super().__init__(master, padding=4)
         ttk.Label(self, text="Toolbox").pack(anchor="w", pady=(0, 4))
         self._var = tk.StringVar(value="")
+        self._on_double_click = on_double_click
+        self._pending_drop = ""
+        # The release that ends a double-click selects the button again, so the drop
+        # waits for it: the ToolboxDrop tag runs after the Radiobutton class bindings.
+        self.bind_class("ToolboxDrop", "<ButtonRelease-1>", self._drop)
         for label, value in [("Pointer", "")] + [(name, name) for name in REGISTRY]:
             button = tk.Radiobutton(
                 self, text=label, value=value, variable=self._var,
-                indicatoron=False, width=10, anchor="w", padx=6, pady=3,
+                indicatoron=False, width=13, anchor="w", padx=6, pady=3,
             )
             button.pack(fill=tk.X, pady=1)
             if value:
-                button.bind("<Double-Button-1>", lambda e, v=value: on_double_click(v))
+                tags = button.bindtags()
+                button.bindtags((tags[0], tags[1], "ToolboxDrop", *tags[2:]))
+                button.bind("<Double-Button-1>", lambda e, v=value: setattr(self, "_pending_drop", v))
+
+    def _drop(self, _):
+        value, self._pending_drop = self._pending_drop, ""
+        if value:
+            self._on_double_click(value)
 
     @property
     def tool(self):
@@ -42,7 +54,7 @@ class PropertiesPanel(ttk.Frame):
         super().__init__(master, padding=4)
         self.app = app
         self.current = None
-        self._rows: dict[str, tk.StringVar] = {}
+        self._rows: dict[str, tuple[tk.StringVar, bool]] = {}  # prop -> (shown value, edited in a dialog)
         ttk.Label(self, text="Properties").pack(anchor="w")
         self.objects = ttk.Combobox(self, state="readonly", width=24)
         self.objects.pack(fill=tk.X, pady=(2, 6))
@@ -68,23 +80,34 @@ class PropertiesPanel(ttk.Frame):
         self.clear()
         self.current = obj
         self.objects.set(obj)
-        for row, (prop, value) in enumerate(self.app.props_for(obj)):
+        props = self.app.props_for(obj)
+        multiline = dict(props).get("multiline", False)
+        for row, (prop, value) in enumerate(props):
             ttk.Label(self.grid_frame, text=prop).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=1)
-            var = tk.StringVar(value=str(value))
-            if isinstance(value, bool):
-                editor = ttk.Combobox(self.grid_frame, textvariable=var, values=("True", "False"), state="readonly", width=16)
+            var = tk.StringVar(value=_display(value))
+            in_dialog = isinstance(value, list) or (prop == "text" and multiline)
+            choices = ("True", "False") if isinstance(value, bool) else self.app.choices_for(obj, prop)
+            if choices:
+                editor = ttk.Combobox(self.grid_frame, textvariable=var, values=choices, state="readonly", width=16)
                 editor.bind("<<ComboboxSelected>>", lambda e, p=prop: self.commit(p))
+            elif in_dialog:
+                editor = ttk.Frame(self.grid_frame)
+                ttk.Entry(editor, textvariable=var, width=8, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
+                ttk.Button(editor, text="\u2026", width=2, command=lambda p=prop: self._edit_lines(p)).pack(side=tk.LEFT)
             else:
                 editor = ttk.Entry(self.grid_frame, textvariable=var, width=18)
                 editor.bind("<Return>", lambda e, p=prop: self.commit(p))
                 editor.bind("<FocusOut>", lambda e, p=prop: self.commit(p))
             editor.grid(row=row, column=1, sticky="ew", pady=1)
-            self._rows[prop] = var
+            self._rows[prop] = (var, in_dialog)
 
     def commit(self, prop):
         if self.current is None or prop not in self._rows:
             return
-        raw = self._rows[prop].get()
+        var, in_dialog = self._rows[prop]
+        if in_dialog:  # committed by the dialog's OK button
+            return
+        raw = var.get()
         current = dict(self.app.props_for(self.current)).get(prop)
         if current is None or raw == str(current):
             return
@@ -104,7 +127,41 @@ class PropertiesPanel(ttk.Frame):
             return
         for prop, value in self.app.props_for(self.current):
             if prop in self._rows:
-                self._rows[prop].set(str(value))
+                self._rows[prop][0].set(_display(value))
+
+    def _edit_lines(self, prop):
+        """Edit a list (one item per line, like VB's List property) or multi-line text."""
+        obj = self.current
+        if obj is None:
+            return
+        value = dict(self.app.props_for(obj))[prop]
+        dialog = tk.Toplevel(self)
+        dialog.title(f"{obj}.{prop}")
+        dialog.transient(self.winfo_toplevel())
+        hint = "One item per line:" if isinstance(value, list) else "Text:"
+        ttk.Label(dialog, text=hint).pack(anchor="w", padx=8, pady=(8, 2))
+        text = tk.Text(dialog, width=32, height=10, font=MONO, undo=True)
+        text.pack(fill=tk.BOTH, expand=True, padx=8)
+        text.insert("1.0", "\n".join(value) if isinstance(value, list) else value)
+
+        def ok():
+            self.app.set_property(obj, prop, text.get("1.0", "end-1c"))
+            dialog.destroy()
+            self.update_values()
+
+        buttons = ttk.Frame(dialog, padding=8)
+        buttons.pack(fill=tk.X)
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="OK", command=ok).pack(side=tk.RIGHT, padx=(0, 4))
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+        text.focus_set()
+        dialog.grab_set()
+
+
+def _display(value):
+    if isinstance(value, list):
+        return "; ".join(value)
+    return str(value).replace("\n", " \u23ce ")  # show line breaks in multi-line text as ⏎
 
 
 class ImmediateWindow(ttk.Frame):

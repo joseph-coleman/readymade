@@ -5,8 +5,9 @@
 Needs Xvfb and xdotool. The IDE runs in this process so the script can ask Tk
 where widgets are, but every click, drag and keystroke goes through the X
 server, exercising the same event bindings a person would. Screenshots of each
-step are saved to output_dir (default /tmp/pybasic-ui). Works on a copy of
-examples/hello, so the real example is never modified.
+step are saved to output_dir (default /tmp/pybasic-ui). It starts from its own
+Hello World form in a temporary folder, so it doesn't depend on (or touch)
+examples/hello.
 """
 
 from __future__ import annotations
@@ -21,6 +22,49 @@ from pathlib import Path
 
 DISPLAY = ":99"
 ROOT = Path(__file__).resolve().parent.parent
+
+# The starting form. The steps below draw into the empty space on the right and bottom.
+START_CONTROLS = [
+    ("Label", "Label1", 16, 16, 288, 24, {}),
+    ("TextBox", "TextBox1", 16, 48, 184, 24, {"text": ""}),
+    ("Button", "Button1", 208, 46, 96, 28, {"text": "Say Hello"}),
+    ("Label", "Label2", 24, 232, 288, 24, {"text": ""}),
+]
+START_CODE = """from pybasic import Form
+
+
+class Form1(Form):
+    def Form_load(self):
+        self.Label1.text = "What's your name?"
+
+    def Button1_click(self):
+        name = self.TextBox1.text.strip() or "World"
+        self.Label2.text = f"Hello, {name}!"
+
+    def TextBox1_keypress(self, key):
+        if key == "Return":
+            self.Button1_click()
+
+    def Button1_mousedown(self, x, y):
+        print("mouse down!")
+
+
+if __name__ == "__main__":
+    Form1.run()
+"""
+
+
+def write_start_form(folder):
+    from pybasic import formfile
+    from pybasic.controls import REGISTRY
+
+    design = formfile.FormDesign(name="Form1", text="Hello, World", width=448, height=320)
+    for type_name, name, left, top, width, height, props in START_CONTROLS:
+        spec = REGISTRY[type_name].new_spec(name, left, top, width, height)
+        spec.update(props)
+        design.controls.append(spec)
+    formfile.save(design, folder / "Form1.form")
+    (folder / "Form1.py").write_text(START_CODE, encoding="utf-8")
 
 
 def start_xvfb():
@@ -98,6 +142,12 @@ class Driver:
         ImageGrab.grab(xdisplay=DISPLAY).crop((0, 0, 1280, 800)).save(path)
         print(f"  screenshot {path}")
 
+    def prop_editor(self, prop):
+        """The Properties panel's editor widget for prop."""
+        grid = self.app.properties.grid_frame
+        label = next(w for w in grid.grid_slaves(column=0) if w.cget("text") == prop)
+        return grid.grid_slaves(row=label.grid_info()["row"], column=1)[0]
+
     def check(self, label, actual, expected):
         ok = actual == expected
         print(f"  {'ok  ' if ok else 'FAIL'} {label}: {actual!r}" + ("" if ok else f" (expected {expected!r})"))
@@ -114,7 +164,8 @@ class Driver:
             for line in self.app.immediate.output.get("1.0", "end").splitlines():
                 if line.startswith(marker + " "):
                     return eval(line[len(marker) + 1 :])
-        raise TimeoutError(expression)
+        output = self.app.immediate.output.get("1.0", "end").strip().splitlines()
+        raise TimeoutError(f"{expression}\n--- Immediate window (last lines) ---\n" + "\n".join(output[-15:]))
 
 
 def drive(d):
@@ -145,7 +196,7 @@ def drive(d):
     x, y = d.at(app.surface.handles[(1, 1)])
     d.drag(x, y, x + 30, y + 15)
     d.check("resized (snapped)", (spec["width"], spec["height"]), (152, 48))
-    d.check("properties panel follows", app.properties._rows["width"].get(), "152")
+    d.check("properties panel follows", app.properties._rows["width"][0].get(), "152")
     d.shot("moved-resized")
 
     print("Double-click it to get to its click handler")
@@ -155,6 +206,57 @@ def drive(d):
     d.type('self.Label2.text = "Drawn and wired by xdotool"')
     d.check("typed over pass", "def Button2_click(self):\n        self.Label2.text" in app.code.get_source(), True)
     d.shot("code")
+
+    print("Draw a Frame, then two OptionButtons inside it")
+    d.key("shift+F7")
+    d.click(*d.at(tool["Frame"]))
+    x0, y0 = d.at(canvas, 320, 16)
+    d.drag(x0, y0, x0 + 112, y0 + 96)
+    frame = app.surface.controls.get("Frame1")
+    d.check("frame drawn", frame and (frame.left, frame.top, frame.width, frame.height), (320, 16, 112, 96))
+    for n, y in ((1, 8), (2, 40)):
+        d.click(*d.at(tool["OptionButton"]))
+        x0, y0 = d.at(frame.inner, 8, y)
+        d.drag(x0, y0, x0 + 88, y0 + 24)
+        spec = app.design.control(f"OptionButton{n}")
+        d.check(f"OptionButton{n} is inside the frame", spec and (spec.get("container"), spec["left"], spec["top"]), ("Frame1", 8, y))
+
+    print("Move the frame: its options go with it")
+    option = app.surface.controls["OptionButton1"].widget
+    before = (option.winfo_rootx(), option.winfo_rooty())
+    x, y = d.at(frame.widget, 4, 30)  # the frame's left border
+    d.drag(x, y, x, y + 16)
+    d.check("frame moved", (frame.left, frame.top), (320, 32))
+    d.check("option moved with it", (option.winfo_rootx(), option.winfo_rooty()), (before[0], before[1] + 16))
+
+    print("Add a ListBox with items, and a Timer")
+    d.click(*d.at(tool["ListBox"]))
+    x0, y0 = d.at(canvas, 320, 152)
+    d.drag(x0, y0, x0 + 112, y0 + 72)
+    app.set_property("ListBox1", "items", "Red\nGreen\nBlue")
+    app.properties.update_values()
+    d.click(*d.at(tool["Timer"]), repeat=2)
+    d.check("timer added", app.design.control("Timer1") is not None, True)
+    d.check("tool resets after double-click", app.toolbox.tool, "")
+    d.shot("more-controls")
+
+    print("Make TextBox1 multi-line from the Properties panel")
+    d.click(*d.at(app.surface.controls["TextBox1"].widget))
+    d.click(*d.at(d.prop_editor("multiline")))  # open the True/False dropdown
+    d.key("Up", "Return")
+    d.check("multiline on", app.design.control("TextBox1")["multiline"], True)
+    d.check("editor is now a Text", app.surface.controls["TextBox1"].editor.winfo_class(), "Text")
+    d.click(*d.at(d.prop_editor("height")))
+    d.key("End", "BackSpace", "BackSpace", "BackSpace")
+    d.type("64")
+    d.key("Return")
+    d.check("height", app.design.control("TextBox1")["height"], 64)
+    d.click(*d.at(d.prop_editor("scrollbars")))  # none, horizontal, vertical, both
+    d.key("Down", "Down", "Return")
+    d.check("scrollbars", app.design.control("TextBox1")["scrollbars"], "vertical")
+    bars = [w.winfo_class() for w in app.surface.controls["TextBox1"].widget.winfo_children()]
+    d.check("designer shows the scrollbar", bars, ["Text", "Scrollbar"])
+    d.shot("multiline")
 
     print("Press F5 and use the running program")
     d.key("F5")
@@ -169,11 +271,37 @@ def drive(d):
     d.type("Ada")
     d.click(*in_form(button1))
     d.check("Button1 click", d.ask("Label2.text"), "Hello, Ada!")
+    d.click(*in_form(textbox))  # below the text, so the cursor goes to the end
+    d.key("Return")
+    d.type("Lovelace")
+    d.check("multi-line text", d.ask("TextBox1.text"), "Ada\nLovelace")
+    d.key("Tab")
+    d.check("Tab leaves the box", d.ask("(form.root.focus_get() is TextBox1.editor, TextBox1.text)"), (False, "Ada\nLovelace"))
+    d.click(*in_form(textbox))
+    for i in range(6):
+        d.key("Return")
+        d.type(f"line {i}")
+    thumb = "next(w for w in TextBox1.widget.winfo_children() if w.winfo_class() == 'Scrollbar').get()"
+    d.check("scrollbar thumb moved to the bottom", d.ask(f"({thumb}[0] > 0, {thumb}[1])"), (True, 1.0))
     d.shot("running")
     d.click(*in_form(button2))
     d.check("Button2 click (new handler)", d.ask("Label2.text"), "Drawn and wired by xdotool")
     d.check("mousedown handler printed", "mouse down!" in app.immediate.output.get("1.0", "end"), True)
     d.shot("running-button2")
+
+    def on_screen(name):
+        return d.ask(f"({name}.widget.winfo_rootx() + 12, {name}.widget.winfo_rooty() + {name}.widget.winfo_height() // 2)")
+
+    d.click(*on_screen("OptionButton1"))
+    d.check("option 1 selected", d.ask("(OptionButton1.value, OptionButton2.value)"), (True, False))
+    d.click(*on_screen("OptionButton2"))
+    d.check("option 2 deselects option 1", d.ask("(OptionButton1.value, OptionButton2.value)"), (False, True))
+    # Click the middle of item 1, wherever the font puts it.
+    x, y = d.ask("(lambda w, b: (w.winfo_rootx() + b[0] + 10, w.winfo_rooty() + b[1] + b[3] // 2))"
+                 "(ListBox1.widget, ListBox1.widget.bbox(1))")
+    d.click(x, y)
+    d.check("listbox selection", d.ask("ListBox1.text"), "Green")
+    d.shot("running-more-controls")
 
     app.immediate_line("form.close()")
     deadline = time.time() + 10
@@ -187,7 +315,7 @@ def main():
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     work = Path(tempfile.mkdtemp(prefix="pybasic-drive-"))
-    shutil.copytree(ROOT / "examples" / "hello", work, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
+    write_start_form(work)
 
     server = start_xvfb()
     os.environ["DISPLAY"] = DISPLAY  # also inherited by the program F5 starts

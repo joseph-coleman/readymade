@@ -44,7 +44,7 @@ class Form:
         self.controls = {}
         for spec in design.controls:
             check_name(spec["name"], self.controls)
-            control = create(self.root, spec)
+            control = create(self._parent_widget(spec), spec)
             self.controls[control.name] = control
             setattr(self, control.name, control)
         self._connect_events()
@@ -88,6 +88,15 @@ class Form:
     def height(self, value):
         self._size = (self._size[0], int(value))
         self.root.geometry(f"{self._size[0]}x{self._size[1]}")
+
+    def _parent_widget(self, spec):
+        container = spec.get("container")
+        if container is None:
+            return self.root
+        parent = self.controls.get(container)
+        if parent is None or not parent.is_container:
+            raise ValueError(f"{spec['name']!r} is in {container!r}, which isn't a container")
+        return parent.inner
 
     def _fire(self, event, *args):
         handler = getattr(self, f"{FORM}_{event}", None)

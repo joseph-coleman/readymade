@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 FORMAT_VERSION = 1
-_HEAD_KEYS = ("type", "name", "left", "top", "width", "height")
+_HEAD_KEYS = ("type", "name", "container", "left", "top", "width", "height")
 
 
 class FormFileError(Exception):
@@ -57,12 +57,21 @@ def loads(text, source="<string>"):
     if not isinstance(data, dict) or data.get("pybasic_form") != FORMAT_VERSION:
         raise FormFileError(f"{source}: not a version {FORMAT_VERSION} pybasic form")
     controls = data.get("controls", [])
+    names = set()
     for i, spec in enumerate(controls):
         if not isinstance(spec, dict) or not isinstance(spec.get("type"), str) or not isinstance(spec.get("name"), str):
             raise FormFileError(f"{source}: control #{i + 1} needs a 'type' and a 'name'")
+        name = spec["name"]
+        if name in names:
+            raise FormFileError(f"{source}: more than one control is named {name!r}")
         for key in ("left", "top", "width", "height"):
-            if not isinstance(spec.get(key), int):
-                raise FormFileError(f"{source}: control {spec['name']!r} needs an integer {key!r}")
+            # Some controls, like Timer, have no size.
+            if not isinstance(spec.get(key), int) and (key in ("left", "top") or key in spec):
+                raise FormFileError(f"{source}: control {name!r} needs an integer {key!r}")
+        # A container must come before the controls inside it.
+        if "container" in spec and spec["container"] not in names:
+            raise FormFileError(f"{source}: control {name!r} is in {spec['container']!r}, which isn't defined before it")
+        names.add(name)
     return FormDesign(
         name=data.get("name", "Form1"),
         text=data.get("text", ""),

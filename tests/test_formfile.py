@@ -38,3 +38,17 @@ def test_save_and_load(tmp_path):
 def test_bad_files_explain_themselves(text, message):
     with pytest.raises(formfile.FormFileError, match=message):
         formfile.loads(text)
+
+
+def test_containers_must_be_defined_first():
+    child = '{"type": "Label", "name": "L", "container": "F", "left": 0, "top": 0, "width": 8, "height": 8}'
+    frame = '{"type": "Frame", "name": "F", "left": 0, "top": 0, "width": 8, "height": 8}'
+    formfile.loads(f'{{"pybasic_form": 1, "controls": [{frame}, {child}]}}')
+    with pytest.raises(formfile.FormFileError, match="isn't defined before it"):
+        formfile.loads(f'{{"pybasic_form": 1, "controls": [{child}, {frame}]}}')
+
+
+def test_duplicate_names_are_rejected():
+    frame = '{"type": "Frame", "name": "F", "left": 0, "top": 0, "width": 8, "height": 8}'
+    with pytest.raises(formfile.FormFileError, match="more than one"):
+        formfile.loads(f'{{"pybasic_form": 1, "controls": [{frame}, {frame}]}}')

@@ -41,12 +41,114 @@
     {
       "type": "Label",
       "name": "Label2",
-      "left": 24,
-      "top": 232,
+      "left": 16,
+      "top": 88,
       "width": 288,
       "height": 24,
       "enabled": true,
       "text": "This is a label",
+      "visible": true
+    },
+    {
+      "type": "Label",
+      "name": "Label3",
+      "left": 240,
+      "top": 248,
+      "width": 128,
+      "height": 16,
+      "enabled": true,
+      "text": "Label3",
+      "visible": true
+    },
+    {
+      "type": "Timer",
+      "name": "Timer1",
+      "left": 104,
+      "top": 240,
+      "enabled": true,
+      "interval": 1000
+    },
+    {
+      "type": "Button",
+      "name": "Button2",
+      "left": 240,
+      "top": 272,
+      "width": 136,
+      "height": 24,
+      "enabled": true,
+      "text": "Button2",
+      "visible": true
+    },
+    {
+      "type": "CheckBox",
+      "name": "CheckBox1",
+      "left": 24,
+      "top": 120,
+      "width": 128,
+      "height": 24,
+      "enabled": true,
+      "text": "CheckBox1",
+      "value": true,
+      "visible": true
+    },
+    {
+      "type": "OptionButton",
+      "name": "OptionButton1",
+      "left": 24,
+      "top": 160,
+      "width": 152,
+      "height": 16,
+      "enabled": true,
+      "text": "OptionButton1",
+      "value": false,
+      "visible": true
+    },
+    {
+      "type": "OptionButton",
+      "name": "OptionButton2",
+      "left": 24,
+      "top": 184,
+      "width": 144,
+      "height": 24,
+      "enabled": true,
+      "text": "OptionButton2",
+      "value": false,
+      "visible": true
+    },
+    {
+      "type": "ComboBox",
+      "name": "ComboBox1",
+      "left": 224,
+      "top": 128,
+      "width": 200,
+      "height": 32,
+      "editable": false,
+      "enabled": true,
+      "items": [
+        "Apple",
+        "Banana",
+        "Pear",
+        "Peach",
+        "Cherry"
+      ],
+      "text": "Apple",
+      "visible": true
+    },
+    {
+      "type": "ListBox",
+      "name": "ListBox1",
+      "left": 232,
+      "top": 176,
+      "width": 160,
+      "height": 48,
+      "enabled": true,
+      "items": [
+        "Soup",
+        "Entre",
+        "Salad",
+        "Dessert",
+        "Appetizer"
+      ],
       "visible": true
     }
   ]

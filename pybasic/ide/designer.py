@@ -2,6 +2,8 @@
 
 Controls in the designer are the same Control classes the runtime uses, created
 in design mode, so what you see while designing is what you get when running.
+A control drawn inside a Frame belongs to that Frame, and its position is
+relative to it.
 """
 
 from __future__ import annotations
@@ -39,7 +41,8 @@ class DesignSurface(tk.Frame):
         self.controls = {}
         self.selected = None
         self._drag = None  # (kind, control, x_root, y_root, original geometry)
-        self._band = None  # (x, y, canvas item) while drawing a new control
+        self._band = None  # (container, x, y) while drawing a new control
+        self._form_drag = (0, 0, 0, 0)  # (x_root, y_root, width, height) while resizing the form
 
         self.window = tk.Frame(self, relief=tk.RAISED, bd=2)
         self.window.place(x=16, y=16)
@@ -48,8 +51,8 @@ class DesignSurface(tk.Frame):
         self.canvas = tk.Canvas(self.window, highlightthickness=0, bd=0, bg=self.window.cget("bg"))
         self.canvas.pack()
         self.canvas.bind("<ButtonPress-1>", self._canvas_press)
-        self.canvas.bind("<B1-Motion>", self._canvas_motion)
-        self.canvas.bind("<ButtonRelease-1>", self._canvas_release)
+        self.canvas.bind("<B1-Motion>", self._motion)
+        self.canvas.bind("<ButtonRelease-1>", self._release)
         self.canvas.bind("<Double-Button-1>", lambda e: app.goto_handler(FORM, "load"))
         self.canvas.bind("<Delete>", self._delete_selected)
 
@@ -63,9 +66,11 @@ class DesignSurface(tk.Frame):
         for spot, cursor in _HANDLES.items():
             handle = tk.Frame(self.canvas, bg="black", width=HANDLE, height=HANDLE, cursor=cursor)
             handle.bind("<ButtonPress-1>", lambda e, s=spot: self._start_drag(e, s))
-            handle.bind("<B1-Motion>", self._drag_motion)
-            handle.bind("<ButtonRelease-1>", self._drag_release)
+            handle.bind("<B1-Motion>", self._motion)
+            handle.bind("<ButtonRelease-1>", self._release)
             self.handles[spot] = handle
+        # The rubber band shown while drawing: four thin lines that stay above other controls.
+        self.band = [tk.Frame(self.canvas, bg="black") for _ in range(4)]
 
     # ----- building from the design -----
 
@@ -85,21 +90,37 @@ class DesignSurface(tk.Frame):
         self._draw_grid(design.width, design.height)
 
     def add(self, spec):
-        control = create(self.canvas, spec, design=True)
-        widget = control.widget
-        widget.bind("<ButtonPress-1>", lambda e, c=control: self._control_press(e, c))
-        widget.bind("<B1-Motion>", self._drag_motion)
-        widget.bind("<ButtonRelease-1>", self._drag_release)
-        widget.bind("<Double-Button-1>", lambda e, c=control: self._control_double(c))
+        container = self.controls.get(spec.get("container"))
+        control = create(self.canvas if container is None else container.inner, spec, design=True)
+        for widget in control.design_widgets():
+            widget.bind("<ButtonPress-1>", lambda e, c=control: self._control_press(e, c))
+            widget.bind("<B1-Motion>", self._motion)
+            widget.bind("<ButtonRelease-1>", self._release)
+            widget.bind("<Double-Button-1>", lambda e, c=control: self._control_double(c))
         self.controls[control.name] = control
         self._lift_handles()
 
     def refresh_control(self, name):
         control = self.controls[name]
         spec = self.app.design.control(name)
-        for prop, default in control.prop_defaults().items():
-            setattr(control, prop, spec.get(prop, default))
+        defaults = control.prop_defaults()
+        if any(spec.get(prop, defaults[prop]) != getattr(control, prop) for prop in control.recreate_props):
+            self._recreate(spec)
+        else:
+            for prop, default in defaults.items():
+                setattr(control, prop, spec.get(prop, default))
         self.show_selection(self.selected)
+
+    def _recreate(self, spec):
+        """Rebuild a control whose widget type depends on a property (not for containers)."""
+        self.controls.pop(spec["name"]).widget.destroy()
+        self.add(spec)
+        # add() puts it on top; put it back below the siblings that came after it.
+        specs = self.app.design.controls
+        for later in specs[specs.index(spec) + 1 :]:
+            if later.get("container") == spec.get("container"):
+                self.controls[spec["name"]].widget.lower(self.controls[later["name"]].widget)
+                break
 
     def rename(self, old, new):
         control = self.controls.pop(old)
@@ -116,14 +137,16 @@ class DesignSurface(tk.Frame):
     def show_selection(self, obj):
         self.selected = obj
         control = self.controls.get(obj)
-        for (fx, fy), handle in self.handles.items():
-            if control is None:
+        if control is None:
+            for handle in self.handles.values():
                 handle.place_forget()
-            else:
-                handle.place(
-                    x=int(control.left + fx * control.width - HANDLE / 2),
-                    y=int(control.top + fy * control.height - HANDLE / 2),
-                )
+            return
+        # Measure on screen, since a control inside a Frame is positioned relative to the Frame.
+        self.canvas.update_idletasks()
+        x = control.widget.winfo_rootx() - self.canvas.winfo_rootx()
+        y = control.widget.winfo_rooty() - self.canvas.winfo_rooty()
+        for (fx, fy), handle in self.handles.items():
+            handle.place(x=int(x + fx * control.width - HANDLE / 2), y=int(y + fy * control.height - HANDLE / 2))
         self._lift_handles()
 
     def _lift_handles(self):
@@ -136,39 +159,18 @@ class DesignSurface(tk.Frame):
             for y in range(GRID, height, GRID):
                 self.canvas.create_line(x, y, x + 1, y, fill="#606060", tags="grid")
 
-    # ----- drawing new controls on the form -----
+    # ----- mouse handling -----
 
     def _canvas_press(self, e):
         self.canvas.focus_set()
         if self.app.toolbox.tool:
-            x, y = snap(e.x), snap(e.y)
-            self._band = (x, y, self.canvas.create_rectangle(x, y, x, y, dash=(2, 2)))
-        else:
-            self.app.select(FORM)
-
-    def _canvas_motion(self, e):
-        if self._band:
-            x, y, item = self._band
-            self.canvas.coords(item, x, y, snap(e.x), snap(e.y))
-
-    def _canvas_release(self, e):
-        if not self._band:
-            return
-        x0, y0, item = self._band
-        self._band = None
-        self.canvas.delete(item)
-        x1, y1 = snap(e.x), snap(e.y)
-        tool = self.app.toolbox.tool
-        self.app.toolbox.reset()
-        if abs(x1 - x0) < GRID or abs(y1 - y0) < GRID:
-            self.app.add_control(tool, x0, y0)  # a click rather than a drag: use the default size
-        else:
-            self.app.add_control(tool, min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
-
-    # ----- selecting, moving and resizing controls -----
+            return self._start_band(e)
+        self.app.select(FORM)
 
     def _control_press(self, e, control):
         self.canvas.focus_set()
+        if self.app.toolbox.tool:
+            return self._start_band(e)
         self.app.select(control.name)
         return self._start_drag(e, "move", control)
 
@@ -176,16 +178,94 @@ class DesignSurface(tk.Frame):
         self.app.goto_handler(control.name, control.default_event)
         return "break"
 
+    def _motion(self, e):
+        if self._band:
+            self._band_motion(e, self._band)
+        elif self._drag:
+            self._drag_motion(e, self._drag)
+        return "break"
+
+    def _release(self, e):
+        if self._band:
+            self._band_release(e, self._band)
+        elif self._drag:
+            self._drag_release(self._drag)
+        return "break"
+
+    def _delete_selected(self, _):
+        if self.selected in self.controls:
+            self.app.delete_control(self.selected)
+
+    # ----- drawing new controls -----
+
+    def _origin(self, container):
+        """Screen position of (0, 0) inside a container, or on the form for None."""
+        widget = self.canvas if container is None else container.inner
+        return widget.winfo_rootx(), widget.winfo_rooty()
+
+    def _container_at(self, x_root, y_root):
+        """The innermost Frame under a screen point, or None for the form itself."""
+        best, best_area = None, None
+        for control in self.controls.values():
+            if not control.is_container:
+                continue
+            inner = control.inner
+            x, y, w, h = inner.winfo_rootx(), inner.winfo_rooty(), inner.winfo_width(), inner.winfo_height()
+            if x <= x_root < x + w and y <= y_root < y + h and (best_area is None or w * h < best_area):
+                best, best_area = control, w * h
+        return best
+
+    def _local(self, container, e):
+        ox, oy = self._origin(container)
+        return snap(e.x_root - ox), snap(e.y_root - oy)
+
+    def _start_band(self, e):
+        container = self._container_at(e.x_root, e.y_root)
+        x, y = self._local(container, e)
+        self._band = (container, x, y)
+        self._draw_band(container, x, y, x, y)
+        return "break"
+
+    def _draw_band(self, container, x0, y0, x1, y1):
+        ox, oy = self._origin(container)
+        left = min(x0, x1) + ox - self.canvas.winfo_rootx()
+        top = min(y0, y1) + oy - self.canvas.winfo_rooty()
+        w, h = abs(x1 - x0), abs(y1 - y0)
+        lines = [(left, top, w + 1, 1), (left, top + h, w + 1, 1), (left, top, 1, h + 1), (left + w, top, 1, h + 1)]
+        for line, (x, y, lw, lh) in zip(self.band, lines):
+            line.place(x=x, y=y, width=lw, height=lh)
+            line.lift()
+
+    def _band_motion(self, e, band):
+        container, x0, y0 = band
+        self._draw_band(container, x0, y0, *self._local(container, e))
+
+    def _band_release(self, e, band):
+        container, x0, y0 = band
+        self._band = None
+        for line in self.band:
+            line.place_forget()
+        x1, y1 = self._local(container, e)
+        tool = self.app.toolbox.tool
+        self.app.toolbox.reset()
+        name = container.name if container else None
+        if abs(x1 - x0) < GRID or abs(y1 - y0) < GRID:
+            self.app.add_control(tool, x0, y0, container=name)  # a click, not a drag: use the default size
+        else:
+            self.app.add_control(tool, min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0), container=name)
+
+    # ----- moving and resizing -----
+
     def _start_drag(self, e, kind, control=None):
         control = control or self.controls[self.selected]
+        if kind != "move" and not control.resizable:
+            return "break"
         geometry = (control.left, control.top, control.width, control.height)
         self._drag = (kind, control, e.x_root, e.y_root, geometry)
         return "break"
 
-    def _drag_motion(self, e):
-        if not self._drag:
-            return "break"
-        kind, control, x0, y0, (left, top, width, height) = self._drag
+    def _drag_motion(self, e, drag):
+        kind, control, x0, y0, (left, top, width, height) = drag
         dx, dy = e.x_root - x0, e.y_root - y0
         if kind == "move":
             control.left, control.top = snap(left + dx), snap(top + dy)
@@ -203,20 +283,13 @@ class DesignSurface(tk.Frame):
             control.left, control.top = left, top
             control.width, control.height = right - left, bottom - top
         self.show_selection(control.name)
-        return "break"
 
-    def _drag_release(self, _):
-        if self._drag:
-            _, control, _, _, before = self._drag
-            self._drag = None
-            after = (control.left, control.top, control.width, control.height)
-            if after != before:
-                self.app.geometry_changed(control.name, after)
-        return "break"
-
-    def _delete_selected(self, _):
-        if self.selected in self.controls:
-            self.app.delete_control(self.selected)
+    def _drag_release(self, drag):
+        _, control, _, _, before = drag
+        self._drag = None
+        after = (control.left, control.top, control.width, control.height)
+        if after != before:
+            self.app.geometry_changed(control.name, after)
 
     # ----- resizing the form -----
 
