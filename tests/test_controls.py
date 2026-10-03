@@ -19,7 +19,9 @@ def make_form(tmp_path, *controls, cls=Form):
         design.controls.append(spec)
     path = tmp_path / "Form1.form"
     formfile.save(design, path)
-    return cls(path)
+    form = cls(path)
+    form.show()
+    return form
 
 
 def pump(form, seconds):

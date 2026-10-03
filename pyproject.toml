@@ -2,7 +2,7 @@
 name = "pybasic"
 version = "0.1.0"
 description = "Visual Basic 6 style form designer and runtime for Python and Tkinter"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]

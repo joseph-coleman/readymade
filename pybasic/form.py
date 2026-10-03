@@ -8,16 +8,21 @@ Object is a control's name, or "Form" for the form itself:
         def Button1_click(self): ...
 
 Handlers are found by name and connected automatically when the form loads.
+
+As in VB, creating a form loads it (hidden) and raises Form_load; show()
+displays it; close() destroys its window but keeps the object, so showing it
+again reloads it. Every form is a window of one hidden Tk root, and the
+program ends when the last loaded form closes.
 """
 
 from __future__ import annotations
 
+import inspect
 import keyword
-import sys
 import tkinter as tk
 from pathlib import Path
 
-from pybasic import formfile
+from pybasic import formfile, forms
 from pybasic.controls import Event, create
 
 FORM = "Form"
@@ -29,15 +34,60 @@ FORM_EVENTS = (
     Event("dblclick"),
 )
 
+_app: tk.Tk | None = None  # the hidden root window all forms belong to
+_loaded: set[Form] = set()
+
+
+def app_root():
+    global _app
+    if _app is None:
+        _app = tk.Tk()
+        _app.withdraw()
+    return _app
+
+
+def main_loop():
+    """Run the program until the last loaded form closes."""
+    global _app
+    if _loaded:
+        app_root().mainloop()
+    if _app is not None:
+        try:
+            _app.destroy()
+        except tk.TclError:
+            pass
+        _app = None
+
 
 class Form:
     default_event = "load"
     events = FORM_EVENTS
+    root: tk.Toplevel
 
-    def __init__(self, path, master=None):
-        design = formfile.load(path)
+    def __init__(self, path=None, master=None):
+        """Load the form. By default Form1's layout is the Form1.form beside Form1.py."""
+        if path is None:
+            path = Path(inspect.getfile(type(self))).with_suffix(".form")
         self.path = Path(path)
-        self.root = tk.Tk() if master is None else tk.Toplevel(master)
+        self._master = master
+        self.loaded = False
+        self.load()
+
+    @classmethod
+    def run(cls, path=None):
+        """Start a program with this form, e.g. from `python Form1.py`."""
+        form = cls(path)
+        forms.register(cls.__name__, form)
+        form.show()
+        main_loop()
+
+    def load(self):
+        """Create the (hidden) window and controls, and raise Form_load. show() does this when needed."""
+        if self.loaded:
+            return
+        design = formfile.load(self.path)
+        self.root = tk.Toplevel(self._master or app_root())
+        self.root.withdraw()
         self.root.title(design.text)
         self.root.geometry(f"{design.width}x{design.height}")
         self._size = (design.width, design.height)
@@ -47,19 +97,28 @@ class Form:
             control = create(self._parent_widget(spec), spec)
             self.controls[control.name] = control
             setattr(self, control.name, control)
+        self.loaded = True
+        _loaded.add(self)
         self._connect_events()
         self._fire("load")
 
-    @classmethod
-    def run(cls, path=None):
-        """Show the form until it closes. By default Form1.py uses the Form1.form beside it."""
-        if path is None:
-            path = Path(sys.modules[cls.__module__].__file__).with_suffix(".form")
-        cls(path).root.mainloop()
+    def show(self, modal=False):
+        """Show the form, loading it first if needed. A modal form blocks until it closes."""
+        self.load()
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_set()
+        if modal:
+            self.root.grab_set()
+            self.root.wait_window()
+
+    def hide(self):
+        """Hide the form without closing it. A hidden form keeps the program running."""
+        self.root.withdraw()
 
     def close(self):
         """Close the form, like VB's `Unload Me`. A Form_unload returning True cancels."""
-        if self._fire("unload") is True:
+        if not self.loaded or self._fire("unload") is True:
             return
         self.root.destroy()
 
@@ -113,6 +172,7 @@ class Form:
         self.root.bind("<Configure>", self._on_configure, add="+")
         self.root.bind("<ButtonRelease-1>", lambda e: self._on_form_mouse(e, "click"), add="+")
         self.root.bind("<Double-Button-1>", lambda e: self._on_form_mouse(e, "dblclick"), add="+")
+        self.root.bind("<Destroy>", self._on_destroy, add="+")
 
     def _on_configure(self, e):
         if e.widget is self.root and (e.width, e.height) != self._size:
@@ -123,8 +183,16 @@ class Form:
         if e.widget is self.root:
             self._fire(event)
 
+    def _on_destroy(self, e):
+        if e.widget is not self.root:
+            return
+        self.loaded = False
+        _loaded.discard(self)
+        if not _loaded and _app is not None:
+            _app.quit()  # ends main_loop()
 
-_RESERVED = {name for name in dir(Form)} | {"root", "controls", "path", FORM}
+
+_RESERVED = {name for name in dir(Form)} | {"root", "controls", "path", "loaded", FORM}
 
 
 def check_name(name, existing=()):

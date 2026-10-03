@@ -47,10 +47,74 @@ class Toolbox(ttk.Frame):
         self._var.set("")
 
 
-class PropertiesPanel(ttk.Frame):
-    """Edit the selected object's properties. Edits commit on Enter or when focus leaves."""
+class ProjectExplorer(ttk.Frame):
+    """The project's forms and modules. Double-click to open; right-click for more."""
 
     def __init__(self, master, app):
+        super().__init__(master, padding=4)
+        self.app = app
+        ttk.Label(self, text="Project").pack(anchor="w")
+        self.tree = ttk.Treeview(self, show="tree", selectmode="browse", height=8)
+        self.tree.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        self.tree.bind("<Double-Button-1>", lambda e: self._open("design"))
+        self.tree.bind("<Return>", lambda e: self._open("design"))
+        self.tree.bind("<Button-3>", self._popup)
+        self.menu = tk.Menu(self, tearoff=False)
+        self.menu.add_command(label="View Object", command=lambda: self._open("design"))
+        self.menu.add_command(label="View Code", command=lambda: self._open("code"))
+        self.menu.add_command(label="Set as Startup", command=self._set_startup)
+
+    def refresh(self):
+        self.tree.delete(*self.tree.get_children())
+        project = self.app.project
+        if project is None:
+            return
+        top = self.tree.insert("", tk.END, text=project.name, open=True)
+        startup = project.startup
+        forms = self.tree.insert(top, tk.END, text="Forms", open=True)
+        for name in project.forms():
+            label = f"{name}  (startup)" if name == startup else name
+            self.tree.insert(forms, tk.END, iid=f"form:{name}", text=label)
+        modules = self.tree.insert(top, tk.END, text="Modules", open=True)
+        for name in project.modules():
+            self.tree.insert(modules, tk.END, iid=f"module:{name}", text=f"{name}.py")
+
+    def _selected(self):
+        kind, _, name = self.tree.focus().partition(":")
+        return (kind, name) if name else (None, None)
+
+    def _open(self, view):
+        kind, name = self._selected()
+        if kind == "form":
+            self.app.open_form(name, view)
+        elif kind == "module":
+            self.app.open_module(name)
+        return "break"
+
+    def _popup(self, e):
+        row = self.tree.identify_row(e.y)
+        if not row:
+            return
+        self.tree.selection_set(row)
+        self.tree.focus(row)
+        is_form = row.startswith("form:")
+        for item in ("View Object", "Set as Startup"):
+            self.menu.entryconfigure(item, state=tk.NORMAL if is_form else tk.DISABLED)
+        self.menu.tk_popup(e.x_root, e.y_root)
+
+    def _set_startup(self):
+        kind, name = self._selected()
+        if kind == "form":
+            self.app.set_startup(name)
+
+
+class PropertiesPanel(ttk.Frame):
+    """Edit the selected object's properties. Edits commit on Enter or when focus leaves.
+
+    app is the FormEditor whose form is showing, or None; see attach().
+    """
+
+    def __init__(self, master, app=None):
         super().__init__(master, padding=4)
         self.app = app
         self.current = None
@@ -58,15 +122,25 @@ class PropertiesPanel(ttk.Frame):
         ttk.Label(self, text="Properties").pack(anchor="w")
         self.objects = ttk.Combobox(self, state="readonly", width=24)
         self.objects.pack(fill=tk.X, pady=(2, 6))
-        self.objects.bind("<<ComboboxSelected>>", lambda e: app.select(self.objects.get()))
+        self.objects.bind("<<ComboboxSelected>>", lambda e: self.app and self.app.select(self.objects.get()))
         self.grid_frame = ttk.Frame(self)
         self.grid_frame.pack(fill=tk.X)
         self.grid_frame.columnconfigure(1, weight=1)
 
+    def attach(self, editor):
+        """Show the properties of another form's objects (None: nothing)."""
+        if editor is self.app:
+            return
+        self.commit_all()
+        self.clear()
+        self.app = editor
+        self.refresh_objects()
+        if editor is not None:
+            self.show(editor.selected)
+
     def refresh_objects(self):
-        self.objects["values"] = self.app.object_names()
-        if self.current:
-            self.objects.set(self.current)
+        self.objects["values"] = self.app.object_names() if self.app else []
+        self.objects.set(self.current or "")
 
     def clear(self):
         """Drop the rows without committing them, e.g. when another file is opened."""
@@ -102,7 +176,7 @@ class PropertiesPanel(ttk.Frame):
             self._rows[prop] = (var, in_dialog)
 
     def commit(self, prop):
-        if self.current is None or prop not in self._rows:
+        if self.app is None or self.current is None or prop not in self._rows:
             return
         var, in_dialog = self._rows[prop]
         if in_dialog:  # committed by the dialog's OK button
@@ -123,7 +197,7 @@ class PropertiesPanel(ttk.Frame):
 
     def update_values(self):
         """Show the current values, e.g. after a control is dragged."""
-        if self.current is None:
+        if self.app is None or self.current is None:
             return
         for prop, value in self.app.props_for(self.current):
             if prop in self._rows:
@@ -132,7 +206,7 @@ class PropertiesPanel(ttk.Frame):
     def _edit_lines(self, prop):
         """Edit a list (one item per line, like VB's List property) or multi-line text."""
         obj = self.current
-        if obj is None:
+        if self.app is None or obj is None:
             return
         value = dict(self.app.props_for(obj))[prop]
         dialog = tk.Toplevel(self)

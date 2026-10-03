@@ -24,13 +24,16 @@ _IMPLEMENTED = "  ✓"
 
 
 class CodeView(ttk.Frame):
-    def __init__(self, master, app):
+    """app is the editor this code belongs to. Modules have no objects, so no dropdowns."""
+
+    def __init__(self, master, app, objects=True):
         super().__init__(master)
         self.app = app
         self._highlight_job = None
 
         bar = ttk.Frame(self, padding=(0, 2))
-        bar.pack(fill=tk.X)
+        if objects:
+            bar.pack(fill=tk.X)
         self.objects = ttk.Combobox(bar, state="readonly", width=24)
         self.objects.pack(side=tk.LEFT)
         self.objects.bind("<<ComboboxSelected>>", lambda e: self._refresh_events())

@@ -1,46 +1,32 @@
-"""Run a form: python -m pybasic.run path/to/Form1.form
+"""Run a project: python -m pybasic.run path/to/project [--startup Form1]
 
-The form's code is loaded from the .py file beside it. With --immediate, lines
-read from stdin are executed inside the running program (the IDE's Immediate
-window uses this), with the form available as `form` and each control by name.
+The target can be a project folder, its pyproject.toml, or one of its .form
+files (which then becomes the startup form). The project folder is put on
+sys.path, so forms and modules import each other by name. With --immediate,
+lines read from stdin are executed inside the running program (the IDE's
+Immediate window uses this), with `forms`, the startup form as `form`, its
+controls by name, and every default form instance by name.
 """
 
 from __future__ import annotations
 
 import argparse
 import code
-import importlib.util
 import queue
 import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 
-from pybasic import formfile
-from pybasic.form import Form
-
-
-def load_form_class(form_path):
-    """The Form subclass in the .py beside form_path, or Form itself if there is no code."""
-    form_path = Path(form_path)
-    code_path = form_path.with_suffix(".py")
-    if not code_path.exists():
-        return Form
-    name = formfile.load(form_path).name
-    sys.path.insert(0, str(code_path.parent.resolve()))
-    spec = importlib.util.spec_from_file_location(code_path.stem, code_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    cls = getattr(module, name, None)
-    if not (isinstance(cls, type) and issubclass(cls, Form)):
-        raise SystemExit(f"{code_path.name}: expected a class {name}(Form)")
-    return cls
+from pybasic import forms
+from pybasic.form import app_root, main_loop
+from pybasic.project import Project
 
 
 def attach_immediate(form):
-    """Execute lines from stdin on the Tk thread while the form runs."""
-    console = code.InteractiveConsole({"form": form, "self": form, **form.controls})
+    """Execute lines from stdin on the Tk thread while the program runs."""
+    namespace = {"forms": forms, "form": form, "self": form}
+    console = code.InteractiveConsole(namespace)
     lines = queue.Queue()
 
     def read_stdin():
@@ -49,25 +35,36 @@ def attach_immediate(form):
 
     def poll():
         while not lines.empty():
+            namespace.update(forms.loaded())
+            if form.loaded:
+                namespace.update(form.controls)
             console.push(lines.get())
         try:
-            form.root.after(50, poll)
+            app_root().after(50, poll)
         except tk.TclError:
-            pass  # the form was closed from the Immediate window
+            pass  # the program has ended
 
     threading.Thread(target=read_stdin, daemon=True).start()
-    poll()
+    app_root().after(50, poll)  # start once the main loop runs, after the startup form is shown
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="python -m pybasic.run", description="Run a pybasic form.")
-    parser.add_argument("form", type=Path, help="the .form file to run")
+    parser = argparse.ArgumentParser(prog="python -m pybasic.run", description="Run a pybasic project.")
+    parser.add_argument("target", type=Path, help="a project folder, its pyproject.toml, or a .form file")
+    parser.add_argument("--startup", help="the form to show first (default: the project's startup form)")
     parser.add_argument("--immediate", action="store_true", help="execute Python lines from stdin while running")
     args = parser.parse_args(argv)
-    form = load_form_class(args.form)(args.form)
+
+    project = Project.find(args.target)
+    startup = args.startup or (args.target.stem if args.target.suffix == ".form" else project.startup)
+    if startup is None:
+        raise SystemExit(f"{project.folder} has no forms to run")
+    sys.path.insert(0, str(project.folder))
+    form = getattr(forms, startup)
     if args.immediate:
         attach_immediate(form)
-    form.root.mainloop()
+    form.show()
+    main_loop()
 
 
 if __name__ == "__main__":

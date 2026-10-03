@@ -9,10 +9,9 @@ import pytest
 from pybasic import Form, formfile
 from pybasic.controls import REGISTRY
 from pybasic.form import check_name
-from pybasic.run import load_form_class
+from pybasic.project import Project
 
 ROOT = Path(__file__).parent.parent
-EXAMPLE = ROOT / "examples" / "hello" / "Form1.form"
 
 
 needs_display = pytest.mark.usefixtures("display")
@@ -80,10 +79,6 @@ def test_unload_can_cancel_closing(form_path):
     form.root.destroy()
 
 
-def test_example_class_loads():
-    assert load_form_class(EXAMPLE).__name__ == "Form1"
-
-
 @pytest.mark.parametrize("name", ["Form", "text", "close", "root", "1abc", "class"])
 def test_reserved_and_invalid_names(name):
     with pytest.raises(ValueError):
@@ -91,12 +86,20 @@ def test_reserved_and_invalid_names(name):
 
 
 @needs_display
-def test_run_with_immediate_window():
+def test_run_with_immediate_window(tmp_path):
     """The IDE's Immediate window: lines on stdin run inside the live program."""
+    project = Project.create(tmp_path / "hello")
+    design = formfile.load(project.folder / "Form1.form")
+    design.controls += [REGISTRY["TextBox"].new_spec("TextBox1", 8, 8), REGISTRY["Button"].new_spec("Button1", 8, 40)]
+    formfile.save(design, project.folder / "Form1.form")
+    (project.folder / "Form1.py").write_text(
+        "from pybasic import Form\n\n\nclass Form1(Form):\n"
+        "    def Button1_click(self):\n        self.text = f'Hello, {self.TextBox1.text}!'\n"
+    )
     env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONUNBUFFERED="1")
     result = subprocess.run(
-        [sys.executable, "-m", "pybasic.run", "--immediate", str(EXAMPLE)],
-        input="TextBox1.text = 'Ada'\n_ = Button1.widget.invoke()\nprint(Label2.text)\nform.close()\n",
+        [sys.executable, "-m", "pybasic.run", "--immediate", str(project.folder)],
+        input="TextBox1.text = 'Ada'\n_ = Button1.widget.invoke()\nprint(form.text)\nform.close()\n",
         capture_output=True, text=True, env=env, timeout=20,
     )
     assert result.returncode == 0, result.stderr

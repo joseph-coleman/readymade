@@ -1,8 +1,8 @@
-"""The pybasic IDE: toolbox, form designer, code window, properties panel and
+"""The pybasic IDE: Toolbox, documents, Project Explorer, Properties and the
 Immediate window in one Tk application.
 
-App owns the document (a FormDesign and its source code) and the running
-program. The panels call back into it, and it keeps them in sync.
+App owns the open project, the open documents (editors.py) and the running
+program. The Toolbox and Properties panel work on the form whose tab is showing.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import code
 import contextlib
-import keyword
 import os
 import queue
 import subprocess
@@ -18,14 +17,12 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from pybasic import codegen, formfile
-from pybasic.controls import REGISTRY
-from pybasic.form import FORM, FORM_EVENTS, check_name
-from pybasic.ide.codeview import CodeView
-from pybasic.ide.designer import GRID, DesignSurface, snap
-from pybasic.ide.panels import ImmediateWindow, PropertiesPanel, Toolbox
+from pybasic.formfile import FormFileError
+from pybasic.ide.editors import FormEditor, ModuleEditor
+from pybasic.ide.panels import ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
+from pybasic.project import Project, ProjectError
 
 _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containing pybasic/
 
@@ -33,20 +30,20 @@ _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containin
 class App:
     def __init__(self, root: tk.Tk, path: Path | None = None):
         self.root = root
-        self.path: Path | None = None
-        self.design = formfile.FormDesign()
-        self.selected = FORM
+        self.project: Project | None = None
+        self.editors: list[FormEditor | ModuleEditor] = []
+        self.form: FormEditor | None = None  # the form whose tab is showing
         self.process: subprocess.Popen | None = None
         self._output: queue.Queue = queue.Queue()
-        self._saved: tuple[str, str | None] = ("", None)
         self._console = _DesignTimeConsole(self)
         self._build_ui()
-        if path is None or not path.exists() or not self._open_path(path):
-            self._start_new(path)
+        if path is not None:
+            self.open_path(path)
+        self.update_title()
 
     def _build_ui(self):
         root = self.root
-        root.geometry("1100x720")
+        root.geometry("1180x740")
         if "clam" in ttk.Style().theme_names():
             ttk.Style().theme_use("clam")
         self._build_menu()
@@ -54,27 +51,29 @@ class App:
         outer = ttk.PanedWindow(root, orient=tk.VERTICAL)
         outer.pack(fill=tk.BOTH, expand=True)
         top = ttk.PanedWindow(outer, orient=tk.HORIZONTAL)
-        self.toolbox = Toolbox(top, on_double_click=self.add_control_centered)
-        self.notebook = ttk.Notebook(top)
-        self.surface = DesignSurface(self.notebook, self)
-        self.code = CodeView(self.notebook, self)
-        self.notebook.add(self.surface, text="Design")
-        self.notebook.add(self.code, text="Code")
-        self.properties = PropertiesPanel(top, self)
+        self.toolbox = Toolbox(top, on_double_click=lambda t: self.form and self.form.add_control_centered(t))
+        self.documents = ttk.Notebook(top)
+        self.documents.bind("<<NotebookTabChanged>>", self._tab_changed)
+        side = ttk.PanedWindow(top, orient=tk.VERTICAL)
+        self.explorer = ProjectExplorer(side, self)
+        self.properties = PropertiesPanel(side)
+        side.add(self.explorer, weight=1)
+        side.add(self.properties, weight=2)
         top.add(self.toolbox, weight=0)
-        top.add(self.notebook, weight=1)
-        top.add(self.properties, weight=0)
+        top.add(self.documents, weight=1)
+        top.add(side, weight=0)
         self.immediate = ImmediateWindow(outer, on_line=self.immediate_line)
         outer.add(top, weight=1)
         outer.add(self.immediate, weight=0)
 
         for sequence, command in (
-            ("<Control-n>", self.new),
-            ("<Control-o>", self.open),
+            ("<Control-n>", self.new_project),
+            ("<Control-o>", self.open_project),
             ("<Control-s>", self.save),
+            ("<Control-w>", self.close_document),
             ("<F5>", self.run),
-            ("<F7>", self.show_code),
-            ("<Shift-F7>", self.show_design),
+            ("<F7>", lambda: self.form and self.form.show_code()),
+            ("<Shift-F7>", lambda: self.form and self.form.show_design()),
         ):
             root.bind(sequence, lambda e, c=command: (c(), "break")[1])
         root.protocol("WM_DELETE_WINDOW", self.exit)
@@ -82,298 +81,239 @@ class App:
     def _build_menu(self):
         menubar = tk.Menu(self.root)
         file = tk.Menu(menubar, tearoff=False)
-        file.add_command(label="New", accelerator="Ctrl+N", command=self.new)
-        file.add_command(label="Open...", accelerator="Ctrl+O", command=self.open)
-        file.add_command(label="Save", accelerator="Ctrl+S", command=self.save)
-        file.add_command(label="Save As...", command=self.save_as)
+        file.add_command(label="New Project...", accelerator="Ctrl+N", command=self.new_project)
+        file.add_command(label="Open Project...", accelerator="Ctrl+O", command=self.open_project)
+        file.add_command(label="Save All", accelerator="Ctrl+S", command=self.save)
+        file.add_command(label="Close", accelerator="Ctrl+W", command=self.close_document)
         file.add_separator()
         file.add_command(label="Exit", command=self.exit)
+        project = tk.Menu(menubar, tearoff=False)
+        project.add_command(label="Add Form...", command=self.add_form)
+        project.add_command(label="Add Module...", command=self.add_module)
+        project.add_command(label="Refresh", command=self.explorer_refresh)
         view = tk.Menu(menubar, tearoff=False)
-        view.add_command(label="Code", accelerator="F7", command=self.show_code)
-        view.add_command(label="Object", accelerator="Shift+F7", command=self.show_design)
+        view.add_command(label="Code", accelerator="F7", command=lambda: self.form and self.form.show_code())
+        view.add_command(label="Object", accelerator="Shift+F7", command=lambda: self.form and self.form.show_design())
         run = tk.Menu(menubar, tearoff=False)
         run.add_command(label="Start", accelerator="F5", command=self.run)
         run.add_command(label="End", command=self.stop)
         menubar.add_cascade(label="File", menu=file)
+        menubar.add_cascade(label="Project", menu=project)
         menubar.add_cascade(label="View", menu=view)
         menubar.add_cascade(label="Run", menu=run)
         self.root.configure(menu=menubar)
 
-    # ----- the document -----
+    # ----- the project -----
 
-    def object_names(self):
-        return [FORM] + [c["name"] for c in self.design.controls]
-
-    def events_for(self, obj):
-        if obj == FORM:
-            return FORM_EVENTS
-        spec = self.design.control(obj)
-        return REGISTRY[spec["type"]].events if spec else ()
-
-    def props_for(self, obj):
-        if obj == FORM:
-            d = self.design
-            return [("name", d.name), ("text", d.text), ("width", d.width), ("height", d.height)]
-        spec = self.design.control(obj)
-        if spec is None:
-            return []
-        defaults = REGISTRY[spec["type"]].prop_defaults()
-        return [("name", obj)] + [(prop, spec.get(prop, default)) for prop, default in defaults.items()]
-
-    def choices_for(self, obj, prop):
-        """The allowed values of a property limited to fixed choices, or None."""
-        spec = self.design.control(obj)
-        return REGISTRY[spec["type"]].prop_choices.get(prop) if spec else None
-
-    def _spec(self, name) -> dict:
-        spec = self.design.control(name)
-        if spec is None:
-            raise KeyError(name)
-        return spec
-
-    def select(self, obj):
-        self.selected = obj
-        self.surface.show_selection(obj)
-        self.properties.show(obj)
-
-    def set_property(self, obj, prop, raw):
-        """Apply an edit from the Properties panel. Returns the object's (possibly new) name, or None if invalid."""
-        current = dict(self.props_for(obj))[prop]
+    def open_path(self, path):
+        """Open a project folder, its pyproject.toml or one of its .form files.
+        A folder that doesn't exist yet becomes a new project."""
+        path = Path(path)
         try:
-            value = _convert(raw, type(current))
-            choices = self.choices_for(obj, prop)
-            if choices and value not in choices:
-                raise ValueError(f"{prop} must be one of: {', '.join(choices)}")
-            if prop in ("width", "height") and value < GRID:
-                raise ValueError(f"{prop} must be at least {GRID}")
-            if prop == "name":
-                obj = self._rename(obj, value)
-            elif obj == FORM:
-                setattr(self.design, prop, value)
-                self.surface.refresh_form()
+            if not path.exists() and not path.suffix:
+                project = Project.create(path)
             else:
-                spec = self._spec(obj)
-                spec[prop] = value
-                if prop == "multiline" and not value and "\n" in spec.get("text", ""):
-                    spec["text"] = " ".join(spec["text"].splitlines())  # a single line can't hold line breaks
-                self.surface.refresh_control(obj)
-                if prop in REGISTRY[spec["type"]].recreate_props:
-                    # Rebuild the rows (the text row changes editor) without committing their old values.
-                    self.properties.clear()
-                    self.properties.show(obj)
-        except ValueError as e:
-            messagebox.showerror("Invalid property value", str(e), parent=self.root)
-            return None
-        self.update_title()
-        return obj
-
-    def _rename(self, obj, new):
-        if new == obj:
-            return obj
-        source = self.code.get_source()
-        if obj == FORM:
-            if not new.isidentifier() or keyword.iskeyword(new):
-                raise ValueError(f"{new!r} is not a valid Python name")
-            self.code.replace_source(codegen.rename_class(source, self.design.name, new))
-            self.design.name = new
-            return FORM
-        check_name(new, [n for n in self.object_names() if n != obj])
-        spec = self._spec(obj)
-        spec["name"] = new
-        for child in self.design.controls:
-            if child.get("container") == obj:
-                child["container"] = new
-        events = [e.name for e in REGISTRY[spec["type"]].events]
-        self.code.replace_source(codegen.rename_control(source, obj, new, events))
-        self.surface.rename(obj, new)
-        self.selected = new
-        self.properties.refresh_objects()
-        self.code.refresh_objects()
-        return new
-
-    def geometry_changed(self, name, geometry):
-        spec = self._spec(name)
-        for key, value in zip(("left", "top", "width", "height"), geometry):
-            if key in spec:  # a Timer has no size
-                spec[key] = value
-        self.properties.update_values()
-        self.update_title()
-
-    def set_form_size(self, width, height):
-        self.design.width, self.design.height = width, height
-        self.surface.refresh_form()
-        self.properties.update_values()
-        self.update_title()
-
-    def add_control(self, type_name, left, top, width=None, height=None, container=None):
-        names = set(self.object_names())
-        n = 1
-        while f"{type_name}{n}" in names:
-            n += 1
-        spec = REGISTRY[type_name].new_spec(f"{type_name}{n}", left, top, width, height, container)
-        self.design.controls.append(spec)
-        self.surface.add(spec)
-        self.properties.refresh_objects()
-        self.code.refresh_objects()
-        self.select(spec["name"])
-        self.update_title()
-
-    def add_control_centered(self, type_name):
-        width, height = REGISTRY[type_name].default_size
-        self.toolbox.reset()
-        self.add_control(type_name, snap((self.design.width - width) / 2), snap((self.design.height - height) / 2))
-
-    def delete_control(self, name):
-        """Delete a control, and everything inside it if it's a Frame. Like VB, handlers stay in the code."""
-        doomed = {name}
-        for spec in self.design.controls:  # containers come before their contents
-            if spec.get("container") in doomed:
-                doomed.add(spec["name"])
-        for spec in reversed(list(self.design.controls)):  # contents first
-            if spec["name"] in doomed:
-                self.design.controls.remove(spec)
-                self.surface.remove(spec["name"])
-        self.properties.refresh_objects()
-        self.code.refresh_objects()
-        self.select(FORM)
-        self.update_title()
-
-    def goto_handler(self, obj, event_name):
-        """Show the handler for obj's event in the code window, creating it if needed."""
-        event = next(e for e in self.events_for(obj) if e.name == event_name)
-        method = f"{obj}_{event.name}"
-        line = codegen.find_method(self.code.get_source(), method)
-        if line is None:
-            try:
-                edit = codegen.add_method(self.code.get_source(), self.design.name, method, event.params)
-            except codegen.CodeGenError as e:
-                messagebox.showerror("Code", str(e), parent=self.root)
-                return
-            self.code.apply_edit(edit)
-            line = edit.method_line
-        self.show_code()
-        self.code.show_method(obj, event.name, line)
-
-    def show_code(self):
-        self.code.refresh_objects()
-        self.notebook.select(self.code)
-
-    def show_design(self):
-        self.notebook.select(self.surface)
-
-    # ----- files -----
-
-    def is_dirty(self):
-        return (formfile.dumps(self.design), self.code.get_source()) != self._saved
-
-    def update_title(self):
-        name = self.path.name if self.path else "(untitled)"
-        self.root.title(f"{name}{'*' if self.is_dirty() else ''} - pybasic")
-
-    def _set_document(self, path, design, source, saved_source):
-        self.properties.clear()
-        # Absolute, so the path still works when the program runs in the form's own folder.
-        self.path, self.design = (path.resolve() if path else None), design
-        self.surface.rebuild()
-        self.code.set_source(source)
-        self._saved = (formfile.dumps(design), saved_source)
-        self.properties.refresh_objects()
-        self.code.refresh_objects()
-        self.select(FORM)
-        self.show_design()
-        self.update_title()
-
-    def _start_new(self, path=None):
-        design = formfile.FormDesign()
-        if path is not None and path.stem.isidentifier() and not keyword.iskeyword(path.stem):
-            design.name = design.text = path.stem
-        source = codegen.new_module(design.name)
-        self._set_document(path, design, source, source)
-
-    def _open_path(self, path):
-        try:
-            design = formfile.load(path)
-            code_path = path.with_suffix(".py")
-            saved = code_path.read_text(encoding="utf-8") if code_path.exists() else None
-        except (OSError, formfile.FormFileError) as e:
-            messagebox.showerror("Open", str(e), parent=self.root)
+                project = Project.find(path)
+                project.settings()  # reports a broken pyproject.toml now
+        except (OSError, ProjectError) as e:
+            messagebox.showerror("Open Project", str(e), parent=self.root)
             return False
-        self._set_document(path, design, saved if saved is not None else codegen.new_module(design.name), saved)
+        if not self._close_all():
+            return False
+        self.project = project
+        self.explorer_refresh()
+        form = path.stem if path.suffix == ".form" else project.startup
+        if form:
+            self.open_form(form)
+        self.update_title()
         return True
 
-    def _confirm_discard(self):
-        """True if it's OK to throw away the current document."""
-        if not self.is_dirty():
-            return True
-        name = self.path.name if self.path else "this form"
-        answer = messagebox.askyesnocancel("pybasic", f"Save changes to {name}?", parent=self.root)
-        return self.save() if answer else answer is False
-
-    def new(self):
-        if self._confirm_discard():
-            self._start_new()
-
-    def open(self):
-        if not self._confirm_discard():
-            return
-        filename = filedialog.askopenfilename(
-            parent=self.root, filetypes=[("pybasic forms", "*.form"), ("All files", "*")]
+    def new_project(self):
+        filename = filedialog.asksaveasfilename(
+            parent=self.root, title="New Project: choose a name and place for its folder", initialfile="MyProject"
         )
         if filename:
-            self._open_path(Path(filename))
+            self.open_path(Path(filename))
 
-    def save(self):
-        if self.path is None:
-            return self.save_as()
-        self.properties.commit_all()
-        source = self.code.get_source()
+    def open_project(self):
+        folder = filedialog.askdirectory(parent=self.root, title="Open Project folder", mustexist=True)
+        if folder:
+            self.open_path(Path(folder))
+
+    def explorer_refresh(self):
+        self.explorer.refresh()
+
+    def add_form(self):
+        self._add("Form", self._next_name("Form"), lambda p, n: p.add_form(n), self.open_form)
+
+    def add_module(self):
+        self._add("Module", self._next_name("Module"), lambda p, n: p.add_module(n), self.open_module)
+
+    def _add(self, kind, suggestion, create, open_it):
+        if self.project is None:
+            return
+        name = simpledialog.askstring(f"Add {kind}", f"{kind} name:", initialvalue=suggestion, parent=self.root)
+        if not name:
+            return
         try:
-            formfile.save(self.design, self.path)
-            self.path.with_suffix(".py").write_text(source, encoding="utf-8")
-        except OSError as e:
-            messagebox.showerror("Save", str(e), parent=self.root)
-            return False
-        self._saved = (formfile.dumps(self.design), source)
+            create(self.project, name.strip())
+        except (OSError, ProjectError) as e:
+            messagebox.showerror(f"Add {kind}", str(e), parent=self.root)
+            return
+        self.explorer_refresh()
+        open_it(name.strip())
+
+    def _next_name(self, prefix):
+        taken = set(self.project.forms() + self.project.modules()) if self.project else set()
+        n = 1
+        while f"{prefix}{n}" in taken:
+            n += 1
+        return f"{prefix}{n}"
+
+    def set_startup(self, form):
+        if self.project is None:
+            return
+        try:
+            self.project.set_startup(form)
+        except (OSError, ProjectError) as e:
+            messagebox.showerror("Set as Startup", str(e), parent=self.root)
+        self.explorer_refresh()
+
+    def form_renamed(self, old, new):
+        """A FormEditor saved a renamed form under its new file names."""
+        if self.project and self.project.settings().get("tool", {}).get("pybasic", {}).get("startup") == old:
+            self.project.set_startup(new)
+        self.explorer_refresh()
         self.update_title()
+
+    # ----- documents -----
+
+    def _editor(self, kind, name):
+        return next((e for e in self.editors if isinstance(e, kind) and e.name == name), None)
+
+    def open_form(self, name, view="design"):
+        editor = self._editor(FormEditor, name)
+        if editor is None:
+            if self.project is None:
+                return None
+            try:
+                editor = FormEditor(self, self.project.folder / f"{name}.form")
+            except (OSError, ValueError, FormFileError) as e:
+                messagebox.showerror("Open Form", str(e), parent=self.root)
+                return None
+            self._add_tab(editor)
+        if view == "code":
+            editor.show_code()
+        else:
+            editor.show_design()
+        self._tab_changed()  # don't wait for <<NotebookTabChanged>>, which may arrive later
+        return editor
+
+    def open_module(self, name):
+        editor = self._editor(ModuleEditor, name)
+        if editor is None:
+            if self.project is None:
+                return None
+            try:
+                editor = ModuleEditor(self, self.project.folder / f"{name}.py")
+            except OSError as e:
+                messagebox.showerror("Open Module", str(e), parent=self.root)
+                return None
+            self._add_tab(editor)
+        self.documents.select(editor.frame)
+        self._tab_changed()
+        return editor
+
+    def _add_tab(self, editor):
+        self.editors.append(editor)
+        self.documents.add(editor.frame, text=editor.title())
+
+    def _current_editor(self):
+        try:
+            frame = self.documents.nametowidget(self.documents.select())
+        except (KeyError, tk.TclError):  # no tabs
+            return None
+        return next((e for e in self.editors if e.frame is frame), None)
+
+    def _tab_changed(self, _=None):
+        editor = self._current_editor()
+        self.form = editor if isinstance(editor, FormEditor) else None
+        self.properties.attach(self.form)
+        self.update_title()
+
+    def close_document(self, editor=None, ask=True):
+        """Close a document (default: the current one), asking to save changes."""
+        editor = editor or self._current_editor()
+        if editor is None:
+            return True
+        if ask and editor.is_dirty():
+            answer = messagebox.askyesnocancel("pybasic", f"Save changes to {editor.name}?", parent=self.root)
+            if answer is None or (answer and not editor.save()):
+                return False
+        if self.properties.app is editor:
+            self.properties.attach(None)
+        self.editors.remove(editor)
+        self.documents.forget(editor.frame)
+        editor.frame.destroy()
+        self._tab_changed()
         return True
 
-    def save_as(self):
-        filename = filedialog.asksaveasfilename(
-            parent=self.root, defaultextension=".form", initialfile=f"{self.design.name}.form",
-            filetypes=[("pybasic forms", "*.form")],
-        )
-        if not filename:
-            return False
-        self.path = Path(filename).with_suffix(".form").resolve()
-        return self.save()
+    def _close_all(self):
+        if any(e.is_dirty() for e in self.editors):
+            answer = messagebox.askyesnocancel("pybasic", "Save changes to the project?", parent=self.root)
+            if answer is None or (answer and not self.save()):
+                return False
+        for editor in list(self.editors):
+            self.close_document(editor, ask=False)  # already saved or discarded
+        return True
+
+    def is_dirty(self):
+        return any(e.is_dirty() for e in self.editors)
+
+    def save(self):
+        """Save every changed document. Returns False if any failed."""
+        ok = all([e.save() for e in list(self.editors) if e.is_dirty()])
+        self.update_title()
+        return ok
+
+    def update_title(self):
+        for editor in self.editors:
+            self.documents.tab(editor.frame, text=editor.title())
+        name = self.project.name if self.project else "No project"
+        self.root.title(f"{name}{'*' if self.is_dirty() else ''} - pybasic")
 
     def exit(self):
-        if self._confirm_discard():
+        if self._close_all():
             self.stop()
             self.root.destroy()
 
     # ----- running -----
 
     def run(self):
+        if self.project is None:
+            return
         if self.process is not None:
             self.immediate.write("(The program is already running.)\n")
             return
         if not self.save():
             return
-        path = self.path
-        assert path is not None  # save() succeeded, so there is a path
+        folder = self.project.folder
+        startup = self.project.startup
+        if startup is None:
+            self.immediate.write("(The project has no forms to run.)\n")
+            return
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [_PACKAGE_ROOT, env.get("PYTHONPATH")]))
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         process = subprocess.Popen(
-            [sys.executable, "-m", "pybasic.run", "--immediate", str(path)],
+            [sys.executable, "-m", "pybasic.run", "--immediate", "--startup", startup, str(folder)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", cwd=path.parent, env=env,
+            text=True, encoding="utf-8", cwd=folder, env=env,
         )
         self.process = process
         threading.Thread(target=_pump, args=(process.stdout, self._output), daemon=True).start()
-        self.immediate.write(f"--- Running {path.name}. Type Python below to inspect it. ---\n")
+        self.immediate.write(f"--- Running {self.project.name} ({startup}). Type Python below to inspect it. ---\n")
         self.root.after(50, self._poll_output)
 
     def stop(self):
@@ -443,25 +383,13 @@ def _pump(stream, output):
     output.put(None)
 
 
-def _convert(raw, kind):
-    if kind is list:
-        return [line for line in raw.splitlines() if line.strip()]
-    if kind is bool:
-        if raw not in ("True", "False"):
-            raise ValueError("Choose True or False")
-        return raw == "True"
-    if kind is int:
-        try:
-            return int(raw)
-        except ValueError:
-            raise ValueError(f"{raw!r} is not a whole number") from None
-    return raw
-
-
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="pybasic", description="A Visual Basic style form designer for Python.")
-    parser.add_argument("form", nargs="?", type=Path, help="the .form file to open (created on save if new)")
+    parser = argparse.ArgumentParser(prog="pybasic", description="A Visual Basic style IDE for Python.")
+    parser.add_argument(
+        "project", nargs="?", type=Path,
+        help="a project folder (created if it doesn't exist), its pyproject.toml, or a .form file in it",
+    )
     args = parser.parse_args(argv)
     root = tk.Tk()
-    App(root, args.form)
+    App(root, args.project)
     root.mainloop()

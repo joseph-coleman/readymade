@@ -2,8 +2,8 @@
   "pybasic_form": 1,
   "name": "Form1",
   "text": "Hello, World",
-  "width": 448,
-  "height": 320,
+  "width": 744,
+  "height": 448,
   "controls": [
     {
       "type": "Label",
@@ -149,6 +149,19 @@
         "Dessert",
         "Appetizer"
       ],
+      "visible": true
+    },
+    {
+      "type": "TextBox",
+      "name": "TextBox2",
+      "left": 456,
+      "top": 48,
+      "width": 248,
+      "height": 120,
+      "enabled": true,
+      "multiline": true,
+      "scrollbars": "vertical",
+      "text": "TextBox2",
       "visible": true
     }
   ]

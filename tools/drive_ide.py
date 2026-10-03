@@ -57,6 +57,7 @@ if __name__ == "__main__":
 def write_start_form(folder):
     from pybasic import formfile
     from pybasic.controls import REGISTRY
+    from pybasic.project import Project
 
     design = formfile.FormDesign(name="Form1", text="Hello, World", width=448, height=320)
     for type_name, name, left, top, width, height, props in START_CONTROLS:
@@ -65,6 +66,7 @@ def write_start_form(folder):
         design.controls.append(spec)
     formfile.save(design, folder / "Form1.form")
     (folder / "Form1.py").write_text(START_CODE, encoding="utf-8")
+    Project(folder).set_startup("Form1")  # writes pyproject.toml
 
 
 def start_xvfb():
@@ -142,6 +144,17 @@ class Driver:
         ImageGrab.grab(xdisplay=DISPLAY).crop((0, 0, 1280, 800)).save(path)
         print(f"  screenshot {path}")
 
+    def tab_at(self, notebook, child):
+        """Screen coordinates inside child's tab in a ttk.Notebook."""
+        index = notebook.index(child)
+        for x in range(2, notebook.winfo_width(), 4):
+            try:
+                if notebook.index(f"@{x},10") == index:
+                    return notebook.winfo_rootx() + x + 8, notebook.winfo_rooty() + 10
+            except Exception:  # no tab at that point
+                continue
+        raise LookupError(f"no tab for {child}")
+
     def prop_editor(self, prop):
         """The Properties panel's editor widget for prop."""
         grid = self.app.properties.grid_frame
@@ -170,7 +183,8 @@ class Driver:
 
 def drive(d):
     app = d.app
-    canvas = app.surface.canvas
+    editor = app.form  # Form1's editor
+    canvas = editor.surface.canvas
     tool = {w.cget("text"): w for w in app.toolbox.winfo_children() if w.winfo_class() == "Radiobutton"}
 
     print("Design view")
@@ -180,20 +194,20 @@ def drive(d):
     d.click(*d.at(tool["Button"]))
     x0, y0 = d.at(canvas, 24, 160)
     d.drag(x0, y0, x0 + 120, y0 + 32)
-    spec = app.design.control("Button2")
+    spec = editor.design.control("Button2")
     d.check("new control", spec and (spec["left"], spec["top"], spec["width"], spec["height"]), (24, 160, 120, 32))
-    d.check("selected", app.selected, "Button2")
+    d.check("selected", editor.selected, "Button2")
     d.check("tool resets to pointer", app.toolbox.tool, "")
     d.shot("drawn")
 
     print("Move it by dragging")
-    widget = app.surface.controls["Button2"].widget
+    widget = editor.surface.controls["Button2"].widget
     x, y = d.at(widget)
     d.drag(x, y, x + 41, y + 22)
     d.check("moved (snapped to grid)", (spec["left"], spec["top"]), (64, 184))
 
     print("Resize with the bottom-right handle")
-    x, y = d.at(app.surface.handles[(1, 1)])
+    x, y = d.at(editor.surface.handles[(1, 1)])
     d.drag(x, y, x + 30, y + 15)
     d.check("resized (snapped)", (spec["width"], spec["height"]), (152, 48))
     d.check("properties panel follows", app.properties._rows["width"][0].get(), "152")
@@ -201,10 +215,10 @@ def drive(d):
 
     print("Double-click it to get to its click handler")
     d.click(*d.at(widget), repeat=2)
-    d.check("code tab shown", app.notebook.select(), str(app.code))
-    d.check("pass selected", app.code.text.get("sel.first", "sel.last") if app.code.text.tag_ranges("sel") else None, "pass")
+    d.check("code tab shown", editor.frame.select(), str(editor.code))
+    d.check("pass selected", editor.code.text.get("sel.first", "sel.last") if editor.code.text.tag_ranges("sel") else None, "pass")
     d.type('self.Label2.text = "Drawn and wired by xdotool"')
-    d.check("typed over pass", "def Button2_click(self):\n        self.Label2.text" in app.code.get_source(), True)
+    d.check("typed over pass", "def Button2_click(self):\n        self.Label2.text" in editor.code.get_source(), True)
     d.shot("code")
 
     print("Draw a Frame, then two OptionButtons inside it")
@@ -212,17 +226,17 @@ def drive(d):
     d.click(*d.at(tool["Frame"]))
     x0, y0 = d.at(canvas, 320, 16)
     d.drag(x0, y0, x0 + 112, y0 + 96)
-    frame = app.surface.controls.get("Frame1")
+    frame = editor.surface.controls.get("Frame1")
     d.check("frame drawn", frame and (frame.left, frame.top, frame.width, frame.height), (320, 16, 112, 96))
     for n, y in ((1, 8), (2, 40)):
         d.click(*d.at(tool["OptionButton"]))
         x0, y0 = d.at(frame.inner, 8, y)
         d.drag(x0, y0, x0 + 88, y0 + 24)
-        spec = app.design.control(f"OptionButton{n}")
+        spec = editor.design.control(f"OptionButton{n}")
         d.check(f"OptionButton{n} is inside the frame", spec and (spec.get("container"), spec["left"], spec["top"]), ("Frame1", 8, y))
 
     print("Move the frame: its options go with it")
-    option = app.surface.controls["OptionButton1"].widget
+    option = editor.surface.controls["OptionButton1"].widget
     before = (option.winfo_rootx(), option.winfo_rooty())
     x, y = d.at(frame.widget, 4, 30)  # the frame's left border
     d.drag(x, y, x, y + 16)
@@ -233,35 +247,55 @@ def drive(d):
     d.click(*d.at(tool["ListBox"]))
     x0, y0 = d.at(canvas, 320, 152)
     d.drag(x0, y0, x0 + 112, y0 + 72)
-    app.set_property("ListBox1", "items", "Red\nGreen\nBlue")
+    editor.set_property("ListBox1", "items", "Red\nGreen\nBlue")
     app.properties.update_values()
     d.click(*d.at(tool["Timer"]), repeat=2)
-    d.check("timer added", app.design.control("Timer1") is not None, True)
+    d.check("timer added", editor.design.control("Timer1") is not None, True)
     d.check("tool resets after double-click", app.toolbox.tool, "")
     d.shot("more-controls")
 
     print("Make TextBox1 multi-line from the Properties panel")
-    d.click(*d.at(app.surface.controls["TextBox1"].widget))
+    d.click(*d.at(editor.surface.controls["TextBox1"].widget))
     d.click(*d.at(d.prop_editor("multiline")))  # open the True/False dropdown
     d.key("Up", "Return")
-    d.check("multiline on", app.design.control("TextBox1")["multiline"], True)
-    d.check("editor is now a Text", app.surface.controls["TextBox1"].editor.winfo_class(), "Text")
+    d.check("multiline on", editor.design.control("TextBox1")["multiline"], True)
+    d.check("editor is now a Text", editor.surface.controls["TextBox1"].editor.winfo_class(), "Text")
     d.click(*d.at(d.prop_editor("height")))
     d.key("End", "BackSpace", "BackSpace", "BackSpace")
     d.type("64")
     d.key("Return")
-    d.check("height", app.design.control("TextBox1")["height"], 64)
+    d.check("height", editor.design.control("TextBox1")["height"], 64)
     d.click(*d.at(d.prop_editor("scrollbars")))  # none, horizontal, vertical, both
     d.key("Down", "Down", "Return")
-    d.check("scrollbars", app.design.control("TextBox1")["scrollbars"], "vertical")
-    bars = [w.winfo_class() for w in app.surface.controls["TextBox1"].widget.winfo_children()]
+    d.check("scrollbars", editor.design.control("TextBox1")["scrollbars"], "vertical")
+    bars = [w.winfo_class() for w in editor.surface.controls["TextBox1"].widget.winfo_children()]
     d.check("designer shows the scrollbar", bars, ["Text", "Scrollbar"])
     d.shot("multiline")
+
+    print("Add a second form and open it from the Project Explorer")
+    app.project.add_form("Settings")
+    app.explorer_refresh()
+    tree = app.explorer.tree
+    x, y, w, h = tree.bbox("form:Settings")
+    d.click(tree.winfo_rootx() + x + 20, tree.winfo_rooty() + y + h // 2, repeat=2)
+    settings = app.form
+    d.check("Settings tab open", settings is not None and settings.name, "Settings")
+    d.check("properties follow the showing form", app.properties.app is settings, True)
+    d.click(*d.at(tool["Button"]))
+    x0, y0 = d.at(settings.surface.canvas, 16, 16)
+    d.drag(x0, y0, x0 + 96, y0 + 32)
+    d.check("drawn on Settings, not Form1", ("Button1" in settings.surface.controls, editor.design.control("Button3")), (True, None))
+    d.click(*d.at(settings.surface.controls["Button1"].widget), repeat=2)
+    d.type("self.close()")
+    d.check("Settings code", "def Button1_click(self):\n        self.close()" in settings.code.get_source(), True)
+    d.shot("second-form")
+    d.click(*d.tab_at(app.documents, editor.frame))
+    d.check("back on Form1's tab", app.form is editor, True)
 
     print("Press F5 and use the running program")
     d.key("F5")
     left, top = d.ask("(form.root.winfo_rootx(), form.root.winfo_rooty())")
-    form = app.design
+    form = editor.design
     textbox, button1, button2 = (form.control(n) for n in ("TextBox1", "Button1", "Button2"))
 
     def in_form(c):
@@ -303,6 +337,13 @@ def drive(d):
     d.check("listbox selection", d.ask("ListBox1.text"), "Green")
     d.shot("running-more-controls")
 
+    print("Open the second form from the Immediate window, and close it with its button")
+    app.immediate_line("forms.Settings.show()")
+    d.check("Settings shown", d.ask("forms.Settings.root.state()"), "normal")
+    x, y = d.ask("(lambda w: (w.winfo_rootx() + 20, w.winfo_rooty() + 10))(forms.Settings.Button1.widget)")
+    d.click(x, y)
+    d.check("Settings closed by its own code", d.ask("forms.Settings.loaded"), False)
+
     app.immediate_line("form.close()")
     deadline = time.time() + 10
     while app.process is not None and time.time() < deadline:
@@ -326,7 +367,7 @@ def main():
 
         root = tk.Tk()
         root.geometry("1100x720+0+0")
-        app = App(root, work / "Form1.form")
+        app = App(root, work)
         driver = Driver(app, out)
         driver.pump(0.5)
         root.focus_force()
