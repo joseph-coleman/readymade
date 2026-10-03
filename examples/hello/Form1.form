@@ -1,0 +1,53 @@
+{
+  "pybasic_form": 1,
+  "name": "Form1",
+  "text": "Hello, World",
+  "width": 448,
+  "height": 320,
+  "controls": [
+    {
+      "type": "Label",
+      "name": "Label1",
+      "left": 16,
+      "top": 16,
+      "width": 288,
+      "height": 24,
+      "enabled": true,
+      "text": "Label1",
+      "visible": true
+    },
+    {
+      "type": "TextBox",
+      "name": "TextBox1",
+      "left": 16,
+      "top": 48,
+      "width": 184,
+      "height": 24,
+      "enabled": true,
+      "text": "",
+      "visible": true
+    },
+    {
+      "type": "Button",
+      "name": "Button1",
+      "left": 208,
+      "top": 48,
+      "width": 96,
+      "height": 28,
+      "enabled": true,
+      "text": "Say Hello",
+      "visible": true
+    },
+    {
+      "type": "Label",
+      "name": "Label2",
+      "left": 24,
+      "top": 232,
+      "width": 288,
+      "height": 24,
+      "enabled": true,
+      "text": "This is a label",
+      "visible": true
+    }
+  ]
+}
