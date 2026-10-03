@@ -24,6 +24,10 @@ class Form1(Form):
     def Button2_click(self):
         self.Timer1.enabled = not self.Timer1.enabled
 
+    def Button3_click(self):
+        import sys
+        print(sys.version)
+
 
 if __name__ == "__main__":
     Form1.run()

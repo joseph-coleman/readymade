@@ -63,6 +63,9 @@ class ProjectExplorer(ttk.Frame):
         self.menu.add_command(label="View Object", command=lambda: self._open("design"))
         self.menu.add_command(label="View Code", command=lambda: self._open("code"))
         self.menu.add_command(label="Set as Startup", command=self._set_startup)
+        self.python_menu = tk.Menu(self, tearoff=False)
+        self.python_menu.add_command(label="Choose Python Interpreter...", command=app.choose_python)
+        self.python_menu.add_command(label="Use Default Python", command=lambda: app.set_python(None))
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
@@ -70,6 +73,7 @@ class ProjectExplorer(ttk.Frame):
         if project is None:
             return
         top = self.tree.insert("", tk.END, text=project.name, open=True)
+        self.tree.insert(top, tk.END, iid="python", text=self.app.python_label())
         startup = project.startup
         forms = self.tree.insert(top, tk.END, text="Forms", open=True)
         for name in project.forms():
@@ -84,6 +88,9 @@ class ProjectExplorer(ttk.Frame):
         return (kind, name) if name else (None, None)
 
     def _open(self, view):
+        if self.tree.focus() == "python":
+            self.app.choose_python()
+            return "break"
         kind, name = self._selected()
         if kind == "form":
             self.app.open_form(name, view)
@@ -97,6 +104,9 @@ class ProjectExplorer(ttk.Frame):
             return
         self.tree.selection_set(row)
         self.tree.focus(row)
+        if row == "python":
+            self.python_menu.tk_popup(e.x_root, e.y_root)
+            return
         is_form = row.startswith("form:")
         for item in ("View Object", "Set as Startup"):
             self.menu.entryconfigure(item, state=tk.NORMAL if is_form else tk.DISABLED)

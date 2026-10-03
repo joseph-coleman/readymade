@@ -22,7 +22,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from pybasic.formfile import FormFileError
 from pybasic.ide.editors import FormEditor, ModuleEditor
 from pybasic.ide.panels import ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
-from pybasic.project import Project, ProjectError
+from pybasic.project import Project, ProjectError, describe_python
 
 _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containing pybasic/
 
@@ -36,6 +36,7 @@ class App:
         self.process: subprocess.Popen | None = None
         self._output: queue.Queue = queue.Queue()
         self._console = _DesignTimeConsole(self)
+        self._python_info: dict[str, str] = {}  # interpreter path -> describe_python(), which is slow
         self._build_ui()
         if path is not None:
             self.open_path(path)
@@ -91,6 +92,9 @@ class App:
         project.add_command(label="Add Form...", command=self.add_form)
         project.add_command(label="Add Module...", command=self.add_module)
         project.add_command(label="Refresh", command=self.explorer_refresh)
+        project.add_separator()
+        project.add_command(label="Choose Python Interpreter...", command=self.choose_python)
+        project.add_command(label="Use Default Python", command=lambda: self.set_python(None))
         view = tk.Menu(menubar, tearoff=False)
         view.add_command(label="Code", accelerator="F7", command=lambda: self.form and self.form.show_code())
         view.add_command(label="Object", accelerator="Shift+F7", command=lambda: self.form and self.form.show_design())
@@ -169,6 +173,39 @@ class App:
         while f"{prefix}{n}" in taken:
             n += 1
         return f"{prefix}{n}"
+
+    def python(self):
+        """The project's interpreter and where it came from, for running and for display."""
+        path = self.project.python() if self.project else None
+        if path is None:
+            return Path(sys.executable), "IDE"
+        configured = self.project.setting("python") if self.project else None
+        return path, configured or ".venv"
+
+    def python_label(self):
+        path, where = self.python()
+        if str(path) not in self._python_info:
+            self._python_info[str(path)] = describe_python(path)
+        return f"Python {self._python_info[str(path)]}  ({where})"
+
+    def choose_python(self):
+        if self.project is None:
+            return
+        filename = filedialog.askopenfilename(
+            parent=self.root, title="Choose the project's Python interpreter", initialdir=self.project.folder
+        )
+        if filename:
+            self.set_python(Path(filename))
+
+    def set_python(self, path):
+        if self.project is None:
+            return
+        try:
+            self.project.set_python(path)
+        except (OSError, ProjectError) as e:
+            messagebox.showerror("Python Interpreter", str(e), parent=self.root)
+        self._python_info.clear()  # look again, in case it was just installed or changed
+        self.explorer_refresh()
 
     def set_startup(self, form):
         if self.project is None:
@@ -302,18 +339,22 @@ class App:
         if startup is None:
             self.immediate.write("(The project has no forms to run.)\n")
             return
+        python, where = self.python()
+        if not python.exists():
+            self.immediate.write(f"(The project's Python, {python}, doesn't exist. Choose another in the Project menu.)\n")
+            return
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [_PACKAGE_ROOT, env.get("PYTHONPATH")]))
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         process = subprocess.Popen(
-            [sys.executable, "-m", "pybasic.run", "--immediate", "--startup", startup, str(folder)],
+            [str(python), "-m", "pybasic.run", "--immediate", "--startup", startup, str(folder)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", cwd=folder, env=env,
         )
         self.process = process
         threading.Thread(target=_pump, args=(process.stdout, self._output), daemon=True).start()
-        self.immediate.write(f"--- Running {self.project.name} ({startup}). Type Python below to inspect it. ---\n")
+        self.immediate.write(f"--- Running {self.project.name} ({startup}, Python: {where}). Type Python below to inspect it. ---\n")
         self.root.after(50, self._poll_output)
 
     def stop(self):

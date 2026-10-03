@@ -5,6 +5,7 @@ understand it too. pybasic's own settings live in its [tool.pybasic] table:
 
     [tool.pybasic]
     startup = "MainForm"
+    python = ".venv/bin/python"   # optional; see Project.python()
 
 Forms (Name.form + Name.py) and modules (any other .py file) are found by
 looking in the folder, so there's no file list to keep in sync.
@@ -12,8 +13,11 @@ looking in the folder, so there's no file list to keep in sync.
 
 from __future__ import annotations
 
+import json
 import keyword
+import os
 import re
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -67,18 +71,48 @@ class Project:
     def name(self):
         return self.settings().get("project", {}).get("name") or self.folder.name
 
+    def setting(self, key):
+        return self.settings().get("tool", {}).get("pybasic", {}).get(key)
+
+    def set_setting(self, key, value):
+        """Set (or with None, remove) a [tool.pybasic] setting in pyproject.toml."""
+        text = self.pyproject.read_text(encoding="utf-8") if self.pyproject.exists() else new_pyproject(self.folder.name)
+        self.pyproject.write_text(set_setting(text, key, value), encoding="utf-8")
+
     @property
     def startup(self):
         """The form shown first: [tool.pybasic] startup, or else the first form."""
-        startup = self.settings().get("tool", {}).get("pybasic", {}).get("startup")
+        startup = self.setting("startup")
         if startup:
             return startup
         forms = self.forms()
         return forms[0] if forms else None
 
     def set_startup(self, form):
-        text = self.pyproject.read_text(encoding="utf-8") if self.pyproject.exists() else new_pyproject(self.folder.name)
-        self.pyproject.write_text(set_startup(text, form), encoding="utf-8")
+        if not form.isidentifier():
+            raise ProjectError(f"{form!r} isn't a valid form name.")
+        self.set_setting("startup", form)
+
+    def python(self):
+        """The interpreter that runs the project: [tool.pybasic] python, else the
+        folder's .venv, else None (meaning the IDE's own Python)."""
+        configured = self.setting("python")
+        if configured:
+            return self.folder / configured  # an absolute path replaces the folder
+        for candidate in (".venv/Scripts/python.exe", ".venv/bin/python"):
+            if (self.folder / candidate).exists():
+                return self.folder / candidate
+        return None
+
+    def set_python(self, path):
+        """Use the interpreter at path (None: back to .venv or the IDE's Python).
+        Paths inside the project are stored relative to it, so the project can move."""
+        if path is not None:
+            path = Path(os.path.abspath(path))  # not resolve(): a venv's python is a symlink that must stay one
+            if path.is_relative_to(self.folder):
+                path = path.relative_to(self.folder)
+            path = path.as_posix()
+        self.set_setting("python", path)
 
     def forms(self):
         return sorted(p.stem for p in self.folder.glob("*.form"))
@@ -119,20 +153,38 @@ def new_pyproject(name):
     )
 
 
-def set_startup(text, form):
-    """Set [tool.pybasic] startup in pyproject.toml text, leaving everything else as it was."""
-    if not form.isidentifier():
-        raise ProjectError(f"{form!r} isn't a valid form name.")
-    line = f'startup = "{form}"'
+def set_setting(text, key, value):
+    """Set (or with None, remove) key in pyproject.toml's [tool.pybasic] table,
+    leaving everything else in the text as it was."""
+    line = f"{key} = {json.dumps(value)}"  # a JSON string is also a valid TOML string
+    existing = rf"(?m)^{re.escape(key)}[ \t]*=.*$"
     header = re.search(r"(?m)^\[tool\.pybasic\][ \t]*$", text)
     if header is None:
-        return text.rstrip("\n") + f"\n\n[tool.pybasic]\n{line}\n"
+        return text if value is None else text.rstrip("\n") + f"\n\n[tool.pybasic]\n{line}\n"
     start = header.end()
     following = re.search(r"(?m)^\[", text[start:])  # the next table ends this one
     end = start + following.start() if following else len(text)
     body = text[start:end]
-    if re.search(r"(?m)^startup[ \t]*=", body):
-        body = re.sub(r"(?m)^startup[ \t]*=.*$", line, body, count=1)
+    if value is None:
+        body = re.sub(existing + r"\n?", "", body, count=1)
+    elif re.search(existing, body):
+        body = re.sub(existing, lambda m: line, body, count=1)
     else:
         body = "\n" + line + body
     return text[:start] + body + text[end:]
+
+
+def describe_python(path):
+    """The interpreter's version, plus any problem running pybasic with it."""
+    probe = "import sys; print('%d.%d.%d' % sys.version_info[:3]); import tkinter"
+    try:
+        result = subprocess.run([str(path), "-c", probe], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"can't run it ({e.__class__.__name__})"
+    version = result.stdout.strip() or "?"
+    problems = []
+    if tuple(int(n) for n in version.split(".")[:2] if n.isdigit()) < (3, 11):
+        problems.append("pybasic needs 3.11+")
+    if result.returncode != 0:
+        problems.append("no tkinter")
+    return ", ".join([version, *problems])

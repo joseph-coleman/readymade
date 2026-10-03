@@ -1,8 +1,10 @@
 """Projects: the pyproject.toml-based project model, and running multi-form programs."""
 
 import os
+import queue
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -10,7 +12,7 @@ import pytest
 
 from pybasic import forms, formfile
 from pybasic.controls import REGISTRY
-from pybasic.project import Project, ProjectError, set_startup
+from pybasic.project import Project, ProjectError, describe_python, set_setting
 
 ROOT = Path(__file__).parent.parent
 
@@ -65,8 +67,42 @@ def test_startup_falls_back_to_the_first_form(tmp_path):
          '[tool.pybasic]\nstartup = "Main"\n[[tool.pybasic.plugins]]\nname = "p"\n'),
     ],
 )
-def test_set_startup_edits_only_that_line(before, after):
-    assert set_startup(before, "Main") == after
+def test_set_setting_edits_only_that_line(before, after):
+    assert set_setting(before, "startup", "Main") == after
+
+
+def test_removing_and_escaping_settings():
+    text = '[tool.pybasic]\nstartup = "Main"\npython = "x"\n\n[tool.other]\n'
+    assert set_setting(text, "python", None) == '[tool.pybasic]\nstartup = "Main"\n\n[tool.other]\n'
+    assert set_setting('[project]\n', "python", None) == '[project]\n'
+    windows = set_setting(text, "python", r"C:\envs\app\python.exe")
+    assert 'python = "C:\\\\envs\\\\app\\\\python.exe"' in windows
+    import tomllib
+    assert tomllib.loads(windows)["tool"]["pybasic"]["python"] == r"C:\envs\app\python.exe"
+
+
+def test_choosing_the_interpreter(tmp_path):
+    project = Project.create(tmp_path / "p")
+    assert project.python() is None  # the IDE's own
+    venv_python = project.folder / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("")
+    assert project.python() == venv_python
+
+    project.set_python(project.folder / "envs" / "py" / "python")
+    assert project.setting("python") == "envs/py/python"  # stored relative, so the project can move
+    assert project.python() == project.folder / "envs" / "py" / "python"
+    outside = tmp_path / "conda" / "python"
+    project.set_python(outside)
+    assert project.python() == outside
+    project.set_python(None)
+    assert project.setting("python") is None and project.python() == venv_python
+
+
+def test_describe_python(tmp_path):
+    version = "%d.%d.%d" % sys.version_info[:3]
+    assert describe_python(sys.executable) == version
+    assert describe_python(tmp_path / "missing") == "can't run it (FileNotFoundError)"
 
 
 def make_two_form_project(folder):
@@ -98,26 +134,39 @@ def test_modal_dialog_and_ending_when_the_last_form_closes(tmp_path):
         [sys.executable, "-m", "pybasic.run", "--immediate", str(project.folder)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
     )
-    lines = [
-        "_ = form.root.after(0, Ask.widget.invoke)",  # a modal dialog blocks, so start it from the event loop
-        "print('dialog:', forms.Dialog.root.state())",
-        "_ = forms.Dialog.OK.widget.invoke()",
-        "print(Answer.text)",
-        "forms.Dialog.show()",
-        "form.close()",
-        "print('still running with', [f for f, x in forms.loaded().items() if x.loaded])",
-        "forms.Dialog.close()",
-    ]
-    for line in lines:
+    output = queue.Queue()
+    threading.Thread(target=lambda: [output.put(line.rstrip("\n")) for line in process.stdout], daemon=True).start()
+
+    def send(line):
         process.stdin.write(line + "\n")
         process.stdin.flush()
-        time.sleep(0.4)
+
+    def ask(expression, until, seconds=10):
+        """Print expression in the program until it equals until."""
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            send(f"print(repr({expression}))")
+            try:
+                answer = output.get(timeout=2)
+            except queue.Empty:
+                continue
+            if answer == repr(until):
+                return
+            time.sleep(0.1)
+        raise AssertionError(f"{expression} never became {until!r} (last: {answer})")
+
     try:
-        out, err = process.communicate(timeout=15)
+        send("_ = form.root.after(0, Ask.widget.invoke)")  # a modal dialog blocks, so start it from the event loop
+        ask("forms.Dialog.loaded and forms.Dialog.root.state()", "normal")
+        send("_ = forms.Dialog.OK.widget.invoke()")
+        ask("Answer.text", "result: ok")
+        send("forms.Dialog.show()")
+        send("form.close()")
+        ask("[f for f, x in forms.loaded().items() if x.loaded]", ["Dialog"])  # still running
+        send("forms.Dialog.close()")
+        assert process.wait(timeout=15) == 0, process.stderr.read()
     finally:
         process.kill()
-    assert process.returncode == 0, err
-    assert out.splitlines() == ["dialog: normal", "result: ok", "still running with ['Dialog']"]
 
 
 @pytest.mark.usefixtures("display")

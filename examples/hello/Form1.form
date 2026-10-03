@@ -163,6 +163,17 @@
       "scrollbars": "vertical",
       "text": "TextBox2",
       "visible": true
+    },
+    {
+      "type": "Button",
+      "name": "Button3",
+      "left": 480,
+      "top": 240,
+      "width": 144,
+      "height": 48,
+      "enabled": true,
+      "text": "Button3",
+      "visible": true
     }
   ]
 }

@@ -236,3 +236,31 @@ def test_scrollbars_choice_in_the_designer(app):
 def _row(app, prop):
     labels = {w.cget("text"): w for w in app.properties.grid_frame.grid_slaves(column=0)}
     return labels[prop].grid_info()["row"]
+
+
+def test_project_runs_with_its_own_venv(app):
+    import subprocess
+    import sys
+
+    assert app.explorer.tree.item("python", "text").endswith("(IDE)")
+    # A real venv; its python can use the base installation's tkinter.
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(app.project.folder / ".venv")], check=True)
+    app.set_python(None)  # refreshes the Explorer, as choosing would
+    label = app.explorer.tree.item("python", "text")
+    assert label == "Python %d.%d.%d  (.venv)" % sys.version_info[:3]
+
+    app.run()
+    app.immediate_line("? __import__('sys').prefix")
+    app.immediate_line("form.close()")
+    output = wait_for_exit(app)
+    assert "Python: .venv" in output
+    assert str(app.project.folder / ".venv") in output
+    assert "--- Ended (exit code 0) ---" in output
+
+
+def test_missing_interpreter_is_reported_not_run(app):
+    app.set_python(app.project.folder / "nowhere" / "python")
+    assert "can't run it" in app.explorer.tree.item("python", "text")
+    app.run()
+    assert app.process is None
+    assert "doesn't exist" in app.immediate.output.get("1.0", "end")
