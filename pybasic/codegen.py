@@ -46,12 +46,12 @@ def new_module(class_name):
 
 
 def defined_methods(source):
-    return set(re.findall(r"^[ \t]+def[ \t]+(\w+)[ \t]*\(", source, re.M))
+    return set(re.findall(r"^[ \t]+(?:async[ \t]+)?def[ \t]+(\w+)[ \t]*\(", source, re.M))
 
 
 def find_method(source, name):
     """The 1-based line of `def name(`, or None."""
-    m = re.search(rf"^[ \t]+def[ \t]+{re.escape(name)}[ \t]*\(", source, re.M)
+    m = re.search(rf"^[ \t]+(?:async[ \t]+)?def[ \t]+{re.escape(name)}[ \t]*\(", source, re.M)
     return source.count("\n", 0, m.start()) + 1 if m else None
 
 
@@ -94,7 +94,7 @@ def rename_control(source, old, new, events):
     """Rename a control's handlers and its `self.old` references."""
     if events:
         names = "|".join(re.escape(e) for e in events)
-        pattern = rf"^([ \t]+def[ \t]+){re.escape(old)}_({names})(?=[ \t]*\()"
+        pattern = rf"^([ \t]+(?:async[ \t]+)?def[ \t]+){re.escape(old)}_({names})(?=[ \t]*\()"
         source = re.sub(pattern, rf"\g<1>{new}_\g<2>", source, flags=re.M)
     return re.sub(rf"\bself\.{re.escape(old)}\b", f"self.{new}", source)
 

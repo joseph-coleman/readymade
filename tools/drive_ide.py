@@ -249,6 +249,24 @@ def drive(d):
     d.check("Format > Align > Lefts lines them up", left_top("Button2")[0] == left_top("Label2")[0], True)
     d.key("ctrl+z")
     d.check("undo the alignment", (left_top("Button2"), left_top("Label2")), ((64, 184), (24, 232)))
+
+    print("Copy and paste with the keyboard")
+    d.click(*d.at(editor.surface.controls["Button2"].widget))
+    d.check("clicking one control of a selection selects just it", editor.selection, ["Button2"])
+    d.key("ctrl+c")
+    d.key("ctrl+v")
+    d.check("Ctrl+C, Ctrl+V: a copy, offset and selected", (editor.selection, left_top("Button3")), (["Button3"], (80, 200)))
+    d.shot("pasted")
+    d.key("ctrl+z")
+    d.check("undo the paste", editor.design.control("Button3"), None)
+    editor.show_code()
+    d.pump(0.3)  # let Tk lay out the Code tab before measuring where to click
+    d.click(*d.at(editor.code.text, 40, 8))
+    d.key("Home", "shift+End")
+    d.key("ctrl+c")
+    d.check("Ctrl+C in the code copies text, not controls",
+            (app.root.clipboard_get(), [c["name"] for c in app.clipboard]), ("from pybasic import Form", ["Button2"]))
+    editor.show_design()
     widget = editor.surface.controls["Button2"].widget
 
     print("Double-click it to get to its click handler")

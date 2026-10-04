@@ -10,6 +10,7 @@ Ideas and gaps noted along the way, roughly by area.
 
 ## IDE
 - **Designer**: multi-select, align/same-size tools, copy and paste, arrow-key nudging, undo.
+- **Copy and paste**: optionally bring the controls' event handlers along (renamed to match), which VB never did. Also a selection box inside a Frame (today it only works on the form itself; Ctrl+click works anywhere).
 - **Project Explorer**: remove a form, module or library.
 - **Environments**: create conda/mamba environments (existing ones work via Choose Python Interpreter).
 - **Add Library**: keep comments inside the `dependencies` list when it's rewritten.

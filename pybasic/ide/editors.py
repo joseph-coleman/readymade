@@ -8,6 +8,7 @@ whose tab is showing.
 from __future__ import annotations
 
 import contextlib
+import copy
 import functools
 import keyword
 from tkinter import messagebox, ttk
@@ -272,17 +273,21 @@ class FormEditor:
 
     @_undoable
     def add_control(self, type_name, left, top, width=None, height=None, container=None):
-        names = set(self.object_names() + menus.names(self.design.menu))
-        n = 1
-        while f"{type_name}{n}" in names:
-            n += 1
-        spec = REGISTRY[type_name].new_spec(f"{type_name}{n}", left, top, width, height, container)
+        name = self._free_name(type_name, set(self.object_names() + menus.names(self.design.menu)))
+        spec = REGISTRY[type_name].new_spec(name, left, top, width, height, container)
         self.design.controls.append(spec)
         self.surface.add(spec)
         self.properties.refresh_objects()
         self.code.refresh_objects()
         self.select(spec["name"])
         self.update_title()
+
+    @staticmethod
+    def _free_name(type_name, taken):
+        n = 1
+        while f"{type_name}{n}" in taken:
+            n += 1
+        return f"{type_name}{n}"
 
     def add_control_centered(self, type_name):
         width, height = REGISTRY[type_name].default_size
@@ -349,13 +354,9 @@ class FormEditor:
     @_undoable
     def change_order(self, to_front):
         """Bring the selected controls in front of the others in their container, or send them behind."""
-        chosen = set(self.selected_controls())
-        if not chosen:
+        block = self._with_contents(self.selected_controls())
+        if not block:
             return
-        block = []  # the chosen controls, with everything inside them
-        for spec in self.design.controls:
-            if spec["name"] in chosen or spec.get("container") in {s["name"] for s in block}:
-                block.append(spec)
         rest = [s for s in self.design.controls if s not in block]
         container = block[0].get("container")
         if to_front:
@@ -366,6 +367,63 @@ class FormEditor:
         self.design.controls[:] = order
         self.surface.rebuild()
         self.update_title()
+
+    def _with_contents(self, names):
+        """The named controls with everything inside them, in .form order (containers first)."""
+        block, inside = [], set(names)
+        for spec in self.design.controls:
+            if spec["name"] in inside or spec.get("container") in inside:
+                block.append(spec)
+                inside.add(spec["name"])
+        return block
+
+    # ----- copy and paste -----
+
+    def copy_selection(self):
+        """The selected controls and their contents, ready for paste(); None if nothing's selected."""
+        return copy.deepcopy(self._with_contents(self.selected_controls())) or None
+
+    @_undoable
+    def paste(self, specs):
+        """Add copies of controls: into the selected Frame if one is selected, else onto the form.
+        Names are kept where they're free; copies that would land on top of others are offset."""
+        selected = self.selected_controls()
+        target = selected[0] if len(selected) == 1 and self.surface.controls[selected[0]].is_container else None
+        copied = {spec["name"] for spec in specs}
+        outermost = [spec for spec in specs if spec.get("container") not in copied]
+        taken = set(self.object_names() + menus.names(self.design.menu))
+        renames = {}
+        for spec in specs:
+            try:
+                check_name(spec["name"], taken)
+                renames[spec["name"]] = spec["name"]
+            except ValueError:
+                renames[spec["name"]] = self._free_name(spec["type"], taken)
+            taken.add(renames[spec["name"]])
+        occupied = {(c["left"], c["top"]) for c in self.design.controls if c.get("container") == target}
+        offset = 0
+        while any((s["left"] + offset, s["top"] + offset) in occupied for s in outermost):
+            offset += 2 * GRID
+        added = []
+        for spec in specs:
+            new = copy.deepcopy(spec)
+            new["name"] = renames[spec["name"]]
+            if spec.get("container") not in copied:  # outermost: goes into the target
+                new.pop("container", None)
+                if target:
+                    new["container"] = target
+                new["left"] += offset
+                new["top"] += offset
+            else:
+                new["container"] = renames[spec["container"]]
+            self.design.controls.append(new)
+            self.surface.add(new)
+            added.append(new)
+        self.properties.refresh_objects()
+        self.code.refresh_objects()
+        self.select_many([renames[s["name"]] for s in outermost])
+        self.update_title()
+        return [s["name"] for s in added]
 
     def goto_handler(self, obj, event_name):
         """Show the handler for obj's event in the code window, creating it if needed."""

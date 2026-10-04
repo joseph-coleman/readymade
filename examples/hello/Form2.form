@@ -33,7 +33,7 @@
       "type": "Button",
       "name": "btnDelete",
       "left": 16,
-      "top": 112,
+      "top": 88,
       "width": 88,
       "height": 32,
       "enabled": true,
@@ -43,12 +43,45 @@
     {
       "type": "Button",
       "name": "btnAdd",
-      "left": 40,
-      "top": 176,
+      "left": 24,
+      "top": 136,
       "width": 80,
       "height": 32,
       "enabled": true,
       "text": "btnAdd",
+      "visible": true
+    },
+    {
+      "type": "Button",
+      "name": "btnProcess",
+      "left": 24,
+      "top": 184,
+      "width": 104,
+      "height": 24,
+      "enabled": true,
+      "text": "Long process",
+      "visible": true
+    },
+    {
+      "type": "Button",
+      "name": "btnOld",
+      "left": 144,
+      "top": 184,
+      "width": 64,
+      "height": 24,
+      "enabled": true,
+      "text": "doEvents",
+      "visible": true
+    },
+    {
+      "type": "Button",
+      "name": "btnAddSomething",
+      "left": 224,
+      "top": 184,
+      "width": 88,
+      "height": 24,
+      "enabled": true,
+      "text": "Slow Add",
       "visible": true
     }
   ]

@@ -22,7 +22,7 @@ import keyword
 import tkinter as tk
 from pathlib import Path
 
-from pybasic import formfile, forms, menus
+from pybasic import events, formfile, forms, menus
 from pybasic.controls import Event, create
 
 FORM = "Form"
@@ -51,6 +51,7 @@ def main_loop():
     global _app
     if _loaded:
         app_root().mainloop()
+    events.shutdown()  # stop async handlers that are still running
     if _app is not None:
         try:
             _app.destroy()
@@ -86,6 +87,8 @@ class Form:
         if self.loaded:
             return
         design = formfile.load(self.path)
+        self._handlers = {}  # "Form_load" etc. -> events.Handler
+        self._tasks = set()  # running async handlers, cancelled when the form closes
         self.root = tk.Toplevel(self._master or app_root())
         self.root.withdraw()
         self.root.title(design.text)
@@ -172,18 +175,23 @@ class Form:
             self.root.bind(menus.shortcut_sequence(item["shortcut"]), lambda e: (menu.invoke(index), "break")[1])
         if variable is None:
             return None  # a submenu
-        return entry.click(getattr(self, f"{entry.name}_click", None))
+        func = getattr(self, f"{entry.name}_click", None)
+        return entry.click(events.Handler(self, func, events.policy_for(func, "click")) if callable(func) else None)
 
     def _fire(self, event, *args):
-        handler = getattr(self, f"{FORM}_{event}", None)
-        return handler(*args) if callable(handler) else None
+        name = f"{FORM}_{event}"
+        if name not in self._handlers:
+            func = getattr(self, name, None)
+            self._handlers[name] = events.Handler(self, func, events.policy_for(func, event)) if callable(func) else None
+        handler = self._handlers[name]
+        return handler(*args) if handler else None
 
     def _connect_events(self):
         for name, control in self.controls.items():
             for event in control.events:
-                handler = getattr(self, f"{name}_{event.name}", None)
-                if callable(handler):
-                    control.bind_event(event.name, handler)
+                func = getattr(self, f"{name}_{event.name}", None)
+                if callable(func):
+                    control.bind_event(event.name, events.Handler(self, func, events.policy_for(func, event.name, event.policy)))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         # Bindings on the root also see events from every control, so filter to the form itself.
         self.root.bind("<Configure>", self._on_configure, add="+")
@@ -205,6 +213,8 @@ class Form:
             return
         self.loaded = False
         _loaded.discard(self)
+        for task in list(self._tasks):
+            task.cancel()  # its busy async handlers stop quietly
         if not _loaded and _app is not None:
             _app.quit()  # ends main_loop()
 

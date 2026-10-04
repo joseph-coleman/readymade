@@ -388,7 +388,7 @@ class DesignSurface(tk.Frame):
         self.show_selection()
 
     def _drag_release(self, drag):
-        _, _, _, _, originals = drag
+        kind, pressed, _, _, originals = drag
         self._drag = None
         changed = {}
         for name, before in originals.items():
@@ -398,6 +398,10 @@ class DesignSurface(tk.Frame):
                 changed[name] = after
         if changed:
             self.app.set_geometries(changed)
+        elif kind == "move" and len(originals) > 1:
+            # Pressing a control in a multiple selection keeps it, so the group can be dragged;
+            # just clicking it (no drag) selects that control alone.
+            self.app.select(pressed.name)
 
     # ----- resizing the form -----
 

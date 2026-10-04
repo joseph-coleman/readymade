@@ -41,7 +41,8 @@ class App:
         self._watcher: TracebackWatcher | None = None  # finds errors in the running program's output
         self._output: queue.Queue = queue.Queue()
         self._console = _DesignTimeConsole(self)
-        self._python_info: dict[str, str] = {}  # interpreter path -> describe_python(), which is slow
+        self._python_info: dict[str, str] = {}
+        self.clipboard: list[dict] = []  # copied controls, for pasting into any form  # interpreter path -> describe_python(), which is slow
         self._build_ui()
         if path is not None:
             self.open_path(path)
@@ -85,6 +86,8 @@ class App:
             root.bind(sequence, lambda e, c=command: (c(), "break")[1])
         for sequence, redo in (("<Control-z>", False), ("<Control-y>", True), ("<Control-Z>", True)):
             root.bind(sequence, lambda e, r=redo: self._undo_key(r))
+        for sequence, action in (("<Control-x>", "cut"), ("<Control-c>", "copy"), ("<Control-v>", "paste")):
+            root.bind(sequence, lambda e, a=action: self._clipboard_key(a))
         root.protocol("WM_DELETE_WINDOW", self.exit)
 
     def _build_menu(self):
@@ -99,6 +102,10 @@ class App:
         edit = tk.Menu(menubar, tearoff=False, postcommand=lambda: self._update_edit_menu(edit))
         edit.add_command(label="Undo", accelerator="Ctrl+Z", command=self.undo)
         edit.add_command(label="Redo", accelerator="Ctrl+Y", command=lambda: self.undo(redo=True))
+        edit.add_separator()
+        for label, action, key in (("Cut", "cut", "Ctrl+X"), ("Copy", "copy", "Ctrl+C"),
+                                   ("Paste", "paste", "Ctrl+V"), ("Delete", "delete", "Del")):
+            edit.add_command(label=label, accelerator=key, command=lambda a=action: self.edit(a))
         format_menu = self._build_format_menu(menubar)
         project = tk.Menu(menubar, tearoff=False)
         project.add_command(label="Add Form...", command=self.add_form)
@@ -310,11 +317,48 @@ class App:
         self.undo(redo)
         return "break"
 
+    def edit(self, action):
+        """Edit > Cut/Copy/Paste/Delete: controls while designing, otherwise text in the code editor."""
+        form = self.form
+        if form is not None and self._designing():
+            if action in ("cut", "copy"):
+                copied = form.copy_selection()
+                if copied:
+                    self.clipboard = copied
+                    if action == "cut":
+                        form.delete_selection()
+            elif action == "paste" and self.clipboard:
+                form.paste(self.clipboard)
+            elif action == "delete":
+                form.delete_selection()
+            return
+        editor = self._current_editor()
+        if editor is not None:
+            event = {"cut": "<<Cut>>", "copy": "<<Copy>>", "paste": "<<Paste>>", "delete": "<<Clear>>"}[action]
+            editor.code.text.event_generate(event)
+
+    def _clipboard_key(self, action):
+        """Ctrl+X/C/V act on controls only while the design surface has the keyboard;
+        anywhere else (code, Properties, Immediate) they're the usual text keys."""
+        try:
+            focus = self.root.focus_get()
+        except KeyError:
+            focus = None
+        if self.form is None or not self._designing() or focus is None or not str(focus).startswith(str(self.form.surface)):
+            return None
+        self.edit(action)
+        return "break"
+
     def _update_edit_menu(self, menu):
         editor = self._current_editor()
         designing = isinstance(editor, FormEditor) and editor.frame.select() == str(editor.surface)
+        selected = bool(designing and editor.selected_controls())
         for label, possible in (("Undo", editor.can_undo() if designing else editor is not None),
-                                ("Redo", editor.can_redo() if designing else editor is not None)):
+                                ("Redo", editor.can_redo() if designing else editor is not None),
+                                ("Cut", selected or (editor is not None and not designing)),
+                                ("Copy", selected or (editor is not None and not designing)),
+                                ("Paste", bool(self.clipboard) if designing else editor is not None),
+                                ("Delete", selected or (editor is not None and not designing))):
             menu.entryconfigure(label, state=tk.NORMAL if possible else tk.DISABLED)
 
     def menu_editor(self):

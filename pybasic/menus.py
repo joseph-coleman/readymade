@@ -121,7 +121,10 @@ def build(menu, items, on_entry):
     """Add items to a tk.Menu. Commands are check buttons, so any item can show a
     check mark. on_entry(item, menu, index, variable) is called for each named item
     and returns the command to run (or None for submenus)."""
-    for item in items:
+    # Each item, separators too, is one entry, so its place in the list is its index in the
+    # menu. (Counted, not asked: for an empty menu Tk 8.6 says "none" and Tk 9 says "", which
+    # older tkinter can't read. These menus have no tear-off entry.)
+    for index, item in enumerate(items):
         if item.get("text") == SEPARATOR:
             menu.add_separator()
             continue
@@ -130,8 +133,6 @@ def build(menu, items, on_entry):
             "label": label, "underline": underline, "accelerator": item.get("shortcut", ""),
             "state": tk.NORMAL if item.get("enabled", True) else tk.DISABLED,
         }
-        index = menu.index(tk.END)
-        index = 0 if index is None else index + 1
         if item.get("items"):
             submenu = tk.Menu(menu, tearoff=False)
             build(submenu, item["items"], on_entry)

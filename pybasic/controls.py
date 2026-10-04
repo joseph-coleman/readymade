@@ -22,6 +22,7 @@ class Event:
 
     name: str
     params: tuple[str, ...] = ()
+    policy: str = ""  # what happens while its handler is busy; see pybasic.events (default: by name)
 
 
 def _key(e):
@@ -410,7 +411,7 @@ class Button(_WidgetText, Control):
 class CheckBox(_WidgetText, Control):
     type_name = "CheckBox"
     default_size = (120, 24)
-    events = (Event("click"), *_FOCUS_EVENTS)
+    events = (Event("click", policy="latest"), *_FOCUS_EVENTS)
     extra_props = {"text": "", "value": False}
 
     def create_widget(self, parent):
@@ -442,7 +443,7 @@ class OptionButton(_WidgetText, Control):
 
     type_name = "OptionButton"
     default_size = (120, 24)
-    events = (Event("click"), *_FOCUS_EVENTS)
+    events = (Event("click", policy="latest"), *_FOCUS_EVENTS)
     extra_props = {"text": "", "value": False}
 
     def create_widget(self, parent):
@@ -507,7 +508,7 @@ class ComboBox(_ListMixin, Control):
     type_name = "ComboBox"
     default_size = (120, 24)
     default_event = "change"
-    events = (Event("change"), Event("click"), Event("keypress", ("key",)), *_FOCUS_EVENTS)
+    events = (Event("change"), Event("click", policy="latest"), Event("keypress", ("key",)), *_FOCUS_EVENTS)
     extra_props = {"text": "", "items": [], "editable": True}
 
     def create_widget(self, parent):
@@ -582,7 +583,7 @@ class ComboBox(_ListMixin, Control):
 class ListBox(_ListMixin, Control):
     type_name = "ListBox"
     default_size = (120, 96)
-    events = (Event("click"), Event("dblclick"), *_FOCUS_EVENTS)
+    events = (Event("click", policy="latest"), Event("dblclick"), *_FOCUS_EVENTS)
     extra_props = {"items": []}
 
     def create_widget(self, parent):

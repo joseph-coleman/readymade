@@ -677,3 +677,96 @@ def test_send_to_back_keeps_frames_before_their_contents(app):
     form.change_order(to_front=False)  # the Frame takes its contents with it
     assert [c["name"] for c in form.design.controls] == ["Frame1", "CheckBox1", "Button1", "Label1"]
     assert app.save() and formfile.load(form.path)  # still a valid .form file
+
+
+def specs_of(form, *names):
+    return [{k: form.design.control(n)[k] for k in ("left", "top", "text") if k in form.design.control(n)} for n in names]
+
+
+def test_copy_and_paste_in_the_same_form(app):
+    form = app.form
+    form.add_control("Button", 16, 16)
+    form.set_property("Button1", "text", "Go")
+    form.select("Button1")
+    app.edit("copy")
+    app.edit("paste")
+    assert form.selection == ["Button2"]  # the copy is selected, ready to move
+    assert specs_of(form, "Button2") == [{"left": 32, "top": 32, "text": "Go"}]  # offset, so it doesn't hide the original
+    app.edit("paste")
+    assert specs_of(form, "Button3") == [{"left": 48, "top": 48, "text": "Go"}]  # repeated pastes cascade
+    form.undo()
+    assert form.design.control("Button3") is None and form.design.control("Button2")
+
+
+def test_copying_a_frame_copies_its_contents(app):
+    form = app.form
+    form.add_control("Frame", 8, 8, 160, 100)
+    form.add_control("OptionButton", 8, 8, container="Frame1")
+    form.add_control("OptionButton", 8, 40, container="Frame1")
+    form.select("Frame1")
+    app.edit("copy")
+    form.select(FORM)
+    added = form.paste(app.clipboard)
+    assert added == ["Frame2", "OptionButton3", "OptionButton4"]
+    assert [form.design.control(n).get("container") for n in added] == [None, "Frame2", "Frame2"]
+    assert form.surface.controls["OptionButton3"].widget.master is form.surface.controls["Frame2"].inner
+
+    form.select("Frame1")  # with one Frame selected, a paste goes inside it
+    form.add_control("Label", 200, 200)
+    form.select("Label1")
+    app.edit("copy")
+    form.select("Frame1")
+    app.edit("paste")
+    assert form.design.control("Label2")["container"] == "Frame1"
+
+
+def test_cut_and_paste_keeps_names_and_places(app):
+    form = app.form
+    form.add_control("Button", 16, 16)
+    form.add_control("CheckBox", 16, 56)
+    form.select_many(["Button1", "CheckBox1"])
+    app.edit("cut")
+    assert form.design.controls == []
+    app.edit("paste")
+    assert [c["name"] for c in form.design.controls] == ["Button1", "CheckBox1"]
+    assert specs_of(form, "Button1", "CheckBox1")[0]["left"] == 16  # nothing in the way, so no offset
+    assert form.selection == ["Button1", "CheckBox1"]
+
+
+def test_paste_into_another_form(app):
+    form1 = app.form
+    form1.add_control("TextBox", 8, 8)
+    form1.select("TextBox1")
+    app.edit("copy")
+    app.project.add_form("Settings")
+    settings = app.open_form("Settings")
+    app.edit("paste")
+    assert [c["name"] for c in settings.design.controls] == ["TextBox1"]
+    assert specs_of(settings, "TextBox1")[0]["left"] == 8
+    assert form1.design.control("TextBox1")  # the original is untouched
+
+
+def test_clipboard_keys_leave_text_boxes_alone(app):
+    form = app.form
+    form.add_control("Button", 8, 8)
+    form.surface.canvas.focus_force()
+    app.root.update()
+    assert app._clipboard_key("copy") == "break" and app.clipboard
+    app.clipboard = []
+    entry = next(w for w in app.properties.grid_frame.grid_slaves(column=1) if w.winfo_class() == "TEntry")
+    entry.focus_force()
+    app.root.update()
+    assert app._clipboard_key("copy") is None and app.clipboard == []  # the entry copies its own text
+
+
+def test_clicking_one_control_of_a_selection_selects_just_it(app):
+    form = app.form
+    form.add_control("Button", 16, 16)
+    form.add_control("Button", 16, 56)
+    form.select_many(["Button1", "Button2"])
+    surface = form.surface
+    press = types.SimpleNamespace(x_root=0, y_root=0, state=0)
+    surface._control_press(press, surface.controls["Button1"])
+    assert form.selection == ["Button1", "Button2"]  # kept while the mouse is down, so the group can be dragged
+    surface._release(press)  # released without moving
+    assert form.selection == ["Button1"]
