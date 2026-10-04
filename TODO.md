@@ -17,6 +17,15 @@ Ideas and gaps noted along the way, roughly by area.
 - **Code window**: after jumping to a run-time error, name the handler in the Object/Event dropdowns.
 - **Renaming a form**: also update references to it in other files (like `forms.OldName`).
 
+## Code editor
+- **Settings**: indent width (4 spaces today, a constant in `pybasic/ide/codeview.py`), font, theme. Needs an IDE settings dialog.
+- **Line numbers** (tklinenums, MIT) and better colouring (Pygments, BSD).
+- **Comment/uncomment** a block (Ctrl+/), auto-closing brackets and quotes, dedent after `return`/`pass`.
+- **Folding** and an outline, from an error-tolerant parser (parso, MIT).
+- **Completion and go to definition** (Jedi, MIT).
+- **Formatting** (Black, or Ruff's formatter; both MIT). Linting is under Biggest features.
+- These libraries would be IDE-only dependencies, so programs shouldn't need them: split the package into the runtime and an extra, e.g. `pybasic[ide]`.
+
 ## Bigger features
 - **Make EXE options**: an icon, one-folder instead of one-file, version details, and extra files to bundle (images, data files: only .form files go in today). Perhaps a small dialog. Options true everywhere (icon, name) belong in `pyproject.toml`'s `[tool.pybasic]`; anything tied to one machine (a signing certificate, an interpreter) in `.pybasic/local.json`, kept per machine and out of git.
     - Longer term idea, executables need to be able to be signed. 

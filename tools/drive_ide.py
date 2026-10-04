@@ -266,6 +266,16 @@ def drive(d):
     d.key("ctrl+c")
     d.check("Ctrl+C in the code copies text, not controls",
             (app.root.clipboard_get(), [c["name"] for c in app.clipboard]), ("from pybasic import Form", ["Button2"]))
+
+    print("Indent and dedent a block of code with Tab and Shift+Tab")
+    before = editor.code.get_source()
+    d.key("ctrl+Home", "Down", "Down", "Down", "Down")  # line 5: "    def Form_load(self):"
+    d.key("shift+Down", "shift+Down")  # select lines 5 and 6
+    d.key("Tab")
+    lines = editor.code.get_source().splitlines()
+    d.check("Tab indents both lines", (lines[4], lines[5]), ("        def Form_load(self):", "            self.Label1.text = \"What's your name?\""))
+    d.key("shift+Tab")
+    d.check("Shift+Tab puts them back", editor.code.get_source() == before, True)
     editor.show_design()
     widget = editor.surface.controls["Button2"].widget
 

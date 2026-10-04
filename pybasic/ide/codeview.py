@@ -19,6 +19,7 @@ _STRING = r"'''[\s\S]*?'''|\"\"\"[\s\S]*?\"\"\"|'(?:\\.|[^'\\\n])*'|\"(?:\\.|[^\
 _TOKENS = re.compile(
     rf"(?P<comment>#[^\n]*)|(?P<string>{_STRING})|(?P<keyword>\b(?:{'|'.join(keyword.kwlist)})\b)"
 )
+INDENT = codegen.INDENT  # four spaces; Tab never inserts a tab character
 _ERROR_COLOR = "#fff59d"  # VB marked the current line in yellow
 _COLORS = {"keyword": "#000080", "comment": "#008000", "string": "#a31515"}  # VB's blue and green
 _IMPLEMENTED = "  ✓"
@@ -63,7 +64,14 @@ class CodeView(ttk.Frame):
         self.text.bindtags((str(self.text), str(self.winfo_toplevel()), "Text", "all"))
         self.text.bind("<<Modified>>", self._on_modified)
         self.text.bind("<Return>", self._newline)
-        self.text.bind("<Tab>", lambda e: self._insert(codegen.INDENT))
+        # Indentation, as in other editors: always spaces, one undo step each.
+        self.text.bind("<Tab>", self._tab)
+        for sequence in ("<Shift-Tab>", "<ISO_Left_Tab>"):  # Shift+Tab arrives as ISO_Left_Tab on X11
+            try:
+                self.text.bind(sequence, self._dedent)
+            except tk.TclError:  # a keysym this platform's Tk doesn't know
+                pass
+        self.text.bind("<BackSpace>", self._backspace)
 
     # ----- source -----
 
@@ -135,11 +143,83 @@ class CodeView(ttk.Frame):
         self.text.see("insert")
         return "break"
 
+    def _selected_lines(self):
+        """The first and last line numbers of the selection, or None. A selection that ends
+        at the very start of a line doesn't include that line."""
+        if not self.text.tag_ranges("sel"):
+            return None
+        first = int(self.text.index("sel.first").split(".")[0])
+        last_line, last_column = map(int, self.text.index("sel.last").split("."))
+        return first, (last_line - 1 if last_column == 0 and last_line > first else last_line)
+
+    def _one_step(self, change):
+        """Make a change of several edits undo in one step."""
+        self.text.configure(autoseparators=False)
+        self.text.edit_separator()
+        try:
+            change()
+        finally:
+            self.text.edit_separator()
+            self.text.configure(autoseparators=True)
+
+    def _tab(self, _):
+        lines = self._selected_lines()
+        if lines and (lines[0] != lines[1] or self._whole_line_selected(lines[0])):
+            first, last = lines
+
+            def indent():
+                for n in range(first, last + 1):
+                    if self.text.get(f"{n}.0", f"{n}.end").strip():  # blank lines stay empty
+                        self.text.insert(f"{n}.0", INDENT)
+
+            self._one_step(indent)
+            self._select_lines(first, last)
+            return "break"
+        start = "sel.first" if self.text.tag_ranges("sel") else "insert"  # where the spaces will begin
+        column = int(self.text.index(start).split(".")[1])
+        return self._insert(" " * (len(INDENT) - column % len(INDENT)))  # to the next tab stop
+
+    def _dedent(self, _):
+        lines = self._selected_lines()
+        first, last = lines if lines else (int(self.text.index("insert").split(".")[0]),) * 2
+
+        def remove():
+            for n in range(first, last + 1):
+                line = self.text.get(f"{n}.0", f"{n}.end")
+                spaces = len(line) - len(line.lstrip(" "))
+                width = 1 if line.startswith("\t") else min(spaces, len(INDENT))
+                if width:
+                    self.text.delete(f"{n}.0", f"{n}.{width}")
+
+        self._one_step(remove)
+        if lines:
+            self._select_lines(first, last)
+        return "break"
+
+    def _backspace(self, _):
+        """In a line's leading spaces, Backspace goes back to the previous tab stop."""
+        if self.text.tag_ranges("sel"):
+            return None
+        before = self.text.get("insert linestart", "insert")
+        if not before or before.strip(" "):
+            return None  # not in the indentation: the usual Backspace
+        width = len(before) % len(INDENT) or len(INDENT)
+        self.text.delete(f"insert -{width}c", "insert")
+        return "break"
+
+    def _whole_line_selected(self, n):
+        return self.text.index("sel.first") == f"{n}.0" and self.text.compare("sel.last", ">=", f"{n}.0 lineend")
+
+    def _select_lines(self, first, last):
+        self.text.tag_remove("sel", "1.0", tk.END)
+        self.text.tag_add("sel", f"{first}.0", f"{last + 1}.0")
+        self.text.mark_set("insert", f"{last + 1}.0")
+
     def _newline(self, _):
         line = self.text.get("insert linestart", "insert")
         indent = line[: len(line) - len(line.lstrip())]
         if line.rstrip().endswith(":"):
-            indent += codegen.INDENT
+            indent += INDENT
         return self._insert("\n" + indent)
 
     def show_error(self, line, message):
