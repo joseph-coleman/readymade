@@ -83,6 +83,8 @@ class App:
             ("<Shift-F7>", lambda: self.form and self.form.show_design()),
         ):
             root.bind(sequence, lambda e, c=command: (c(), "break")[1])
+        for sequence, redo in (("<Control-z>", False), ("<Control-y>", True), ("<Control-Z>", True)):
+            root.bind(sequence, lambda e, r=redo: self._undo_key(r))
         root.protocol("WM_DELETE_WINDOW", self.exit)
 
     def _build_menu(self):
@@ -94,6 +96,9 @@ class App:
         file.add_command(label="Close", accelerator="Ctrl+W", command=self.close_document)
         file.add_separator()
         file.add_command(label="Exit", command=self.exit)
+        edit = tk.Menu(menubar, tearoff=False, postcommand=lambda: self._update_edit_menu(edit))
+        edit.add_command(label="Undo", accelerator="Ctrl+Z", command=self.undo)
+        edit.add_command(label="Redo", accelerator="Ctrl+Y", command=lambda: self.undo(redo=True))
         project = tk.Menu(menubar, tearoff=False)
         project.add_command(label="Add Form...", command=self.add_form)
         project.add_command(label="Add Module...", command=self.add_module)
@@ -113,6 +118,7 @@ class App:
         run.add_command(label="Start", accelerator="F5", command=self.run)
         run.add_command(label="End", command=self.stop)
         menubar.add_cascade(label="File", menu=file)
+        menubar.add_cascade(label="Edit", menu=edit)
         menubar.add_cascade(label="Project", menu=project)
         menubar.add_cascade(label="View", menu=view)
         menubar.add_cascade(label="Tools", menu=tools)
@@ -234,6 +240,34 @@ class App:
             self.project.set_startup(new)
         self.explorer_refresh()
         self.update_title()
+
+    def undo(self, redo=False):
+        """Edit > Undo/Redo: the designer's when a form's design is showing, otherwise the code editor's."""
+        editor = self._current_editor()
+        if isinstance(editor, FormEditor) and editor.frame.select() == str(editor.surface):
+            editor.redo() if redo else editor.undo()
+        elif editor is not None:
+            try:
+                editor.code.text.edit_redo() if redo else editor.code.text.edit_undo()
+            except tk.TclError:
+                pass  # nothing to undo
+
+    def _undo_key(self, redo):
+        try:
+            focus = self.root.focus_get()
+        except KeyError:
+            focus = None
+        if isinstance(focus, tk.Text):
+            return None  # typing in code: the editor's own Ctrl+Z handles it
+        self.undo(redo)
+        return "break"
+
+    def _update_edit_menu(self, menu):
+        editor = self._current_editor()
+        designing = isinstance(editor, FormEditor) and editor.frame.select() == str(editor.surface)
+        for label, possible in (("Undo", editor.can_undo() if designing else editor is not None),
+                                ("Redo", editor.can_redo() if designing else editor is not None)):
+            menu.entryconfigure(label, state=tk.NORMAL if possible else tk.DISABLED)
 
     def menu_editor(self):
         """Open the Menu Editor for the form that's showing."""

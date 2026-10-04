@@ -7,6 +7,8 @@ whose tab is showing.
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import keyword
 from tkinter import messagebox, ttk
 
@@ -15,6 +17,17 @@ from pybasic.controls import REGISTRY, Event
 from pybasic.form import FORM, FORM_EVENTS, check_name
 from pybasic.ide.codeview import CodeView
 from pybasic.ide.designer import GRID, DesignSurface, snap
+
+UNDO_LIMIT = 200
+
+
+def _undoable(method):
+    """Record a designer change so it can be undone. Changes made inside it count as one."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._change():
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 class FormEditor:
@@ -34,6 +47,10 @@ class FormEditor:
         self.code.set_source(saved_source if saved_source is not None else codegen.new_module(self.design.name))
         self.code.refresh_objects()
         self._saved = (formfile.dumps(self.design), saved_source)
+        # Each entry is (state before, state after, merge key); a state is (design JSON, code).
+        self._undo: list[tuple[tuple[str, str], tuple[str, str], object]] = []
+        self._redo: list[tuple[tuple[str, str], tuple[str, str], object]] = []
+        self._changing = 0
 
     @property
     def name(self):
@@ -103,6 +120,7 @@ class FormEditor:
         self.surface.show_selection(obj)
         self.properties.show(obj)
 
+    @_undoable
     def set_property(self, obj, prop, raw):
         """Apply an edit from the Properties panel. Returns the object's (possibly new) name, or None if invalid."""
         current = dict(self.props_for(obj))[prop]
@@ -162,6 +180,7 @@ class FormEditor:
         self.code.refresh_objects()
         return new
 
+    @_undoable
     def geometry_changed(self, name, geometry):
         spec = self._spec(name)
         for key, value in zip(("left", "top", "width", "height"), geometry):
@@ -170,12 +189,14 @@ class FormEditor:
         self.properties.update_values()
         self.update_title()
 
+    @_undoable
     def set_form_size(self, width, height):
         self.design.width, self.design.height = width, height
         self.surface.refresh_form()
         self.properties.update_values()
         self.update_title()
 
+    @_undoable
     def add_control(self, type_name, left, top, width=None, height=None, container=None):
         names = set(self.object_names() + menus.names(self.design.menu))
         n = 1
@@ -194,6 +215,7 @@ class FormEditor:
         self.toolbox.reset()
         self.add_control(type_name, snap((self.design.width - width) / 2), snap((self.design.height - height) / 2))
 
+    @_undoable
     def delete_control(self, name):
         """Delete a control, and everything inside it if it's a Frame. Like VB, handlers stay in the code."""
         doomed = {name}
@@ -225,6 +247,7 @@ class FormEditor:
         self.show_code()
         self.code.show_method(obj, event.name, line)
 
+    @_undoable
     def set_menu(self, items, renames=()):
         """Replace the form's menu (from the Menu Editor), renaming handlers of renamed items."""
         source = self.code.get_source()
@@ -235,6 +258,87 @@ class FormEditor:
         self.surface.refresh_menu()
         self.code.refresh_objects()
         self.update_title()
+
+    # ----- undo -----
+
+    def _state(self):
+        return formfile.dumps(self.design), self.code.get_source()
+
+    @contextlib.contextmanager
+    def _change(self, merge=None):
+        """Record what the enclosed code changes. Repeated changes with the same merge
+        key (like holding an arrow key) become one undo step."""
+        self._changing += 1
+        before = self._state() if self._changing == 1 else None
+        try:
+            yield
+        finally:
+            self._changing -= 1
+        if before is None:
+            return
+        after = self._state()
+        if after == before:
+            return  # nothing changed, e.g. a property edit that was refused
+        if merge is not None and self._undo and self._undo[-1][2] == merge and not self._redo:
+            before = self._undo.pop()[0]
+        self._undo.append((before, after, merge))
+        del self._undo[:-UNDO_LIMIT]
+        self._redo.clear()
+
+    def can_undo(self):
+        return bool(self._undo)
+
+    def can_redo(self):
+        return bool(self._redo)
+
+    def undo(self):
+        if self._undo:
+            before, after, merge = self._undo.pop()
+            self._redo.append((before, after, merge))
+            self._restore(before, after)
+
+    def redo(self):
+        if self._redo:
+            before, after, merge = self._redo.pop()
+            self._undo.append((before, after, None))  # a redone step doesn't merge with what follows
+            self._restore(after, before)
+
+    def _restore(self, target, current):
+        """Go back (or forward) to target. The code goes back too, unless it's been edited
+        since the change, which would lose that work; then only the design does."""
+        design, source = target
+        if source != current[1] and self.code.get_source() == current[1]:
+            self.code.replace_source(source)
+        selected = self.selected
+        self.properties.clear()  # don't commit whatever the panel showed before
+        self.design = formfile.loads(design)
+        self.surface.rebuild()
+        self.code.refresh_objects()
+        self.properties.refresh_objects()
+        exists = selected == FORM or self.design.control(selected) is not None
+        self.select(selected if exists else FORM)
+        self.update_title()
+
+    def _nudged(self, name, geometry):
+        spec = self._spec(name)
+        for key, value in zip(("left", "top", "width", "height"), geometry):
+            if key in spec:
+                spec[key] = value
+        self.surface.refresh_control(name)
+        self.properties.update_values()
+        self.update_title()
+
+    def nudge(self, dx=0, dy=0, dwidth=0, dheight=0):
+        """Move or resize the selected control from the keyboard."""
+        control = self.surface.controls.get(self.selected)
+        if control is None:
+            return
+        if (dwidth or dheight) and not control.resizable:
+            return
+        geometry = (control.left + dx, control.top + dy,
+                    max(GRID, control.width + dwidth), max(GRID, control.height + dheight))
+        with self._change(merge=("nudge", self.selected, bool(dwidth or dheight))):
+            self._nudged(self.selected, geometry)
 
     def show_code(self):
         self.code.refresh_objects()

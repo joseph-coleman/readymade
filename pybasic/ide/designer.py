@@ -58,6 +58,10 @@ class DesignSurface(tk.Frame):
         self.canvas.bind("<ButtonRelease-1>", self._release)
         self.canvas.bind("<Double-Button-1>", lambda e: app.goto_handler(FORM, "load"))
         self.canvas.bind("<Delete>", self._delete_selected)
+        # Arrows move the selected control a grid step (Ctrl: 1 pixel); with Shift they resize it.
+        for key, dx, dy in (("Left", -1, 0), ("Right", 1, 0), ("Up", 0, -1), ("Down", 0, 1)):
+            for modifiers, step, resize in (("", GRID, False), ("Control-", 1, False), ("Shift-", GRID, True), ("Control-Shift-", 1, True)):
+                self.canvas.bind(f"<{modifiers}{key}>", lambda e, x=dx * step, y=dy * step, r=resize: self._arrow(x, y, r))
 
         self.form_handle = tk.Frame(self, bg="black", width=HANDLE, height=HANDLE, cursor="bottom_right_corner")
         self.form_handle.place(in_=self.window, relx=1.0, rely=1.0)
@@ -223,6 +227,13 @@ class DesignSurface(tk.Frame):
             self._band_release(e, self._band)
         elif self._drag:
             self._drag_release(self._drag)
+        return "break"
+
+    def _arrow(self, dx, dy, resize):
+        if resize:
+            self.app.nudge(dwidth=dx, dheight=dy)
+        else:
+            self.app.nudge(dx=dx, dy=dy)
         return "break"
 
     def _delete_selected(self, _):

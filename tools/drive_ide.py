@@ -213,6 +213,22 @@ def drive(d):
     d.check("properties panel follows", app.properties._rows["width"][0].get(), "152")
     d.shot("moved-resized")
 
+    print("Undo, redo and the arrow keys")
+    # Undo rebuilds the form from a snapshot, so look Button2 up afresh each time.
+    geometry = lambda: tuple(editor.design.control("Button2")[k] for k in ("left", "top", "width", "height"))  # noqa: E731
+    d.key("ctrl+z")
+    d.check("Ctrl+Z undoes the resize", geometry(), (64, 184, 120, 32))
+    d.key("ctrl+y")
+    d.check("Ctrl+Y redoes it", geometry(), (64, 184, 152, 48))
+    d.key("Right", "Right")
+    d.key("shift+Down")
+    d.check("arrows move, Shift+arrow resizes", geometry(), (80, 184, 152, 56))
+    d.check("the designer follows", editor.surface.controls["Button2"].left, 80)
+    d.key("ctrl+z")
+    d.key("ctrl+z")
+    d.check("two undos: the resize, then both moves", geometry(), (64, 184, 152, 48))
+    widget = editor.surface.controls["Button2"].widget
+
     print("Double-click it to get to its click handler")
     d.click(*d.at(widget), repeat=2)
     d.check("code tab shown", editor.frame.select(), str(editor.code))

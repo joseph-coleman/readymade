@@ -492,3 +492,90 @@ def test_shortcut_picker_shows_problems_as_you_go(app):
     editor.key_var.set("")
     assert "shortcut" not in editor.items[0]
     editor.destroy()
+
+
+def test_undo_and_redo_designer_changes(app):
+    form = app.form
+    form.add_control("Button", 8, 8)
+    form.set_property("Button1", "text", "Go")
+    form.geometry_changed("Button1", (40, 48, 96, 28))  # as a drag does when it ends
+    assert app.is_dirty()
+
+    form.undo()
+    assert form.design.control("Button1")["left"] == 8
+    form.undo()
+    assert form.design.control("Button1")["text"] == "Button1"
+    assert form.surface.controls["Button1"].text == "Button1"  # the designer shows it too
+    form.undo()
+    assert form.design.controls == [] and form.surface.controls == {}
+    assert not app.is_dirty() and not form.can_undo()  # back to how it was saved
+
+    form.redo()
+    form.redo()
+    assert form.surface.controls["Button1"].text == "Go"
+    form.add_control("Label", 8, 48)  # a new change clears what could be redone
+    assert not form.can_redo()
+
+
+def test_undo_brings_back_a_deleted_frame_with_its_contents(app):
+    form = app.form
+    form.add_control("Frame", 8, 8, 200, 120)
+    form.add_control("OptionButton", 8, 8, container="Frame1")
+    form.delete_control("Frame1")
+    form.undo()
+    assert [c["name"] for c in form.design.controls] == ["Frame1", "OptionButton1"]
+    assert form.surface.controls["OptionButton1"].widget.master is form.surface.controls["Frame1"].inner
+
+
+def test_undoing_a_rename_restores_the_code_unless_it_was_edited_since(app):
+    form = app.form
+    form.add_control("Button", 8, 8)
+    form.goto_handler("Button1", "click")
+    form.set_property("Button1", "name", "btnGo")
+    assert "def btnGo_click" in form.code.get_source()
+    form.undo()
+    assert form.design.control("Button1") and "def Button1_click" in form.code.get_source()
+
+    form.redo()
+    assert form.design.control("btnGo") and "def btnGo_click" in form.code.get_source()
+    form.code.text.insert("end", "\n# my own edit\n")
+    form.undo()  # the design goes back; the edited code is left alone
+    assert form.design.control("Button1") and "# my own edit" in form.code.get_source()
+
+
+def test_arrow_keys_nudge_and_resize(app):
+    form = app.form
+    form.add_control("Button", 16, 16)
+    for _ in range(3):
+        form.nudge(dx=8)
+    form.nudge(dy=1)
+    form.nudge(dwidth=8)
+    spec = form.design.control("Button1")
+    assert (spec["left"], spec["top"], spec["width"]) == (40, 17, 104)
+    assert form.surface.controls["Button1"].left == 40
+    assert app.properties._rows["left"][0].get() == "40"
+    form.undo()  # the resize
+    form.undo()  # all the moves, as one step
+    assert (spec := form.design.control("Button1"))["left"] == 16 and spec["top"] == 16
+
+    form.nudge(dwidth=-500)
+    assert form.design.control("Button1")["width"] == 8  # never smaller than a grid step
+    form.add_control("Timer", 100, 100)
+    form.nudge(dwidth=8)  # a Timer has no size
+    assert "width" not in form.design.control("Timer1")
+
+
+def test_ctrl_z_belongs_to_the_code_editor_while_typing_code(app):
+    form = app.form
+    form.add_control("Button", 8, 8)
+    form.show_code()
+    form.code.text.focus_force()
+    app.root.update()
+    assert app._undo_key(redo=False) is None  # the Text widget's own undo runs
+    assert form.design.controls
+
+    form.show_design()
+    form.surface.canvas.focus_force()
+    app.root.update()
+    assert app._undo_key(redo=False) == "break"
+    assert form.design.controls == []
