@@ -287,6 +287,15 @@ def drive(d):
     d.type('x = print("hi", [1, 2])')
     d.check("brackets and quotes close themselves, and typing the closer steps over", editor.code.get_source().splitlines()[-1], 'x = print("hi", [1, 2])')
     editor.code.replace_source(before)
+    d.key("ctrl+End")
+    for line in ("def total(items):", "for item in items:", "if item:", "return item", "return None", "x = ["):
+        d.type(line)
+        d.key("Return")  # xdotool types "\n" as Linefeed, not the Enter key
+    typed = editor.code.get_source()[len(before):]
+    d.check("Enter indents and outdents to suit what's typed", typed,
+            "def total(items):\n    for item in items:\n        if item:\n            return item\n"
+            "        return None\n    x = [\n        \n    ]")
+    editor.code.replace_source(before)
     editor.show_design()
     widget = editor.surface.controls["Button2"].widget
 

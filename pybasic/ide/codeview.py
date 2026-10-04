@@ -27,7 +27,36 @@ _PAIRS = {"(": ")", "[": "]", "{": "}"}
 _QUOTES = ("'", '"')
 _CLOSE_BEFORE = set(")]}:;,.")  # a pair closes itself only before one of these, a space or the line's end
 _STRING_PREFIXES = {"", "r", "b", "f", "u", "rb", "br", "fr", "rf"}  # quotes after these still pair up
-_AUTO = "auto_closed"  # tags closers the editor added  # VB marked the current line in yellow
+_AUTO = "auto_closed"  # tags closers the editor added
+_ENDS_BLOCK = re.compile(r"(return|pass|break|continue|raise)\b")  # statements after which a block is done
+
+
+def _scan(line):
+    """(the line without its comment, the columns of brackets still open at its end).
+    Strings are skipped, so brackets, quotes and # inside them don't count."""
+    open_brackets, quote, i = [], None, 0
+    while i < len(line):
+        c = line[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if line.startswith(quote, i):
+                i += len(quote)
+                quote = None
+                continue
+        elif c == "#":
+            return line[:i], open_brackets
+        elif c in "\"'":
+            quote = line[i : i + 3] if line[i : i + 3] in ('"""', "'''") else c
+            i += len(quote)
+            continue
+        elif c in "([{":
+            open_brackets.append(i)
+        elif c in ")]}" and open_brackets:
+            open_brackets.pop()
+        i += 1
+    return line, open_brackets  # VB marked the current line in yellow
 _COLORS = {"keyword": "#000080", "comment": "#008000", "string": "#a31515"}  # VB's blue and green
 _IMPLEMENTED = "  ✓"
 
@@ -346,11 +375,43 @@ class CodeView(ttk.Frame):
         self.text.mark_set("insert", f"{last + 1}.0")
 
     def _newline(self, _):
-        line = self.text.get("insert linestart", "insert")
-        indent = line[: len(line) - len(line.lstrip())]
-        if line.rstrip().endswith(":"):
-            indent += INDENT
-        return self._insert("\n" + indent)
+        """Enter, with the next line indented to suit what's before the cursor (one undo step)."""
+        if self.text.tag_ranges("sel"):
+            self.text.delete("sel.first", "sel.last")
+        before = self.text.get("insert linestart", "insert")
+        after = self.text.get("insert", "insert lineend")
+        base = before[: len(before) - len(before.lstrip())]
+        code, open_brackets = _scan(before)
+        code = code.rstrip()
+        between_pair = before[-1:] in _PAIRS and after[:1] == _PAIRS[before[-1]]
+        if between_pair:
+            indent = base  # the closer's line; the cursor goes on an indented line above it
+        elif open_brackets:
+            column = open_brackets[-1]
+            # A bracket ending the line: one level in. Code after it: line up just after the bracket.
+            indent = base + INDENT if column == len(code) - 1 else " " * (column + 1)
+        elif code.endswith(":"):
+            indent = base + INDENT
+        elif _ENDS_BLOCK.match(code.lstrip()):
+            indent = base[: max(0, len(base) - len(INDENT))]  # nothing more can follow in this block
+        else:
+            indent = base
+
+        def change():
+            spaces_after = len(after) - len(after.lstrip(" "))
+            if spaces_after:
+                self.text.delete("insert", f"insert +{spaces_after}c")  # the rest of the line starts at the indent
+            if not before.strip():
+                self.text.delete("insert linestart", "insert")  # a line of only spaces is left empty
+            if between_pair:
+                self.text.insert("insert", "\n" + indent + INDENT + "\n" + indent)
+                self.text.mark_set("insert", f"insert -{len(indent) + 1}c")
+            else:
+                self.text.insert("insert", "\n" + indent)
+
+        self._one_step(change)
+        self.text.see("insert")
+        return "break"
 
     def show_error(self, line, message):
         """Highlight the line where a run-time error happened, with its message above the code."""

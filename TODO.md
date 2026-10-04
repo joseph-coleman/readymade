@@ -20,8 +20,7 @@ Ideas and gaps noted along the way, roughly by area.
 ## Code editor
 - **Settings**: indent width (4 spaces today, a constant in `pybasic/ide/codeview.py`), font, theme. Needs an IDE settings dialog.
 - **Better colouring** (Pygments, BSD), and marking the error line in the line numbers.
-- **Smarter Enter**: dedent after `return`/`pass`/`break`; split `(|)` onto its own indented line.
-- **Folding** and an outline, from an error-tolerant parser (parso, MIT).
+- **Folding** and an outline, from an error-tolerant parser (parso, MIT). The same parsing would let Enter see past the current line: today, after a call spread over several lines, the next line keeps the continuation indent instead of returning to the statement's level.
 - **Completion and go to definition** (Jedi, MIT).
 - **Formatting** (Black, or Ruff's formatter; both MIT). Linting is under Biggest features.
 - These libraries would be IDE-only dependencies, so programs shouldn't need them: split the package into the runtime and an extra, e.g. `pybasic[ide]`.

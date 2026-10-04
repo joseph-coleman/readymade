@@ -151,7 +151,7 @@ def type_text(code, text):
     """Type into the code window as a person would, through its key bindings."""
     keysyms = {"(": "parenleft", ")": "parenright", "[": "bracketleft", "]": "bracketright", "{": "braceleft",
                "}": "braceright", '"': "quotedbl", "'": "apostrophe", " ": "space", "=": "equal", ",": "comma",
-               ".": "period", ":": "colon", "#": "numbersign"}
+               ".": "period", ":": "colon", "#": "numbersign", "\n": "Return"}
     code.text.focus_force()
     code.update()
     for char in text:
@@ -226,3 +226,50 @@ def test_moving_away_forgets_which_closers_were_added(code):
     code.update()
     type_text(code, ")")
     assert code.get_source() == "print())"
+
+
+def enter_at_end(code, source):
+    """Press Enter at the end of source; return the new line's text before the cursor, and the whole text."""
+    code.set_source(source)
+    code.text.mark_set("insert", "end-1c")
+    type_text(code, "\n")
+    return code.text.get("insert linestart", "insert"), code.get_source()
+
+
+@pytest.mark.parametrize("source, indent", [
+    ("    x = 1", "    "),                      # keeps the indentation
+    ("def f(x):", "    "),                      # a block starts
+    ("    if x:  # the usual case", "        "),  # a comment after the colon
+    ("x = 1  # note:", ""),                     # a colon in a comment isn't a block
+    ('s = "if x:"', ""),                        # nor is one in a string
+    ("        return x", "    "),              # the block is done
+    ("        pass", "    "),
+    ("    raise ValueError(x)", ""),
+    ("        return_value = 1", "        "),  # only the keyword itself
+    ("result = compute(a,", " " * 17),          # line up after the open bracket
+    ("    items = [", "        "),               # a bracket ending the line: one level in
+    ('print("(")', ""),                         # a bracket in a string doesn't count
+])
+def test_enter_indents_to_suit(code, source, indent):
+    assert enter_at_end(code, source)[0] == indent
+
+
+def test_enter_between_a_pair_opens_it_up(code):
+    code.set_source("    x = ")
+    code.text.mark_set("insert", "end-1c")
+    type_text(code, "[\n")
+    assert code.get_source() == "    x = [\n        \n    ]"
+    assert code.text.index("insert") == "2.8"  # on the indented line between
+    code.text.edit_undo()
+    assert code.get_source() == "    x = []"  # one undo step
+
+
+def test_enter_tidies_whitespace(code):
+    code.set_source("    \n")
+    code.text.mark_set("insert", "1.4")
+    type_text(code, "\n")
+    assert code.get_source() == "\n    \n"  # the line of only spaces is left empty
+    code.set_source("    a = 1;    b = 2")
+    code.text.mark_set("insert", "1.10")
+    type_text(code, "\n")
+    assert code.get_source() == "    a = 1;\n    b = 2"  # the rest starts at the indent
