@@ -109,6 +109,8 @@ class App:
         for label, action, key in (("Cut", "cut", "Ctrl+X"), ("Copy", "copy", "Ctrl+C"),
                                    ("Paste", "paste", "Ctrl+V"), ("Delete", "delete", "Del")):
             edit.add_command(label=label, accelerator=key, command=lambda a=action: self.edit(a))
+        edit.add_separator()
+        edit.add_command(label="Toggle Comment", accelerator="Ctrl+/", command=self.toggle_comment)
         format_menu = self._build_format_menu(menubar)
         project = tk.Menu(menubar, tearoff=False)
         project.add_command(label="Add Form...", command=self.add_form)
@@ -339,6 +341,12 @@ class App:
             event = {"cut": "<<Cut>>", "copy": "<<Copy>>", "paste": "<<Paste>>", "delete": "<<Clear>>"}[action]
             editor.code.text.event_generate(event)
 
+    def toggle_comment(self):
+        """Edit > Toggle Comment, in the code that's showing."""
+        editor = self._current_editor()
+        if editor is not None and not self._designing():
+            editor.code.toggle_comment()
+
     def _clipboard_key(self, action):
         """Ctrl+X/C/V act on controls only while the design surface has the keyboard;
         anywhere else (code, Properties, Immediate) they're the usual text keys."""
@@ -360,7 +368,8 @@ class App:
                                 ("Cut", selected or (editor is not None and not designing)),
                                 ("Copy", selected or (editor is not None and not designing)),
                                 ("Paste", bool(self.clipboard) if designing else editor is not None),
-                                ("Delete", selected or (editor is not None and not designing))):
+                                ("Delete", selected or (editor is not None and not designing)),
+                                ("Toggle Comment", editor is not None and not designing)):
             menu.entryconfigure(label, state=tk.NORMAL if possible else tk.DISABLED)
 
     def menu_editor(self):

@@ -91,3 +91,57 @@ def test_the_keys_are_bound(code):
     bound = code.text.bind()
     assert "<Key-Tab>" in bound and "<Key-BackSpace>" in bound
     assert "<Shift-Key-Tab>" in bound or "<Key-ISO_Left_Tab>" in bound
+
+
+def numbers(code):
+    code.update()
+    items = code.gutter.find_all()
+    return [code.gutter.itemcget(i, "text") for i in items], {code.gutter.itemcget(i, "text"): code.gutter.itemcget(i, "fill") for i in items}
+
+
+def test_line_numbers_follow_the_code(code):
+    shown, colors = numbers(code)
+    assert shown == ["1", "2", "3", "4", "5", "6"]  # SOURCE's five lines, and the empty one after its last newline
+    code.text.mark_set("insert", "4.0")
+    code.text.event_generate("<KeyRelease>")
+    _, colors = numbers(code)
+    assert colors["4"] != colors["1"]  # the current line's number stands out
+
+    code.text.insert("1.0", "import os\n" * 200)
+    shown, _ = numbers(code)
+    assert shown[0] == "1" and shown[-1] != "206"  # only the lines in view
+    wide = int(code.gutter.cget("width"))
+    code.text.yview_moveto(1.0)
+    shown, _ = numbers(code)
+    assert shown[-1] == "206" and shown[0] != "1"  # scrolling moves them
+    code.set_source("x = 1\n")
+    numbers(code)
+    assert int(code.gutter.cget("width")) < wide  # narrower again with fewer digits
+
+
+def test_toggle_comment(code):
+    select(code, "4.0", "5.end")  # "    if x:" and "        y = 2"
+    assert code.toggle_comment() == "break"
+    assert code.get_source().splitlines()[3:] == ["    # if x:", "    #     y = 2"]  # lined up at the shallowest indent
+    assert code.text.get("sel.first", "sel.last") == "    # if x:\n    #     y = 2\n"
+    code.toggle_comment()
+    assert code.get_source() == SOURCE
+    code.toggle_comment()
+    code.text.edit_undo()
+    assert code.get_source() == SOURCE  # one undo step
+
+
+def test_toggle_comment_on_mixed_and_blank_lines(code):
+    code.set_source("a = 1\n\n# b = 2\n#c = 3\n")
+    select(code, "1.0", "4.end")
+    code.toggle_comment()  # not all commented: comment them all
+    assert code.get_source() == "# a = 1\n\n# # b = 2\n# #c = 3\n"
+    code.set_source("# a = 1\n\n# b = 2\n#c = 3\n")
+    select(code, "1.0", "4.end")
+    code.toggle_comment()  # all commented: uncomment ("# " or just "#")
+    assert code.get_source() == "a = 1\n\nb = 2\nc = 3\n"
+    code.text.tag_remove("sel", "1.0", "end")
+    code.text.mark_set("insert", "3.2")
+    code.toggle_comment()  # no selection: the current line
+    assert code.get_source().splitlines()[2] == "# b = 2"
+    assert "<Control-Key-slash>" in code.text.bind()

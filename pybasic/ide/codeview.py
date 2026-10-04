@@ -10,6 +10,7 @@ from __future__ import annotations
 import keyword
 import re
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import ttk
 
 from pybasic import codegen
@@ -20,7 +21,8 @@ _TOKENS = re.compile(
     rf"(?P<comment>#[^\n]*)|(?P<string>{_STRING})|(?P<keyword>\b(?:{'|'.join(keyword.kwlist)})\b)"
 )
 INDENT = codegen.INDENT  # four spaces; Tab never inserts a tab character
-_ERROR_COLOR = "#fff59d"  # VB marked the current line in yellow
+_ERROR_COLOR = "#fff59d"
+_GUTTER, _NUMBER, _NUMBER_CURRENT = "#f0f0f0", "#999999", "#333333"  # VB marked the current line in yellow
 _COLORS = {"keyword": "#000080", "comment": "#008000", "string": "#a31515"}  # VB's blue and green
 _IMPLEMENTED = "  ✓"
 
@@ -32,6 +34,7 @@ class CodeView(ttk.Frame):
         super().__init__(master)
         self.app = app
         self._highlight_job = None
+        self._numbers_job = None
 
         bar = ttk.Frame(self, padding=(0, 2))
         if objects:
@@ -51,9 +54,12 @@ class CodeView(ttk.Frame):
         self.text = tk.Text(body, font=MONO, undo=True, wrap="none")
         yscroll = ttk.Scrollbar(body, command=self.text.yview)
         xscroll = ttk.Scrollbar(body, orient=tk.HORIZONTAL, command=self.text.xview)
-        self.text.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        # Scrolling also moves the line numbers.
+        self.text.configure(yscrollcommand=lambda *a: (yscroll.set(*a), self._show_numbers()), xscrollcommand=xscroll.set)
         yscroll.pack(side=tk.RIGHT, fill=tk.Y)
         xscroll.pack(side=tk.BOTTOM, fill=tk.X)
+        self.gutter = tk.Canvas(body, width=1, highlightthickness=0, bd=0, bg=_GUTTER)
+        self.gutter.pack(side=tk.LEFT, fill=tk.Y)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         for tag, color in _COLORS.items():
             self.text.tag_configure(tag, foreground=color)
@@ -72,6 +78,9 @@ class CodeView(ttk.Frame):
             except tk.TclError:  # a keysym this platform's Tk doesn't know
                 pass
         self.text.bind("<BackSpace>", self._backspace)
+        self.text.bind("<Control-slash>", self.toggle_comment)  # (Text's own Ctrl+/ selects everything)
+        for sequence in ("<Configure>", "<KeyRelease>", "<ButtonRelease-1>"):  # resized, or the cursor moved
+            self.text.bind(sequence, lambda e: self._show_numbers(), add="+")
 
     # ----- source -----
 
@@ -207,6 +216,55 @@ class CodeView(ttk.Frame):
         self.text.delete(f"insert -{width}c", "insert")
         return "break"
 
+    def toggle_comment(self, _=None):
+        """Comment the selected lines (or the current one) out, or back in if they all are.
+        New # marks line up at the block's shallowest indentation; blank lines are left alone."""
+        lines = self._selected_lines()
+        first, last = lines if lines else (int(self.text.index("insert").split(".")[0]),) * 2
+        code = {n: line for n in range(first, last + 1) if (line := self.text.get(f"{n}.0", f"{n}.end")).strip()}
+        if not code:
+            return "break"
+        indent = {n: len(line) - len(line.lstrip()) for n, line in code.items()}
+        commented = all(line.lstrip().startswith("#") for line in code.values())
+
+        def change():
+            for n, line in code.items():
+                if commented:
+                    at = indent[n]
+                    self.text.delete(f"{n}.{at}", f"{n}.{at + (2 if line[at:at + 2] == '# ' else 1)}")
+                else:
+                    self.text.insert(f"{n}.{min(indent.values())}", "# ")
+
+        self._one_step(change)
+        if lines:
+            self._select_lines(first, last)
+        return "break"
+
+    # ----- line numbers -----
+
+    def _show_numbers(self):
+        """Redraw the line numbers once things settle (many events can ask for it at once)."""
+        if self._numbers_job is None:
+            self._numbers_job = self.after_idle(self._draw_numbers)
+
+    def _draw_numbers(self):
+        self._numbers_job = None
+        self.gutter.delete("all")
+        lines = int(self.text.index("end-1c").split(".")[0])
+        width = tkfont.nametofont(MONO).measure("0" * max(2, len(str(lines)))) + 12
+        if int(self.gutter.cget("width")) != width:
+            self.gutter.configure(width=width)
+        current = int(self.text.index("insert").split(".")[0])
+        index = self.text.index("@0,0")  # the first line in view
+        while (place := self.text.dlineinfo(index)) is not None:
+            n = int(index.split(".")[0])
+            self.gutter.create_text(width - 6, place[1], anchor="ne", text=str(n), font=MONO,
+                                    fill=_NUMBER_CURRENT if n == current else _NUMBER)
+            following = self.text.index(f"{index} +1line")
+            if following == index:
+                break  # the last line
+            index = following
+
     def _whole_line_selected(self, n):
         return self.text.index("sel.first") == f"{n}.0" and self.text.compare("sel.last", ">=", f"{n}.0 lineend")
 
@@ -240,6 +298,7 @@ class CodeView(ttk.Frame):
             return
         self.text.edit_modified(False)
         self.clear_error()  # once the code changes, the error may no longer be there
+        self._show_numbers()
         if self._highlight_job:
             self.after_cancel(self._highlight_job)
         self._highlight_job = self.after(200, self.highlight)

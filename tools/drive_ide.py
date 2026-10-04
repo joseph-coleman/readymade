@@ -276,6 +276,13 @@ def drive(d):
     d.check("Tab indents both lines", (lines[4], lines[5]), ("        def Form_load(self):", "            self.Label1.text = \"What's your name?\""))
     d.key("shift+Tab")
     d.check("Shift+Tab puts them back", editor.code.get_source() == before, True)
+    d.key("ctrl+slash")
+    lines = editor.code.get_source().splitlines()
+    d.check("Ctrl+/ comments them out", (lines[4], lines[5]), ("    # def Form_load(self):", "    #     self.Label1.text = \"What's your name?\""))
+    d.check("line numbers in the gutter", [editor.code.gutter.itemcget(i, "text") for i in editor.code.gutter.find_all()][:3], ["1", "2", "3"])
+    d.shot("code-editing")
+    d.key("ctrl+slash")
+    d.check("Ctrl+/ again uncomments", editor.code.get_source() == before, True)
     editor.show_design()
     widget = editor.surface.controls["Button2"].widget
 
