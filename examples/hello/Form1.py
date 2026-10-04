@@ -1,4 +1,4 @@
-from pybasic import Form
+from pybasic import Form, forms
 
 
 class Form1(Form):
@@ -25,8 +25,13 @@ class Form1(Form):
         self.Timer1.enabled = not self.Timer1.enabled
 
     def Button3_click(self):
-        import sys
-        print(sys.version)
+        forms.Form2.show()
+        #import sys
+        #print(sys.version)
+        #try:
+        #    print(1/0)
+        #except ZeroDivisionError:
+        #    print("divided by zero")
 
 
 if __name__ == "__main__":

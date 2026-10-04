@@ -1,0 +1,55 @@
+{
+  "pybasic_form": 1,
+  "name": "Form2",
+  "text": "Form2",
+  "width": 400,
+  "height": 300,
+  "controls": [
+    {
+      "type": "Button",
+      "name": "btnOpen",
+      "left": 16,
+      "top": 32,
+      "width": 64,
+      "height": 40,
+      "enabled": true,
+      "text": "btnOpen",
+      "visible": true
+    },
+    {
+      "type": "TextBox",
+      "name": "TextBox1",
+      "left": 120,
+      "top": 40,
+      "width": 144,
+      "height": 32,
+      "enabled": true,
+      "multiline": false,
+      "scrollbars": "none",
+      "text": "TextBox1",
+      "visible": true
+    },
+    {
+      "type": "Button",
+      "name": "btnDelete",
+      "left": 16,
+      "top": 112,
+      "width": 88,
+      "height": 32,
+      "enabled": true,
+      "text": "btnDelete",
+      "visible": true
+    },
+    {
+      "type": "Button",
+      "name": "btnAdd",
+      "left": 40,
+      "top": 176,
+      "width": 80,
+      "height": 32,
+      "enabled": true,
+      "text": "btnAdd",
+      "visible": true
+    }
+  ]
+}
