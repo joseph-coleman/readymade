@@ -22,6 +22,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from pybasic.formfile import FormFileError
 from pybasic.ide.editors import FormEditor, ModuleEditor
+from pybasic.ide.menueditor import MenuEditor
 from pybasic.ide.panels import ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
 from pybasic.ide.tracebacks import TracebackWatcher
 from pybasic.project import Project, ProjectError, describe_python, find_pythons
@@ -76,6 +77,7 @@ class App:
             ("<Control-o>", self.open_project),
             ("<Control-s>", self.save),
             ("<Control-w>", self.close_document),
+            ("<Control-e>", self.menu_editor),
             ("<F5>", self.run),
             ("<F7>", lambda: self.form and self.form.show_code()),
             ("<Shift-F7>", lambda: self.form and self.form.show_design()),
@@ -105,12 +107,15 @@ class App:
         view = tk.Menu(menubar, tearoff=False)
         view.add_command(label="Code", accelerator="F7", command=lambda: self.form and self.form.show_code())
         view.add_command(label="Object", accelerator="Shift+F7", command=lambda: self.form and self.form.show_design())
+        tools = tk.Menu(menubar, tearoff=False)
+        tools.add_command(label="Menu Editor...", accelerator="Ctrl+E", command=self.menu_editor)
         run = tk.Menu(menubar, tearoff=False)
         run.add_command(label="Start", accelerator="F5", command=self.run)
         run.add_command(label="End", command=self.stop)
         menubar.add_cascade(label="File", menu=file)
         menubar.add_cascade(label="Project", menu=project)
         menubar.add_cascade(label="View", menu=view)
+        menubar.add_cascade(label="Tools", menu=tools)
         menubar.add_cascade(label="Run", menu=run)
         self.root.configure(menu=menubar)
 
@@ -229,6 +234,10 @@ class App:
             self.project.set_startup(new)
         self.explorer_refresh()
         self.update_title()
+
+    def menu_editor(self):
+        """Open the Menu Editor for the form that's showing."""
+        return MenuEditor(self.root, self.form) if self.form else None
 
     # ----- documents -----
 

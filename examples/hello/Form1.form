@@ -175,5 +175,23 @@
       "text": "Button3",
       "visible": true
     }
+  ],
+  "menu": [
+    {
+      "name": "mnuFile",
+      "text": "File",
+      "items": [
+        {
+          "name": "mnuOpenWindow",
+          "text": "Open Window",
+          "shortcut": "Ctrl+O"
+        },
+        {
+          "name": "mnuColorPicker",
+          "text": "Color Picker",
+          "shortcut": "Ctrl+Alt+C"
+        }
+      ]
+    }
   ]
 }

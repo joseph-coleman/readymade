@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import tkinter as tk
 
+from pybasic import menus
 from pybasic.controls import create
 from pybasic.form import FORM
 
@@ -48,6 +49,8 @@ class DesignSurface(tk.Frame):
         self.window.place(x=16, y=16)
         self.title = tk.Label(self.window, anchor="w", bg="#000080", fg="white", padx=4)
         self.title.pack(fill=tk.X)
+        # The form's menu bar, shown when it has one. Clicking an item opens its click handler, as in VB.
+        self.menubar = tk.Frame(self.window)
         self.canvas = tk.Canvas(self.window, highlightthickness=0, bd=0, bg=self.window.cget("bg"))
         self.canvas.pack()
         self.canvas.bind("<ButtonPress-1>", self._canvas_press)
@@ -79,6 +82,7 @@ class DesignSurface(tk.Frame):
             control.widget.destroy()
         self.controls = {}
         self.refresh_form()
+        self.refresh_menu()
         for spec in self.app.design.controls:
             self.add(spec)
         self.show_selection(None)
@@ -88,6 +92,35 @@ class DesignSurface(tk.Frame):
         self.title.configure(text=design.text)
         self.canvas.configure(width=design.width, height=design.height)
         self._draw_grid(design.width, design.height)
+
+    def refresh_menu(self):
+        for child in self.menubar.winfo_children():
+            child.destroy()
+        items = [i for i in self.app.design.menu if i.get("text") != menus.SEPARATOR]
+        if not items:
+            self.menubar.pack_forget()
+            return
+        self.menubar.pack(fill=tk.X, before=self.canvas)
+        for item in items:
+            label, underline = menus.parse_text(item.get("text", ""))
+            button = tk.Menubutton(self.menubar, text=label, underline=underline, padx=6, takefocus=0)
+            button.pack(side=tk.LEFT)
+            if item.get("items"):
+                dropdown = tk.Menu(button, tearoff=False)
+                menus.build(dropdown, item["items"], self._menu_entry)
+                button["menu"] = dropdown
+            else:
+                button.bind("<ButtonRelease-1>", lambda e, n=item["name"]: self.app.goto_handler(n, "click"))
+
+    def _menu_entry(self, item, menu, index, variable):
+        if variable is None:
+            return None  # a submenu
+
+        def command():
+            variable.set(bool(item.get("checked", False)))  # show the designed state, not a toggle
+            self.app.goto_handler(item["name"], "click")
+
+        return command
 
     def add(self, spec):
         container = self.controls.get(spec.get("container"))

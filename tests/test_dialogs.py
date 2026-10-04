@@ -1,11 +1,11 @@
 """msgbox, inputbox and the file dialogs, driven from inside the test while they're open."""
 
 from pathlib import Path
-from tkinter import filedialog
+from tkinter import colorchooser, filedialog
 
 import pytest
 
-from pybasic import Form, folder_dialog, formfile, inputbox, msgbox, open_file_dialog, save_file_dialog
+from pybasic import Form, color_dialog, folder_dialog, formfile, inputbox, msgbox, open_file_dialog, save_file_dialog
 
 pytestmark = pytest.mark.usefixtures("display")
 
@@ -114,3 +114,12 @@ def test_file_dialogs(form, monkeypatch):
     monkeypatch.setattr(filedialog, "askdirectory", fake("/data"))
     assert folder_dialog(title="Pick a folder") == Path("/data")
     assert calls[-1]["title"] == "Pick a folder" and calls[-1]["mustexist"] is True
+
+
+def test_color_dialog(form, monkeypatch):
+    calls = []
+    monkeypatch.setattr(colorchooser, "askcolor", lambda **o: calls.append(o) or ((51, 102, 153), "#336699"))
+    assert color_dialog("red", title="Background") == "#336699"
+    assert calls[-1] == {"parent": form.root, "color": "red", "title": "Background"}
+    monkeypatch.setattr(colorchooser, "askcolor", lambda **o: (None, None))
+    assert color_dialog() is None

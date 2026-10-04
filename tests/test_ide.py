@@ -405,3 +405,90 @@ def test_startup_errors_in_modules_open_the_module(app):
     module = next(e for e in app.editors if e.name == "helpers")
     assert app.documents.select() == str(module.frame)
     assert module.code.error_bar.cget("text") == "Line 2: NameError: name 'GREETING' is not defined"
+
+
+def test_menu_editor_builds_a_menu(app):
+    form = app.form
+    editor = app.menu_editor()
+    editor.add()
+    editor.text_var.set("&File")
+    assert editor.name_var.get() == "mnuFile"  # named from the text
+    editor.add_inside()
+    editor.text_var.set("&Open...")
+    editor.modifier_vars["Ctrl"].set(True)
+    editor.key_var.set("o")
+    editor.add_separator()
+    editor.add()
+    editor.text_var.set("E&xit")
+    editor.name_var.set("mnuQuit")  # typed by hand, so it stops following the text
+    editor.text_var.set("E&xit Program")
+    assert editor.name_var.get() == "mnuQuit"
+    editor.tree.selection_set(str(id(editor.items[0])))
+    editor.add()
+    editor.text_var.set("&Help")
+    editor.checked_var.set(True)
+    assert editor.ok()
+
+    assert form.design.menu == [
+        {"name": "mnuFile", "text": "&File", "items": [
+            {"name": "mnuOpen", "text": "&Open...", "shortcut": "Ctrl+O"},
+            {"text": "-"},
+            {"name": "mnuQuit", "text": "E&xit Program"},
+        ]},
+        {"name": "mnuHelp", "text": "&Help", "checked": True},
+    ]
+    assert form.code_objects()[-3:] == ["mnuOpen", "mnuQuit", "mnuHelp"]  # submenus have no click
+    menubar = [w.cget("text") for w in form.surface.menubar.winfo_children()]
+    assert menubar == ["File", "Help"]
+    assert app.save() and formfile.load(form.path).menu == form.design.menu
+
+
+def test_menu_items_open_their_handlers_and_renames_follow(app):
+    form = app.form
+    form.set_menu([{"name": "mnuFile", "text": "&File", "items": [{"name": "mnuOpen", "text": "&Open"}]}])
+    # Clicking the item in the designer's menu bar opens its handler, as in VB.
+    dropdown = form.surface.menubar.winfo_children()[0].nametowidget(form.surface.menubar.winfo_children()[0]["menu"])
+    dropdown.invoke(0)
+    assert form.frame.select() == str(form.code)
+    form.code.text.insert("sel.first", "self.text = 'opened'")
+    form.code.text.delete("sel.first", "sel.last")
+
+    editor = app.menu_editor()
+    editor.tree.selection_set(str(id(editor.items[0]["items"][0])))
+    editor.name_var.set("mnuOpenFile")
+    assert editor.ok()
+    assert "def mnuOpenFile_click(self):\n        self.text = 'opened'" in form.code.get_source()
+
+
+@pytest.mark.parametrize("change, message", [
+    (lambda e: e.name_var.set("Form"), "reserved"),
+    (lambda e: e.key_var.set("Banana"), "isn't a shortcut"),
+    (lambda e: e.key_var.set("S"), "needs Ctrl or Alt"),
+    (lambda e: e.name_var.set("Button1"), "already a control"),
+])
+def test_menu_editor_checks_before_ok(app, change, message):
+    app.form.add_control("Button", 8, 8)
+    editor = app.menu_editor()
+    editor.add()
+    change(editor)
+    with pytest.raises(AssertionError, match=message):  # the error message box, as a test failure
+        editor.ok()
+    editor.destroy()
+
+
+def test_shortcut_picker_shows_problems_as_you_go(app):
+    editor = app.menu_editor()
+    editor.add()
+    editor.key_var.set("1")
+    assert "needs Ctrl or Alt" in editor.shortcut_error.cget("text")
+    editor.modifier_vars["Ctrl"].set(True)
+    assert editor.shortcut_error.cget("text") == "" and editor.items[0]["shortcut"] == "Ctrl+1"
+    editor.modifier_vars["Shift"].set(True)
+    assert "Shift changes which key" in editor.shortcut_error.cget("text")
+    editor.key_var.set("f5")
+    assert editor.items[0]["shortcut"] == "Ctrl+Shift+F5"  # tidied as it's stored
+    assert editor.key_var.get() == "F5"
+    assert editor.tree.item(str(id(editor.items[0])), "values")[0] == "Ctrl+Shift+F5"
+    editor.key_var.set("")
+    assert "shortcut" not in editor.items[0]
+    editor.destroy()

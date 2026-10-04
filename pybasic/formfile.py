@@ -25,6 +25,7 @@ class FormDesign:
     width: int = 400
     height: int = 300
     controls: list[dict] = field(default_factory=list)
+    menu: list[dict] = field(default_factory=list)  # see pybasic.menus
 
     def control(self, name):
         return next((c for c in self.controls if c["name"] == name), None)
@@ -37,6 +38,32 @@ def _ordered(spec):
     return out
 
 
+def _ordered_menu_item(item):
+    head = ("name", "text", "shortcut", "checked", "enabled")
+    out = {k: item[k] for k in head if k in item}
+    out.update(sorted((k, v) for k, v in item.items() if k not in (*head, "items")))
+    if item.get("items"):
+        out["items"] = [_ordered_menu_item(child) for child in item["items"]]
+    return out
+
+
+def _check_menu(items, names, source):
+    if not isinstance(items, list):
+        raise FormFileError(f"{source}: a menu must be a list of items")
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+            raise FormFileError(f"{source}: every menu item needs a 'text'")
+        if item["text"] == "-":
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name.isidentifier():
+            raise FormFileError(f"{source}: menu item {item['text']!r} needs a 'name' that's a Python name")
+        if name in names:
+            raise FormFileError(f"{source}: more than one control or menu item is named {name!r}")
+        names.add(name)
+        _check_menu(item.get("items", []), names, source)
+
+
 def dumps(design):
     data = {
         "pybasic_form": FORMAT_VERSION,
@@ -46,6 +73,8 @@ def dumps(design):
         "height": design.height,
         "controls": [_ordered(c) for c in design.controls],
     }
+    if design.menu:  # only forms with a menu mention it, so other forms' files don't change
+        data["menu"] = [_ordered_menu_item(item) for item in design.menu]
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -72,12 +101,15 @@ def loads(text, source="<string>"):
         if "container" in spec and spec["container"] not in names:
             raise FormFileError(f"{source}: control {name!r} is in {spec['container']!r}, which isn't defined before it")
         names.add(name)
+    menu = data.get("menu", [])
+    _check_menu(menu, names, source)
     return FormDesign(
         name=data.get("name", "Form1"),
         text=data.get("text", ""),
         width=int(data.get("width", 400)),
         height=int(data.get("height", 300)),
         controls=controls,
+        menu=menu,
     )
 
 

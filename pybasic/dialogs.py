@@ -1,4 +1,4 @@
-"""VB-style dialog functions: msgbox, inputbox, and the common file dialogs.
+"""VB-style dialog functions: msgbox, inputbox, the common file dialogs and a color picker.
 
 Each shows a modal dialog over the form you're using and returns the answer:
 
@@ -6,13 +6,18 @@ Each shows a modal dialog over the form you're using and returns the answer:
         ...
     name = inputbox("What's your name?")          # like input(), but None if Cancel
     path = open_file_dialog(filetypes={"Text files": "*.txt"})  # a Path, or None
+    color = color_dialog("#336699")               # "#rrggbb", or None
+
+Python's own input() still reads from the console, which a window program
+doesn't have (from the IDE it competes with the Immediate window), so forms
+should use inputbox() instead.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from tkinter import filedialog, messagebox, simpledialog
+from tkinter import colorchooser, filedialog, messagebox, simpledialog
 
 from pybasic import form as _form
 
@@ -72,6 +77,17 @@ def folder_dialog(title=None, folder=None):
     """Choose a folder. Returns its Path, or None if cancelled."""
     options = _file_options(title, None, folder)
     return _path(filedialog.askdirectory(mustexist=True, **options))
+
+
+def color_dialog(color=None, title=None):
+    """Choose a color, starting from color (like "#336699" or "red"). Returns
+    "#rrggbb", or None if cancelled."""
+    options: dict[str, Any] = {"parent": _parent()}
+    if color is not None:
+        options["color"] = color
+    if title is not None:
+        options["title"] = str(title)
+    return colorchooser.askcolor(**options)[1]
 
 
 def _parent():

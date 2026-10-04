@@ -1,4 +1,4 @@
-from pybasic import Form, forms
+from pybasic import Form, forms, color_dialog
 
 
 class Form1(Form):
@@ -26,6 +26,15 @@ class Form1(Form):
 
     def Button3_click(self):
         forms.Form2.show()
+
+    def mnuOpenWindow_click(self):
+        forms.Form2.show()
+        pass
+
+    def mnuColorPicker_click(self):
+        color_picked = color_dialog("red", title="Pick a color")
+        print(color_picked)
+        pass
         #import sys
         #print(sys.version)
         #try:

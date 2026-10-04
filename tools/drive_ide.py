@@ -292,6 +292,37 @@ def drive(d):
     d.click(*d.tab_at(app.documents, editor.frame))
     d.check("back on Form1's tab", app.form is editor, True)
 
+    print("Build a File > Open menu in the Menu Editor")
+    from tkinter import ttk
+
+    from pybasic.ide.menueditor import MenuEditor
+
+    d.key("ctrl+e")
+    menu_editor = next(w for w in app.root.winfo_children() if isinstance(w, MenuEditor))
+    buttons = {w.cget("text"): w for w in menu_editor.winfo_children()[0].winfo_children()[-1].winfo_children()}
+    d.click(*d.at(buttons["Add"]))
+    d.type("&File")
+    d.click(*d.at(buttons["Add Inside"]))
+    d.type("&Open...")
+    ctrl = next(w for w in menu_editor.fields if isinstance(w, ttk.Checkbutton) and w.cget("text") == "Ctrl")
+    d.click(*d.at(ctrl))
+    key_box = next(w for w in menu_editor.fields if isinstance(w, ttk.Combobox))
+    d.click(*d.at(key_box, 10))
+    d.type("o")
+    d.shot("menu-editor")
+    ok = next(w for w in menu_editor.winfo_children()[1].winfo_children() if w.cget("text") == "OK")
+    d.click(*d.at(ok))
+    d.check("menu designed", editor.design.menu,
+            [{"name": "mnuFile", "text": "&File", "items": [{"name": "mnuOpen", "text": "&Open...", "shortcut": "Ctrl+O"}]}])
+
+    print("Click File > Open on the designer's menu bar to get to its handler")
+    file_button = editor.surface.menubar.winfo_children()[0]
+    d.click(*d.at(file_button))
+    dropdown = file_button.nametowidget(file_button["menu"])
+    d.click(dropdown.winfo_rootx() + 20, dropdown.winfo_rooty() + dropdown.yposition(0) + 8)
+    d.check("mnuOpen_click opened", "def mnuOpen_click(self):" in editor.code.get_source() and editor.frame.select() == str(editor.code), True)
+    d.type('self.Label2.text = "Opened from the menu"')
+
     print("Press F5 and use the running program")
     d.key("F5")
     left, top = d.ask("(form.root.winfo_rootx(), form.root.winfo_rooty())")
@@ -336,6 +367,31 @@ def drive(d):
     d.click(x, y)
     d.check("listbox selection", d.ask("ListBox1.text"), "Green")
     d.shot("running-more-controls")
+
+    print("Use the menu in the running program, by mouse and by shortcut")
+    app.immediate_line("Label2.text = ''")
+    # On X11 Tk shows copies ("clones") of menus, so find the menus actually on screen.
+    app.immediate_line(
+        "exec(\"def shown_menus(tk):\\n out, todo = [], ['.']\\n while todo:\\n  p = todo.pop()\\n"
+        "  todo += tk.splitlist(tk.call('winfo', 'children', p))\\n"
+        "  if tk.call('winfo', 'class', p) == 'Menu' and tk.call('winfo', 'ismapped', p):\\n"
+        "   out.append((p, tk.call('winfo', 'rootx', p), tk.call('winfo', 'rooty', p), tk.call(p, 'xposition', 0), tk.call(p, 'yposition', 0)))\\n"
+        " return out\")"
+    )
+    (bar, x, y, entry_x, _), = d.ask("shown_menus(form.root.tk)")  # just the menu bar
+    d.click(x + entry_x + 12, y + 10)  # opens the File menu
+    deadline = time.time() + 5
+    while len(shown := d.ask("shown_menus(form.root.tk)")) < 2 and time.time() < deadline:
+        d.pump(0.1)
+    d.check("File menu open", len(shown), 2)
+    _, x, y, _, entry_y = next(m for m in shown if m[0] != bar)  # the File menu
+    d.click(x + 20, y + entry_y + 8)
+    d.check("File > Open clicked", d.ask("Label2.text"), "Opened from the menu")
+    app.immediate_line("Label2.text = ''")
+    d.click(*in_form(button1))  # put the keyboard focus in the form
+    d.key("ctrl+o")
+    d.check("Ctrl+O", d.ask("Label2.text"), "Opened from the menu")
+    d.shot("running-menu")
 
     print("Open the second form from the Immediate window, and close it with its button")
     app.immediate_line("forms.Settings.show()")

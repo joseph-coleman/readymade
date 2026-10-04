@@ -22,7 +22,7 @@ import keyword
 import tkinter as tk
 from pathlib import Path
 
-from pybasic import formfile, forms
+from pybasic import formfile, forms, menus
 from pybasic.controls import Event, create
 
 FORM = "Form"
@@ -97,6 +97,11 @@ class Form:
             control = create(self._parent_widget(spec), spec)
             self.controls[control.name] = control
             setattr(self, control.name, control)
+        self.menus = {}
+        if design.menu:
+            menubar = tk.Menu(self.root, tearoff=False)
+            menus.build(menubar, design.menu, self._menu_entry)
+            self.root["menu"] = menubar
         self.loaded = True
         _loaded.add(self)
         self._connect_events()
@@ -157,6 +162,18 @@ class Form:
             raise ValueError(f"{spec['name']!r} is in {container!r}, which isn't a container")
         return parent.inner
 
+    def _menu_entry(self, item, menu, index, variable):
+        check_name(item["name"], {**self.controls, **self.menus})
+        entry = menus.MenuItem(item, menu, index, variable)
+        self.menus[entry.name] = entry
+        setattr(self, entry.name, entry)
+        if item.get("shortcut"):
+            # The shortcut works anywhere in the form, and only while the item is enabled.
+            self.root.bind(menus.shortcut_sequence(item["shortcut"]), lambda e: (menu.invoke(index), "break")[1])
+        if variable is None:
+            return None  # a submenu
+        return entry.click(getattr(self, f"{entry.name}_click", None))
+
     def _fire(self, event, *args):
         handler = getattr(self, f"{FORM}_{event}", None)
         return handler(*args) if callable(handler) else None
@@ -192,7 +209,7 @@ class Form:
             _app.quit()  # ends main_loop()
 
 
-_RESERVED = {name for name in dir(Form)} | {"root", "controls", "path", "loaded", FORM}
+_RESERVED = {name for name in dir(Form)} | {"root", "controls", "menus", "path", "loaded", FORM}
 
 
 def check_name(name, existing=()):

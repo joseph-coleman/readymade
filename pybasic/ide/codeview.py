@@ -98,7 +98,7 @@ class CodeView(ttk.Frame):
     # ----- navigation -----
 
     def refresh_objects(self):
-        self.objects["values"] = self.app.object_names()
+        self.objects["values"] = self.app.code_objects()
 
     def show_method(self, obj, event, def_line):
         """Put the cursor in the method body. A placeholder `pass` is selected so typing replaces it."""

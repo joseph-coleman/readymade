@@ -10,8 +10,8 @@ from __future__ import annotations
 import keyword
 from tkinter import messagebox, ttk
 
-from pybasic import codegen, formfile
-from pybasic.controls import REGISTRY
+from pybasic import codegen, formfile, menus
+from pybasic.controls import REGISTRY, Event
 from pybasic.form import FORM, FORM_EVENTS, check_name
 from pybasic.ide.codeview import CodeView
 from pybasic.ide.designer import GRID, DesignSurface, snap
@@ -58,11 +58,22 @@ class FormEditor:
     # ----- the design -----
 
     def object_names(self):
+        """The objects in the Properties panel: the form and its controls."""
         return [FORM] + [c["name"] for c in self.design.controls]
+
+    def menu_commands(self):
+        """Menu items that can be clicked (not submenus or separators)."""
+        return [i["name"] for i in menus.walk(self.design.menu) if i.get("name") and not i.get("items")]
+
+    def code_objects(self):
+        """The objects in the Code window's dropdown: the form, its controls and its menu commands."""
+        return self.object_names() + self.menu_commands()
 
     def events_for(self, obj):
         if obj == FORM:
             return FORM_EVENTS
+        if obj in self.menu_commands():
+            return (Event("click"),)
         spec = self.design.control(obj)
         return REGISTRY[spec["type"]].events if spec else ()
 
@@ -137,7 +148,7 @@ class FormEditor:
             self.code.replace_source(codegen.rename_class(source, self.design.name, new))
             self.design.name = new
             return FORM
-        check_name(new, [n for n in self.object_names() if n != obj])
+        check_name(new, [n for n in self.object_names() + menus.names(self.design.menu) if n != obj])
         spec = self._spec(obj)
         spec["name"] = new
         for child in self.design.controls:
@@ -166,7 +177,7 @@ class FormEditor:
         self.update_title()
 
     def add_control(self, type_name, left, top, width=None, height=None, container=None):
-        names = set(self.object_names())
+        names = set(self.object_names() + menus.names(self.design.menu))
         n = 1
         while f"{type_name}{n}" in names:
             n += 1
@@ -213,6 +224,17 @@ class FormEditor:
             line = edit.method_line
         self.show_code()
         self.code.show_method(obj, event.name, line)
+
+    def set_menu(self, items, renames=()):
+        """Replace the form's menu (from the Menu Editor), renaming handlers of renamed items."""
+        source = self.code.get_source()
+        for old, new in renames:
+            source = codegen.rename_control(source, old, new, ["click"])
+        self.code.replace_source(source)
+        self.design.menu = items
+        self.surface.refresh_menu()
+        self.code.refresh_objects()
+        self.update_title()
 
     def show_code(self):
         self.code.refresh_objects()
@@ -274,7 +296,7 @@ class ModuleEditor:
     def update_title(self):
         self.app.update_title()
 
-    def object_names(self):
+    def code_objects(self):
         return []
 
     def events_for(self, obj):
