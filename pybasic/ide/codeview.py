@@ -7,19 +7,15 @@ a handler are marked with a check.
 
 from __future__ import annotations
 
-import keyword
 import re
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
 from pybasic import codegen
+from pybasic.ide import highlight
 from pybasic.ide.panels import MONO
 
-_STRING = r"'''[\s\S]*?'''|\"\"\"[\s\S]*?\"\"\"|'(?:\\.|[^'\\\n])*'|\"(?:\\.|[^\"\\\n])*\""
-_TOKENS = re.compile(
-    rf"(?P<comment>#[^\n]*)|(?P<string>{_STRING})|(?P<keyword>\b(?:{'|'.join(keyword.kwlist)})\b)"
-)
 INDENT = codegen.INDENT  # four spaces; Tab never inserts a tab character
 _ERROR_COLOR = "#fff59d"
 _GUTTER, _NUMBER, _NUMBER_CURRENT = "#f0f0f0", "#999999", "#333333"
@@ -57,7 +53,6 @@ def _scan(line):
             open_brackets.pop()
         i += 1
     return line, open_brackets  # VB marked the current line in yellow
-_COLORS = {"keyword": "#000080", "comment": "#008000", "string": "#a31515"}  # VB's blue and green
 _IMPLEMENTED = "  ✓"
 
 
@@ -95,7 +90,7 @@ class CodeView(ttk.Frame):
         self.gutter = tk.Canvas(body, width=1, highlightthickness=0, bd=0, bg=_GUTTER)
         self.gutter.pack(side=tk.LEFT, fill=tk.Y)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        for tag, color in _COLORS.items():
+        for tag, color in highlight.COLORS.items():
             self.text.tag_configure(tag, foreground=color)
         self.text.tag_configure("error", background=_ERROR_COLOR)
         self.text.tag_raise("sel")
@@ -439,9 +434,7 @@ class CodeView(ttk.Frame):
 
     def highlight(self):
         self._highlight_job = None
-        source = self.get_source()
-        for tag in _COLORS:
+        for tag in highlight.COLORS:
             self.text.tag_remove(tag, "1.0", tk.END)
-        for m in _TOKENS.finditer(source):
-            if m.lastgroup:
-                self.text.tag_add(m.lastgroup, f"1.0+{m.start()}c", f"1.0+{m.end()}c")
+        for tag, start, end in highlight.spans(self.get_source()):
+            self.text.tag_add(tag, start, end)

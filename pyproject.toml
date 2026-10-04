@@ -5,6 +5,9 @@ description = "Visual Basic 6 style form designer and runtime for Python and Tki
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+ide = ["pygments>=2.15"]  # better code colouring; the IDE works without it
+
 [project.scripts]
 pybasic = "pybasic.ide.app:main"
 
