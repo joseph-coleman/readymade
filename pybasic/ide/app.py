@@ -99,6 +99,7 @@ class App:
         edit = tk.Menu(menubar, tearoff=False, postcommand=lambda: self._update_edit_menu(edit))
         edit.add_command(label="Undo", accelerator="Ctrl+Z", command=self.undo)
         edit.add_command(label="Redo", accelerator="Ctrl+Y", command=lambda: self.undo(redo=True))
+        format_menu = self._build_format_menu(menubar)
         project = tk.Menu(menubar, tearoff=False)
         project.add_command(label="Add Form...", command=self.add_form)
         project.add_command(label="Add Module...", command=self.add_module)
@@ -119,6 +120,7 @@ class App:
         run.add_command(label="End", command=self.stop)
         menubar.add_cascade(label="File", menu=file)
         menubar.add_cascade(label="Edit", menu=edit)
+        menubar.add_cascade(label="Format", menu=format_menu)
         menubar.add_cascade(label="Project", menu=project)
         menubar.add_cascade(label="View", menu=view)
         menubar.add_cascade(label="Tools", menu=tools)
@@ -240,6 +242,52 @@ class App:
             self.project.set_startup(new)
         self.explorer_refresh()
         self.update_title()
+
+    def _build_format_menu(self, menubar):
+        """VB's Format menu, for the selected controls of the form being designed."""
+        def on_form(action, needs=1):
+            return lambda: self._designing() and len(self.form.selected_controls()) >= needs and action(self.form)
+
+        menu = tk.Menu(menubar, tearoff=False)
+        align = tk.Menu(menu, tearoff=False)
+        for label, edge in (("Lefts", "lefts"), ("Centers", "centers"), ("Rights", "rights"),
+                            ("Tops", "tops"), ("Middles", "middles"), ("Bottoms", "bottoms")):
+            align.add_command(label=label, command=on_form(lambda f, e=edge: f.align(e), needs=2))
+        align.add_separator()
+        align.add_command(label="to Grid", command=on_form(lambda f: f.align_to_grid()))
+        size = tk.Menu(menu, tearoff=False)
+        size.add_command(label="Width", command=on_form(lambda f: f.make_same_size(height=False), needs=2))
+        size.add_command(label="Height", command=on_form(lambda f: f.make_same_size(width=False), needs=2))
+        size.add_command(label="Both", command=on_form(lambda f: f.make_same_size(), needs=2))
+        spacing = {}
+        for axis, label in (("x", "Horizontal Spacing"), ("y", "Vertical Spacing")):
+            spacing[label] = tk.Menu(menu, tearoff=False)
+            spacing[label].add_command(label="Make Equal", command=on_form(lambda f, a=axis: f.space_evenly(a), needs=3))
+        center = tk.Menu(menu, tearoff=False)
+        center.add_command(label="Horizontally", command=on_form(lambda f: f.center_in_container("x")))
+        center.add_command(label="Vertically", command=on_form(lambda f: f.center_in_container("y")))
+        order = tk.Menu(menu, tearoff=False)
+        order.add_command(label="Bring to Front", command=on_form(lambda f: f.change_order(to_front=True)))
+        order.add_command(label="Send to Back", command=on_form(lambda f: f.change_order(to_front=False)))
+        # Each submenu, with how many selected controls it needs.
+        submenus = (("Align", align, 1), ("Make Same Size", size, 2),
+                    ("Horizontal Spacing", spacing["Horizontal Spacing"], 3),
+                    ("Vertical Spacing", spacing["Vertical Spacing"], 3),
+                    ("Center in Form", center, 1), ("Order", order, 1))
+        for label, submenu, _ in submenus:
+            menu.add_cascade(label=label, menu=submenu)
+
+        def update():
+            count = len(self.form.selected_controls()) if self._designing() else 0
+            for label, _, needs in submenus:
+                menu.entryconfigure(label, state=tk.NORMAL if count >= needs else tk.DISABLED)
+
+        menu.configure(postcommand=update)
+        return menu
+
+    def _designing(self):
+        """True while a form's Design tab is showing."""
+        return self.form is not None and self.form.frame.select() == str(self.form.surface)
 
     def undo(self, redo=False):
         """Edit > Undo/Redo: the designer's when a form's design is showing, otherwise the code editor's."""

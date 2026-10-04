@@ -15,10 +15,12 @@ from tkinter import messagebox, ttk
 from pybasic import codegen, formfile, menus
 from pybasic.controls import REGISTRY, Event
 from pybasic.form import FORM, FORM_EVENTS, check_name
+from pybasic.ide import arrange
 from pybasic.ide.codeview import CodeView
 from pybasic.ide.designer import GRID, DesignSurface, snap
 
 UNDO_LIMIT = 200
+MULTIPLE = "(multiple controls)"  # the Properties panel's object while several controls are selected
 
 
 def _undoable(method):
@@ -37,7 +39,7 @@ class FormEditor:
         self.design = formfile.load(path)
         code_path = path.with_suffix(".py")
         saved_source = code_path.read_text(encoding="utf-8") if code_path.exists() else None
-        self.selected = FORM
+        self.selection = [FORM]  # selected objects; the last is the reference control
         self.frame = ttk.Notebook(app.documents)
         self.surface = DesignSurface(self.frame, self)
         self.code = CodeView(self.frame, self)
@@ -55,6 +57,15 @@ class FormEditor:
     @property
     def name(self):
         return self.path.stem
+
+    @property
+    def selected(self):
+        """The selected object, or with several selected, the reference control (the last one)."""
+        return self.selection[-1]
+
+    @selected.setter
+    def selected(self, obj):
+        self.selection = [obj]
 
     @property
     def toolbox(self):
@@ -95,6 +106,8 @@ class FormEditor:
         return REGISTRY[spec["type"]].events if spec else ()
 
     def props_for(self, obj):
+        if obj == MULTIPLE:
+            return self._common_props()
         if obj == FORM:
             d = self.design
             return [("name", d.name), ("text", d.text), ("width", d.width), ("height", d.height)]
@@ -104,8 +117,26 @@ class FormEditor:
         defaults = REGISTRY[spec["type"]].prop_defaults()
         return [("name", obj)] + [(prop, spec.get(prop, default)) for prop, default in defaults.items()]
 
+    def _common_props(self):
+        """The simple properties every selected control has; a value only where they all agree."""
+        specs = [self._spec(n) for n in self.selected_controls()]
+        if not specs:
+            return []
+        props = []
+        for prop, default in REGISTRY[specs[0]["type"]].prop_defaults().items():
+            if isinstance(default, list) or any(prop not in REGISTRY[s["type"]].prop_defaults() for s in specs):
+                continue
+            values = {repr(s.get(prop, REGISTRY[s["type"]].prop_defaults()[prop])) for s in specs}
+            props.append((prop, specs[0].get(prop, default) if len(values) == 1 else ""))
+        return props
+
     def choices_for(self, obj, prop):
         """The allowed values of a property limited to fixed choices, or None."""
+        if obj == MULTIPLE:
+            spec = self._spec(self.selected)
+            if isinstance(REGISTRY[spec["type"]].prop_defaults().get(prop), bool):
+                return ("True", "False")
+            obj = self.selected
         spec = self.design.control(obj)
         return REGISTRY[spec["type"]].prop_choices.get(prop) if spec else None
 
@@ -116,13 +147,50 @@ class FormEditor:
         return spec
 
     def select(self, obj):
-        self.selected = obj
-        self.surface.show_selection(obj)
+        self.properties.commit_all()  # any edit in progress belongs to what's selected now
+        self.properties.clear()  # then the old rows mustn't be compared with the new selection
+        self.selection = [obj]
+        self.surface.show_selection()
         self.properties.show(obj)
+
+    def select_many(self, names):
+        """Select several controls (in one container); the last is the reference control."""
+        names = [n for n in dict.fromkeys(names) if self.design.control(n)]
+        if not names:
+            return self.select(FORM)
+        container = self._spec(names[-1]).get("container")
+        names = [n for n in names if self._spec(n).get("container") == container]
+        if len(names) == 1:
+            return self.select(names[0])
+        self.properties.commit_all()  # any edit in progress belongs to what's selected now
+        self.properties.clear()  # then the old rows mustn't be compared with the new selection
+        self.selection = names
+        self.surface.show_selection()
+        self.properties.show(MULTIPLE)
+
+    def toggle_selected(self, name):
+        """Ctrl+click: add a control to the selection, or take it out."""
+        current = [n for n in self.selection if n != FORM]
+        if name in current:
+            current.remove(name)
+        elif current and self._spec(current[0]).get("container") != self._spec(name).get("container"):
+            current = [name]  # a selection stays within one container
+        else:
+            current.append(name)
+        self.select_many(current)
+
+    def selected_controls(self):
+        return [n for n in self.selection if n != FORM and self.design.control(n)]
 
     @_undoable
     def set_property(self, obj, prop, raw):
         """Apply an edit from the Properties panel. Returns the object's (possibly new) name, or None if invalid."""
+        if obj == MULTIPLE:
+            for name in self.selected_controls():  # one undo step, as this is all inside set_property
+                if self.set_property(name, prop, raw) is None:
+                    return None
+            self.properties.update_values()
+            return MULTIPLE
         current = dict(self.props_for(obj))[prop]
         try:
             value = _convert(raw, type(current))
@@ -145,7 +213,7 @@ class FormEditor:
                 if prop in REGISTRY[spec["type"]].recreate_props:
                     # Rebuild the rows (the text row changes editor) without committing their old values.
                     self.properties.clear()
-                    self.properties.show(obj)
+                    self.properties.show(MULTIPLE if len(self.selection) > 1 else obj)
         except ValueError as e:
             messagebox.showerror("Invalid property value", str(e), parent=self.app.root)
             return None
@@ -180,12 +248,18 @@ class FormEditor:
         self.code.refresh_objects()
         return new
 
-    @_undoable
     def geometry_changed(self, name, geometry):
-        spec = self._spec(name)
-        for key, value in zip(("left", "top", "width", "height"), geometry):
-            if key in spec:  # a Timer has no size
-                spec[key] = value
+        self.set_geometries({name: geometry})
+
+    @_undoable
+    def set_geometries(self, geometries):
+        """Move and resize controls, as {name: (left, top, width, height)}."""
+        for name, geometry in geometries.items():
+            spec = self._spec(name)
+            for key, value in zip(("left", "top", "width", "height"), geometry):
+                if key in spec:  # a Timer has no size
+                    spec[key] = value
+            self.surface.refresh_control(name)
         self.properties.update_values()
         self.update_title()
 
@@ -229,6 +303,68 @@ class FormEditor:
         self.properties.refresh_objects()
         self.code.refresh_objects()
         self.select(FORM)
+        self.update_title()
+
+    @_undoable
+    def delete_selection(self):
+        for name in self.selected_controls():
+            if self.design.control(name):  # not already gone with its Frame
+                self.delete_control(name)
+
+    # ----- the Format menu (see arrange.py) -----
+
+    def _rects(self):
+        controls = self.surface.controls
+        return {n: (controls[n].left, controls[n].top, controls[n].width, controls[n].height) for n in self.selected_controls()}
+
+    def _fixed_size(self):
+        return {n for n in self.selected_controls() if not self.surface.controls[n].resizable}
+
+    def align(self, edge):
+        if len(self.selected_controls()) > 1:
+            self.set_geometries(arrange.align(self._rects(), self.selected, edge))
+
+    def align_to_grid(self):
+        self.set_geometries(arrange.to_grid(self._rects(), GRID))
+
+    def make_same_size(self, width=True, height=True):
+        if len(self.selected_controls()) > 1:
+            self.set_geometries(arrange.same_size(self._rects(), self.selected, width, height, self._fixed_size()))
+
+    def space_evenly(self, axis):
+        self.set_geometries(arrange.space_evenly(self._rects(), axis))
+
+    def center_in_container(self, axis):
+        names = self.selected_controls()
+        if not names:
+            return
+        container = self._spec(names[0]).get("container")
+        if container is None:
+            size = (self.design.width, self.design.height)
+        else:
+            inner = self.surface.controls[container].inner
+            size = (inner.winfo_width(), inner.winfo_height())
+        self.set_geometries(arrange.center(self._rects(), size, axis))
+
+    @_undoable
+    def change_order(self, to_front):
+        """Bring the selected controls in front of the others in their container, or send them behind."""
+        chosen = set(self.selected_controls())
+        if not chosen:
+            return
+        block = []  # the chosen controls, with everything inside them
+        for spec in self.design.controls:
+            if spec["name"] in chosen or spec.get("container") in {s["name"] for s in block}:
+                block.append(spec)
+        rest = [s for s in self.design.controls if s not in block]
+        container = block[0].get("container")
+        if to_front:
+            order = rest + block
+        else:  # behind its siblings, but still after its container, which must come first
+            at = next((i + 1 for i, s in enumerate(rest) if s["name"] == container), 0)
+            order = rest[:at] + block + rest[at:]
+        self.design.controls[:] = order
+        self.surface.rebuild()
         self.update_title()
 
     def goto_handler(self, obj, event_name):
@@ -309,36 +445,30 @@ class FormEditor:
         design, source = target
         if source != current[1] and self.code.get_source() == current[1]:
             self.code.replace_source(source)
-        selected = self.selected
+        selection = self.selection
         self.properties.clear()  # don't commit whatever the panel showed before
         self.design = formfile.loads(design)
         self.surface.rebuild()
         self.code.refresh_objects()
         self.properties.refresh_objects()
-        exists = selected == FORM or self.design.control(selected) is not None
-        self.select(selected if exists else FORM)
-        self.update_title()
-
-    def _nudged(self, name, geometry):
-        spec = self._spec(name)
-        for key, value in zip(("left", "top", "width", "height"), geometry):
-            if key in spec:
-                spec[key] = value
-        self.surface.refresh_control(name)
-        self.properties.update_values()
+        if selection == [FORM]:
+            self.select(FORM)
+        else:
+            self.select_many(selection)
         self.update_title()
 
     def nudge(self, dx=0, dy=0, dwidth=0, dheight=0):
-        """Move or resize the selected control from the keyboard."""
-        control = self.surface.controls.get(self.selected)
-        if control is None:
-            return
-        if (dwidth or dheight) and not control.resizable:
-            return
-        geometry = (control.left + dx, control.top + dy,
-                    max(GRID, control.width + dwidth), max(GRID, control.height + dheight))
-        with self._change(merge=("nudge", self.selected, bool(dwidth or dheight))):
-            self._nudged(self.selected, geometry)
+        """Move or resize the selected controls from the keyboard."""
+        geometries = {}
+        for name in self.selected_controls():
+            control = self.surface.controls[name]
+            if (dwidth or dheight) and not control.resizable:
+                continue
+            geometries[name] = (control.left + dx, control.top + dy,
+                                max(GRID, control.width + dwidth), max(GRID, control.height + dheight))
+        if geometries:
+            with self._change(merge=("nudge", tuple(self.selection), bool(dwidth or dheight))):
+                self.set_geometries(geometries)
 
     def show_code(self):
         self.code.refresh_objects()

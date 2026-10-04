@@ -2,12 +2,14 @@
 
 import time
 import tkinter as tk
+import types
 from pathlib import Path
 
 import pytest
 
 from pybasic import formfile
 from pybasic.form import FORM
+from pybasic.ide.editors import MULTIPLE
 
 pytestmark = pytest.mark.usefixtures("display")
 
@@ -579,3 +581,99 @@ def test_ctrl_z_belongs_to_the_code_editor_while_typing_code(app):
     app.root.update()
     assert app._undo_key(redo=False) == "break"
     assert form.design.controls == []
+
+
+def test_selecting_several_controls(app):
+    form = app.form
+    for top in (8, 48, 88):
+        form.add_control("Button", 16, top)
+    form.add_control("Frame", 160, 8, 120, 100)
+    form.add_control("Label", 8, 8, container="Frame1")
+
+    form.toggle_selected("Button1")  # Ctrl+click
+    form.toggle_selected("Button2")
+    assert form.selection == ["Button1", "Button2"] and form.selected == "Button2"
+    assert app.properties.current == MULTIPLE
+    form.toggle_selected("Label1")  # in another container: starts a new selection
+    assert form.selection == ["Label1"]
+    form.select_many(["Button1", "Button3", "Label1"])  # e.g. a selection box; one container only
+    assert form.selection == ["Label1"]
+    form.select_many(["Button1", "Button3"])
+    form.toggle_selected("Button1")
+    assert form.selection == ["Button3"]
+
+    # A selection box on the form selects the controls it touches.
+    form.select(FORM)
+    form.surface._lasso_release(types.SimpleNamespace(x=100, y=60, state=0), (0, 0, False))
+    assert form.selection == ["Button1", "Button2"]
+    corners = [m for m in form.surface.canvas.winfo_children() if m in form.surface._markers]
+    assert len(corners) == 8  # four corners each
+
+
+def test_moving_editing_and_deleting_a_selection(app):
+    form = app.form
+    form.add_control("Button", 16, 8)
+    form.add_control("CheckBox", 16, 48)
+    form.select_many(["Button1", "CheckBox1"])
+
+    form.nudge(dx=8)
+    assert [form.design.control(n)["left"] for n in ("Button1", "CheckBox1")] == [24, 24]
+
+    rows = dict(form.props_for(MULTIPLE))
+    assert "value" not in rows and rows["left"] == 24 and rows["top"] == ""  # shared props; blank where they differ
+    assert form.choices_for(MULTIPLE, "enabled") == ("True", "False")
+    assert form.set_property(MULTIPLE, "enabled", "False") == MULTIPLE
+    assert [form.design.control(n)["enabled"] for n in ("Button1", "CheckBox1")] == [False, False]
+    form.undo()  # one step for both
+    assert [form.design.control(n)["enabled"] for n in ("Button1", "CheckBox1")] == [True, True]
+    assert form.selection == ["Button1", "CheckBox1"]  # undo keeps the selection
+
+    form.delete_selection()
+    assert form.design.controls == []
+    form.undo()
+    assert [c["name"] for c in form.design.controls] == ["Button1", "CheckBox1"]
+
+
+def test_format_menu(app):
+    form = app.form
+    form.add_control("Button", 13, 8, 96, 32)
+    form.add_control("Button", 40, 56, 64, 24)
+    form.add_control("Button", 80, 120, 80, 24)
+    form.add_control("Timer", 200, 200)
+    form.select_many(["Button2", "Button3", "Timer1", "Button1"])  # Button1 is the reference
+
+    form.align("lefts")
+    assert {form.design.control(n)["left"] for n in ("Button1", "Button2", "Button3", "Timer1")} == {13}
+    form.make_same_size()
+    assert [(form.design.control(n)["width"], form.design.control(n)["height"]) for n in ("Button2", "Button3")] == [(96, 32)] * 2
+    assert "width" not in form.design.control("Timer1")
+    form.align_to_grid()
+    assert form.design.control("Button1")["left"] == 16
+    form.space_evenly("y")
+    tops = sorted(form.design.control(n)["top"] for n in ("Button1", "Button2", "Button3", "Timer1"))
+    assert tops == [8, 72, 136, 200]  # the ends stay, the gaps even out
+    form.center_in_container("x")
+    assert form.design.control("Button1")["left"] == (400 - 96) // 2
+
+    form.select("Button1")
+    form.change_order(to_front=True)
+    assert [c["name"] for c in form.design.controls][-1] == "Button1"
+    form.change_order(to_front=False)
+    assert [c["name"] for c in form.design.controls][0] == "Button1"
+    assert form.surface.canvas.winfo_children().index(form.surface.controls["Button1"].widget) < \
+        form.surface.canvas.winfo_children().index(form.surface.controls["Button2"].widget)
+
+
+def test_send_to_back_keeps_frames_before_their_contents(app):
+    form = app.form
+    form.add_control("Label", 8, 8)
+    form.add_control("Frame", 100, 8, 160, 120)
+    form.add_control("Button", 8, 8, container="Frame1")
+    form.add_control("CheckBox", 8, 48, container="Frame1")
+    form.select("CheckBox1")
+    form.change_order(to_front=False)
+    assert [c["name"] for c in form.design.controls] == ["Label1", "Frame1", "CheckBox1", "Button1"]
+    form.select("Frame1")
+    form.change_order(to_front=False)  # the Frame takes its contents with it
+    assert [c["name"] for c in form.design.controls] == ["Frame1", "CheckBox1", "Button1", "Label1"]
+    assert app.save() and formfile.load(form.path)  # still a valid .form file

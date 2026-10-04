@@ -227,6 +227,28 @@ def drive(d):
     d.key("ctrl+z")
     d.key("ctrl+z")
     d.check("two undos: the resize, then both moves", geometry(), (64, 184, 152, 48))
+
+    print("Select several controls: Ctrl+click, drag them together, a selection box")
+    left_top = lambda name: tuple(editor.design.control(name)[k] for k in ("left", "top"))  # noqa: E731
+    d.click(*d.at(editor.surface.controls["Button1"].widget))
+    d.xdo("keydown", "ctrl")
+    d.click(*d.at(editor.surface.controls["Button2"].widget))
+    d.xdo("keyup", "ctrl")
+    d.check("Ctrl+click adds to the selection", editor.selection, ["Button1", "Button2"])
+    d.check("corner marks on both", len(editor.surface._markers), 8)
+    d.shot("multi-select")
+    x, y = d.at(editor.surface.controls["Button2"].widget)
+    d.drag(x, y, x + 16, y + 8)
+    d.check("both moved together", (left_top("Button1"), left_top("Button2")), ((224, 54), (80, 192)))
+    d.key("ctrl+z")
+    d.check("one undo puts both back", (left_top("Button1"), left_top("Button2")), ((208, 46), (64, 184)))
+    x0, y0 = d.at(editor.surface.canvas, 8, 176)
+    d.drag(x0, y0, x0 + 72, y0 + 72)  # from empty space, over Button2 and Label2
+    d.check("the box selects what it touches", sorted(editor.selection), ["Button2", "Label2"])
+    editor.align("lefts")
+    d.check("Format > Align > Lefts lines them up", left_top("Button2")[0] == left_top("Label2")[0], True)
+    d.key("ctrl+z")
+    d.check("undo the alignment", (left_top("Button2"), left_top("Label2")), ((64, 184), (24, 232)))
     widget = editor.surface.controls["Button2"].widget
 
     print("Double-click it to get to its click handler")

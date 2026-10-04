@@ -22,6 +22,7 @@ Ideas and gaps noted along the way, roughly by area.
 
 ## Biggest features
 - **Form Packing**: Tkinter supports more than just absolute positioning and sizing for widgets.  Supporting grid or packing schemes would really elevate this above what VB could ever do.
+  - The Format menu (align, same size, spacing, center, order) is for absolutely placed controls only; its pure geometry lives in `pybasic/ide/arrange.py`. Grid/pack containers would disable it for their controls or offer their own equivalents (sticky, anchor, padx/pady, weights). Selections already stay within one container, so the container can decide which tools apply.
 - **Backend Swappable**:  Being able to design for a PyQt6 or some other GUI backend instead of Tkinter for a project.  There are two optional paths to this: One is keeping Tkinter for the IDE and designing a project with a different GUI backend, or having the IDE match the target project GUI.  Is a GUI target potentially a plugin?  Either way, this looks like a separation of concerns type of refactor.
 - **Plugins**: A plugin architecture to extend features.  Allow other people to create plugins like VB or VS Code allows.
 - **Linting**: Support for linters.  Could just start with one to begin with. 
