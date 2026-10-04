@@ -206,11 +206,10 @@ class App:
 
     def python(self):
         """The project's interpreter and where it came from, for running and for display."""
-        path = self.project.python() if self.project else None
+        path, where = self.project.python_choice() if self.project else (None, None)
         if path is None:
             return Path(sys.executable), "IDE"
-        configured = self.project.setting("python") if self.project else None
-        return path, configured or ".venv"
+        return path, where
 
     def python_label(self):
         path, where = self.python()

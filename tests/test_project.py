@@ -1,5 +1,6 @@
 """Projects: the pyproject.toml-based project model, and running multi-form programs."""
 
+import json
 import os
 import queue
 import subprocess
@@ -101,13 +102,39 @@ def test_choosing_the_interpreter(tmp_path):
     assert project.python() == venv_python
 
     project.set_python(project.folder / "envs" / "py" / "python")
-    assert project.setting("python") == "envs/py/python"  # stored relative, so the project can move
-    assert project.python() == project.folder / "envs" / "py" / "python"
+    assert project.local_settings()["python"] == "envs/py/python"  # stored relative, so the project can move
+    assert project.python_choice() == (project.folder / "envs" / "py" / "python", "envs/py/python")
     outside = tmp_path / "conda" / "python"
     project.set_python(outside)
     assert project.python() == outside
+    assert project.setting("python") is None  # never in pyproject.toml, which is shared
     project.set_python(None)
-    assert project.setting("python") is None and project.python() == venv_python
+    assert "python" not in project.local_settings() and project.python_choice() == (venv_python, ".venv")
+
+
+@needs_tomllib
+def test_interpreter_choices_are_per_machine_and_kept_out_of_git(tmp_path, monkeypatch):
+    project = Project.create(tmp_path / "p")
+    monkeypatch.setattr("pybasic.project._machine", lambda: "MYPC win32")
+    project.set_local_setting("python", "D:/miniforge3/envs/app/python.exe")  # as the IDE on Windows stores it
+    monkeypatch.setattr("pybasic.project._machine", lambda: "MYPC linux")  # WSL, same folder
+    assert project.python() is None  # Windows' choice isn't used here
+    project.set_python(tmp_path / "envs" / "app" / "bin" / "python")
+    machines = json.loads((project.folder / ".pybasic" / "local.json").read_text())["machines"]
+    assert machines == {
+        "MYPC win32": {"python": "D:/miniforge3/envs/app/python.exe"},
+        "MYPC linux": {"python": (tmp_path / "envs" / "app" / "bin" / "python").as_posix()},
+    }
+    assert (project.folder / ".pybasic" / ".gitignore").read_text().splitlines()[-1] == "*"
+    assert project.setting("python") is None  # nothing machine-specific in the shared pyproject.toml
+
+
+def test_a_broken_local_settings_file_is_reported(tmp_path):
+    project = Project.create(tmp_path / "p")
+    (project.folder / ".pybasic").mkdir()
+    (project.folder / ".pybasic" / "local.json").write_text("{not json")
+    with pytest.raises(ProjectError, match="local.json"):
+        project.python()
 
 
 def test_describe_python(tmp_path):

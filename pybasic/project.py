@@ -5,7 +5,10 @@ understand it too. pybasic's own settings live in its [tool.pybasic] table:
 
     [tool.pybasic]
     startup = "MainForm"
-    python = ".venv/bin/python"   # optional; see Project.python()
+
+Settings that only make sense on one machine, like which Python interpreter to
+use, live in .pybasic/local.json instead, kept per machine and out of git; see
+Project.python().
 
 Forms (Name.form + Name.py) and modules (any other .py file) are found by
 looking in the folder, so there's no file list to keep in sync.
@@ -16,6 +19,7 @@ from __future__ import annotations
 import json
 import keyword
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -26,6 +30,7 @@ from pathlib import Path
 from pybasic import codegen, formfile
 
 PYPROJECT = "pyproject.toml"
+LOCAL = Path(".pybasic") / "local.json"  # this machine's settings, kept out of git
 RUNTIME_PYTHON = (3, 10)  # the oldest Python that can run a project; tested with 3.10.19 and Tk 9.0
 
 
@@ -99,13 +104,45 @@ class Project:
         self.set_setting("startup", form)
 
     def python(self):
-        """The interpreter that runs the project: [tool.pybasic] python, else the
-        folder's .venv, else None (meaning the IDE's own Python)."""
-        configured = self.setting("python")
-        if configured:
-            return self.folder / configured  # an absolute path replaces the folder
+        """The interpreter that runs the project, or None for the IDE's own Python."""
+        return self.python_choice()[0]
+
+    def python_choice(self):
+        """(interpreter, where it was chosen): this machine's choice, else this platform's
+        .venv, else (None, None), meaning the IDE's own Python."""
+        chosen = self.local_settings().get("python")
+        if chosen:
+            return self.folder / chosen, chosen  # an absolute path replaces the folder
         # Only this platform's layout: a folder shared between Windows and WSL may hold the other's .venv.
-        return self.venv_python() if self.venv_python().exists() else None
+        if self.venv_python().exists():
+            return self.venv_python(), ".venv"
+        return None, None
+
+    def local_settings(self):
+        """This machine's settings for the project, from .pybasic/local.json."""
+        return self._local_file().get("machines", {}).get(_machine(), {})
+
+    def set_local_setting(self, key, value):
+        """Set (or with None, remove) one of this machine's settings."""
+        data = self._local_file()
+        machine = data.setdefault("machines", {}).setdefault(_machine(), {})
+        if value is None:
+            machine.pop(key, None)
+        else:
+            machine[key] = value
+        path = self.folder / LOCAL
+        path.parent.mkdir(exist_ok=True)
+        ignore = path.parent / ".gitignore"
+        if not ignore.exists():
+            ignore.write_text("# Machine-specific pybasic settings: not for sharing.\n*\n", encoding="utf-8")
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+    def _local_file(self):
+        path = self.folder / LOCAL
+        try:
+            return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (OSError, ValueError) as e:
+            raise ProjectError(f"{path}: {e}") from None
 
     def venv_python(self):
         """Where the project's .venv puts its interpreter on this platform."""
@@ -120,14 +157,14 @@ class Project:
         self.pyproject.write_text(add_dependency(text, requirement), encoding="utf-8")
 
     def set_python(self, path):
-        """Use the interpreter at path (None: back to .venv or the IDE's Python).
+        """Use the interpreter at path on this machine (None: back to .venv or the IDE's Python).
         Paths inside the project are stored relative to it, so the project can move."""
         if path is not None:
             path = Path(os.path.abspath(path))  # not resolve(): a venv's python is a symlink that must stay one
             if path.is_relative_to(self.folder):
                 path = path.relative_to(self.folder)
             path = path.as_posix()
-        self.set_setting("python", path)
+        self.set_local_setting("python", path)
 
     def forms(self):
         return sorted(p.stem for p in self.folder.glob("*.form"))
@@ -153,6 +190,11 @@ class Project:
             raise ProjectError(f"{name!r} would hide Python's own {name} module. Choose another name.")
         if any(p.stem.lower() == name.lower() for p in self.folder.glob("*.py")) or name in self.forms():
             raise ProjectError(f"The project already has a form or module named {name!r}.")
+
+
+def _machine():
+    """This machine and platform, e.g. "MYPC win32": WSL and Windows on one PC count as two."""
+    return f"{platform.node()} {sys.platform}"
 
 
 def new_pyproject(name):
