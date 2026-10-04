@@ -91,8 +91,12 @@ def test_removing_and_escaping_settings():
 def test_choosing_the_interpreter(tmp_path):
     project = Project.create(tmp_path / "p")
     assert project.python() is None  # the IDE's own
-    venv_python = project.folder / ".venv" / "bin" / "python"
-    venv_python.parent.mkdir(parents=True)
+    other = project.folder / ".venv" / ("bin/python" if os.name == "nt" else "Scripts/python.exe")
+    other.parent.mkdir(parents=True)
+    other.write_text("")
+    assert project.python() is None  # another platform's .venv (e.g. made from Windows, seen from WSL)
+    venv_python = project.venv_python()
+    venv_python.parent.mkdir(parents=True, exist_ok=True)
     venv_python.write_text("")
     assert project.python() == venv_python
 

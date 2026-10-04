@@ -18,7 +18,7 @@ Ideas and gaps noted along the way, roughly by area.
 - **Renaming a form**: also update references to it in other files (like `forms.OldName`).
 
 ## Bigger features
-- **Make EXE** with PyInstaller, run in the project's own environment.
+- **Make EXE options**: an icon, one-folder instead of one-file, version details, and extra files to bundle (images, data files: only .form files go in today). Perhaps a `[tool.pybasic]` setting or a small dialog.
 - **More controls**: PictureBox/Image, and third-party controls from installed libraries appearing in the Toolbox.
 
 ## Biggest features

@@ -104,10 +104,8 @@ class Project:
         configured = self.setting("python")
         if configured:
             return self.folder / configured  # an absolute path replaces the folder
-        for candidate in (".venv/Scripts/python.exe", ".venv/bin/python"):
-            if (self.folder / candidate).exists():
-                return self.folder / candidate
-        return None
+        # Only this platform's layout: a folder shared between Windows and WSL may hold the other's .venv.
+        return self.venv_python() if self.venv_python().exists() else None
 
     def venv_python(self):
         """Where the project's .venv puts its interpreter on this platform."""

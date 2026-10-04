@@ -20,6 +20,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+from pybasic import package
 from pybasic.formfile import FormFileError
 from pybasic.ide.editors import FormEditor, ModuleEditor
 from pybasic.ide.menueditor import MenuEditor
@@ -97,6 +98,8 @@ class App:
         file.add_command(label="Open Project...", accelerator="Ctrl+O", command=self.open_project)
         file.add_command(label="Save All", accelerator="Ctrl+S", command=self.save)
         file.add_command(label="Close", accelerator="Ctrl+W", command=self.close_document)
+        file.add_separator()
+        file.add_command(label="Make EXE...", command=self.make_exe)
         file.add_separator()
         file.add_command(label="Exit", command=self.exit)
         edit = tk.Menu(menubar, tearoff=False, postcommand=lambda: self._update_edit_menu(edit))
@@ -479,8 +482,7 @@ class App:
             self.immediate.write("(The project has no forms to run.)\n")
             return
         python, where = self.python()
-        if not python.exists():
-            self.immediate.write(f"(The project's Python, {python}, doesn't exist. Choose another in the Project menu.)\n")
+        if not self._python_exists(python):
             return
         for editor in self.editors:
             editor.code.clear_error()
@@ -661,14 +663,63 @@ class App:
         ):
             self.create_environment(find_pythons()[0], then=install)
 
-    def _pip_install(self, requirements, on_success):
+    def make_exe(self):
+        """Package the project as a program that runs without Python, using PyInstaller
+        in the project's own environment (creating one, and installing PyInstaller, if needed)."""
+        project = self.project
+        if project is None or not self._idle() or not self.save():
+            return
+        startup = project.startup
+        if startup is None:
+            self.immediate.write("(The project has no forms to make a program from.)\n")
+            return
+
+        def build():
+            python = project.python()
+            launcher = package.write_launcher(project, startup)
+            target = package.exe_path(project)
+            self.immediate.write(f"--- Making {target.name} with PyInstaller. This takes a minute or so. ---\n")
+
+            def built(code):
+                if code == 0:
+                    self.immediate.write(f"--- Done: {target} ---\n")
+                else:
+                    self.immediate.write("--- PyInstaller couldn't make the program; its messages are above. ---\n")
+
+            self._start([str(python), *package.pyinstaller_args(project, launcher, _PACKAGE_ROOT)], on_exit=built)
+
+        def with_pyinstaller():
+            # Quietly check whether the environment has PyInstaller; install it if not.
+            check = "import importlib.util, sys; sys.exit(importlib.util.find_spec('PyInstaller') is None)"
+            self._start([str(project.python()), "-c", check], on_exit=lambda code: build() if code == 0 else self._pip_install(
+                ["pyinstaller"], build, failed="pip couldn't install PyInstaller, so the program wasn't made."))
+
+        python = project.python()
+        if python is not None:
+            if self._python_exists(python):
+                with_pyinstaller()
+        elif messagebox.askyesno(
+            "Make EXE",
+            "A program is made from the project's own environment, and this project doesn't "
+            "have one yet. Create it (.venv) now?",
+            parent=self.root,
+        ):
+            self.create_environment(find_pythons()[0], then=with_pyinstaller)
+
+    def _python_exists(self, python):
+        if python.exists():
+            return True
+        self.immediate.write(f"(The project's Python, {python}, doesn't exist. Choose another in the Project menu.)\n")
+        return False
+
+    def _pip_install(self, requirements, on_success, failed="pip couldn't install it, so nothing was added."):
         python = self.project.python() if self.project else None
-        if python is None:
+        if python is None or not self._python_exists(python):
             return
         self.immediate.write(f"--- Installing {', '.join(requirements)} ---\n")
         self._start(
             [str(python), "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off", *requirements],
-            on_exit=lambda code: on_success() if code == 0 else self.immediate.write("--- pip couldn't install it, so nothing was added. ---\n"),
+            on_exit=lambda code: on_success() if code == 0 else self.immediate.write(f"--- {failed} ---\n"),
         )
 
     def _library_added(self, requirement):

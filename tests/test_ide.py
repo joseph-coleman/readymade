@@ -1,5 +1,6 @@
 """Drive the IDE: projects, documents, and the core loop of draw, double-click to code, rename, save, run."""
 
+import sys
 import time
 import tkinter as tk
 import types
@@ -770,3 +771,64 @@ def test_clicking_one_control_of_a_selection_selects_just_it(app):
     assert form.selection == ["Button1", "Button2"]  # kept while the mouse is down, so the group can be dragged
     surface._release(press)  # released without moving
     assert form.selection == ["Button1"]
+
+
+def fake_python(folder, pyinstaller_installed=False, build_fails=False):
+    """A stand-in for the project's python that plays pip and PyInstaller, recording its calls."""
+    folder.mkdir(parents=True, exist_ok=True)
+    if pyinstaller_installed:
+        (folder / "installed").touch()
+    script = folder / "python"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'echo "$@" >> "{folder}/calls"\n'
+        'case "$1 $2" in\n'
+        f'  "-c "*) [ -f "{folder}/installed" ]; exit $? ;;\n'
+        f'  "-m pip") touch "{folder}/installed"; echo "Successfully installed pyinstaller" ;;\n'
+        f'  "-m PyInstaller") echo "INFO: Build {"failed" if build_fails else "complete!"}"; exit {1 if build_fails else 0} ;;\n'
+        "esac\n"
+    )
+    script.chmod(0o755)
+    return script
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in python is a shell script")
+def test_make_exe_installs_pyinstaller_then_builds(app, tmp_path):
+    fake = fake_python(tmp_path / "fake")
+    app.set_python(fake)
+    (tmp_path / "fake" / "calls").unlink()  # the Explorer asked it for its version; not part of this
+    app.make_exe()
+    output = wait_until_idle(app)
+    calls = (tmp_path / "fake" / "calls").read_text().splitlines()
+    assert [c.split()[:2] for c in calls] == [["-c", "import"], ["-m", "pip"], ["-m", "PyInstaller"]]
+    assert "pyinstaller" in calls[1]
+    assert "--- Installing pyinstaller ---" in output and "INFO: Build complete!" in output
+    assert f"--- Done: {app.project.folder / 'dist' / 'hello'} ---" in output
+    assert (app.project.folder / "build" / "pybasic" / "_pybasic_launcher.py").exists()
+    assert app.project.dependencies == []  # a build tool, not something the program needs
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in python is a shell script")
+def test_make_exe_reports_a_failed_build(app, tmp_path):
+    app.set_python(fake_python(tmp_path / "fake", pyinstaller_installed=True, build_fails=True))
+    app.make_exe()
+    output = wait_until_idle(app)
+    assert "--- Installing" not in output
+    assert "PyInstaller couldn't make the program; its messages are above." in output
+
+
+def test_make_exe_offers_an_environment_first(app, monkeypatch):
+    from tkinter import messagebox
+
+    asked = []
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a) or False)
+    app.make_exe()
+    assert asked and app.process is None  # declined: nothing runs in the IDE's own Python
+
+
+def test_make_exe_stops_when_the_projects_python_is_missing(app):
+    app.set_python("D:/miniforge3/envs/app/python.exe")  # chosen on another machine
+    app.make_exe()
+    output = wait_until_idle(app)
+    assert "doesn't exist. Choose another in the Project menu." in output
+    assert "Installing" not in output and app.process is None
