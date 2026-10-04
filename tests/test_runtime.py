@@ -98,7 +98,7 @@ def test_run_with_immediate_window(tmp_path):
     )
     env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONUNBUFFERED="1")
     result = subprocess.run(
-        [sys.executable, "-m", "pybasic.run", "--immediate", str(project.folder)],
+        [sys.executable, "-m", "pybasic.run", "--immediate", "--startup", "Form1", str(project.folder)],
         input="TextBox1.text = 'Ada'\n_ = Button1.widget.invoke()\nprint(form.text)\nform.close()\n",
         capture_output=True, text=True, env=env, timeout=20,
     )

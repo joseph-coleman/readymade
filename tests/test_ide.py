@@ -264,3 +264,98 @@ def test_missing_interpreter_is_reported_not_run(app):
     app.run()
     assert app.process is None
     assert "doesn't exist" in app.immediate.output.get("1.0", "end")
+
+
+def make_wheel(folder, name="tinypkg", version="1.0"):
+    """A minimal wheel, so pip can install something without the internet."""
+    import zipfile
+
+    info = f"{name}-{version}.dist-info"
+    files = {
+        f"{name}/__init__.py": "VALUE = 42\n",
+        f"{info}/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+        f"{info}/WHEEL": "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+    }
+    files[f"{info}/RECORD"] = "".join(f"{n},,\n" for n in [*files, f"{info}/RECORD"])
+    folder.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(folder / f"{name}-{version}-py3-none-any.whl", "w") as wheel:
+        for n, content in files.items():
+            wheel.writestr(n, content)
+
+
+def wait_until_idle(app, seconds=120):
+    deadline = time.time() + seconds
+    while app.process is not None and time.time() < deadline:
+        app.root.update()
+        time.sleep(0.05)
+    assert app.process is None, "still busy"
+    return app.immediate.output.get("1.0", "end")
+
+
+def test_create_environment_then_add_a_library(app, tmp_path, monkeypatch):
+    import sys
+
+    make_wheel(tmp_path / "wheels")
+    monkeypatch.setenv("PIP_NO_INDEX", "1")  # pip reads its options from the environment too
+    monkeypatch.setenv("PIP_FIND_LINKS", str(tmp_path / "wheels"))
+
+    app.create_environment(Path(sys.executable))
+    output = wait_until_idle(app)
+    assert "The environment is ready." in output, output
+    assert app.project.python() == app.project.venv_python()
+    assert app.explorer.tree.item("python", "text").endswith("(.venv)")
+
+    app.add_library("tinypkg")
+    output = wait_until_idle(app)
+    assert "Added tinypkg to the project." in output, output
+    assert app.project.dependencies == ["tinypkg"]
+    libraries = [app.explorer.tree.item(i, "text") for i in app.explorer.tree.get_children("libraries")]
+    assert libraries == ["tinypkg"]
+
+    app.run()  # the program can import it
+    app.immediate_line("? __import__('tinypkg').VALUE")
+    app.immediate_line("form.close()")
+    assert "42\n" in wait_for_exit(app)
+
+    # A copy of the project on another machine: creating its environment installs the libraries.
+    import shutil
+
+    shutil.rmtree(app.project.folder / ".venv")
+    app.create_environment(Path(sys.executable))
+    output = wait_until_idle(app)
+    assert output.count("--- Installing tinypkg ---") == 2 and output.rstrip().endswith("The environment is ready. ---")
+
+
+def test_failed_pip_install_changes_nothing(app, tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    app.create_environment(Path(sys.executable))
+    wait_until_idle(app)
+    app.add_library("no-such-package-anywhere")
+    assert "nothing was added" in wait_until_idle(app)
+    assert app.project.dependencies == []
+
+
+def test_uv_is_the_fallback_when_venv_fails(app, tmp_path, monkeypatch):
+    broken = tmp_path / "broken-python"
+    broken.write_text("#!/bin/sh\necho 'No module named venv'\nexit 1\n")
+    broken.chmod(0o755)
+    fake_uv = tmp_path / "uv"
+    fake_uv.write_text(f"#!/bin/sh\necho \"$@\" > {tmp_path / 'uv-args'}\n")
+    fake_uv.chmod(0o755)
+    monkeypatch.setattr("shutil.which", lambda name: str(fake_uv) if name == "uv" else None)
+
+    app.create_environment(broken)
+    output = wait_until_idle(app)
+    assert "trying uv instead" in output
+    assert (tmp_path / "uv-args").read_text().split() == ["venv", "--seed", "--python", str(broken), str(app.project.folder / ".venv")]
+
+
+def test_add_library_offers_to_create_an_environment_first(app, monkeypatch):
+    from tkinter import messagebox
+
+    asked = []
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a) or False)
+    app.add_library("tinypkg")
+    assert asked and app.process is None  # declined, so nothing went into the IDE's Python

@@ -12,6 +12,7 @@ import code
 import contextlib
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -22,7 +23,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from pybasic.formfile import FormFileError
 from pybasic.ide.editors import FormEditor, ModuleEditor
 from pybasic.ide.panels import ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
-from pybasic.project import Project, ProjectError, describe_python
+from pybasic.project import Project, ProjectError, describe_python, find_pythons
 
 _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containing pybasic/
 
@@ -33,7 +34,8 @@ class App:
         self.project: Project | None = None
         self.editors: list[FormEditor | ModuleEditor] = []
         self.form: FormEditor | None = None  # the form whose tab is showing
-        self.process: subprocess.Popen | None = None
+        self.process: subprocess.Popen | None = None  # the running program, or venv/pip
+        self._on_exit = None
         self._output: queue.Queue = queue.Queue()
         self._console = _DesignTimeConsole(self)
         self._python_info: dict[str, str] = {}  # interpreter path -> describe_python(), which is slow
@@ -92,6 +94,9 @@ class App:
         project.add_command(label="Add Form...", command=self.add_form)
         project.add_command(label="Add Module...", command=self.add_module)
         project.add_command(label="Refresh", command=self.explorer_refresh)
+        project.add_separator()
+        project.add_command(label="Create Environment...", command=self.ask_create_environment)
+        project.add_command(label="Add Library...", command=self.add_library)
         project.add_separator()
         project.add_command(label="Choose Python Interpreter...", command=self.choose_python)
         project.add_command(label="Use Default Python", command=lambda: self.set_python(None))
@@ -327,10 +332,7 @@ class App:
     # ----- running -----
 
     def run(self):
-        if self.project is None:
-            return
-        if self.process is not None:
-            self.immediate.write("(The program is already running.)\n")
+        if self.project is None or not self._idle():
             return
         if not self.save():
             return
@@ -343,18 +345,36 @@ class App:
         if not python.exists():
             self.immediate.write(f"(The project's Python, {python}, doesn't exist. Choose another in the Project menu.)\n")
             return
+        self.immediate.write(f"--- Running {self.project.name} ({startup}, Python: {where}). Type Python below to inspect it. ---\n")
+        self._start([str(python), "-m", "pybasic.run", "--immediate", "--startup", startup, str(folder)], interactive=True)
+
+    def _idle(self):
+        if self.process is None:
+            return True
+        self.immediate.write("(Busy: wait for the program or install to finish, or use Run > End.)\n")
+        return False
+
+    def _start(self, args, interactive=False, on_exit=None):
+        """Run a program or tool in the project folder, showing its output in the Immediate
+        window. on_exit(exit code) runs when it ends; by default the code is reported."""
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [_PACKAGE_ROOT, env.get("PYTHONPATH")]))
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        process = subprocess.Popen(
-            [str(python), "-m", "pybasic.run", "--immediate", "--startup", startup, str(folder)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", cwd=folder, env=env,
-        )
+        try:
+            process = subprocess.Popen(
+                args, stdin=subprocess.PIPE if interactive else subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace", cwd=self.project.folder if self.project else None, env=env,
+            )
+        except OSError as e:
+            self.immediate.write(f"--- Couldn't start {Path(args[0]).name}: {e} ---\n")
+            if on_exit:
+                on_exit(-1)
+            return
         self.process = process
+        self._on_exit = on_exit
         threading.Thread(target=_pump, args=(process.stdout, self._output), daemon=True).start()
-        self.immediate.write(f"--- Running {self.project.name} ({startup}, Python: {where}). Type Python below to inspect it. ---\n")
         self.root.after(50, self._poll_output)
 
     def stop(self):
@@ -370,10 +390,137 @@ class App:
             if item is None:
                 code = self.process.wait() if self.process else None
                 self.process = None
-                self.immediate.write(f"--- Ended (exit code {code}) ---\n")
+                if self._on_exit:
+                    self._on_exit(code)
+                else:
+                    self.immediate.write(f"--- Ended (exit code {code}) ---\n")
                 return
             self.immediate.write(item)
         self.root.after(50, self._poll_output)
+
+    # ----- environments and libraries -----
+
+    def ask_create_environment(self):
+        """Choose a Python to base the project's .venv on, then create it."""
+        if self.project is None or not self._idle():
+            return
+        pythons = [(f"Python {describe_python(p)}   {p}", p) for p in find_pythons()]
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Create Environment")
+        dialog.transient(self.root)
+        ttk.Label(dialog, text="Make a .venv for this project from:").pack(anchor="w", padx=8, pady=(8, 2))
+        row = ttk.Frame(dialog)
+        row.pack(fill=tk.X, padx=8)
+        choice = ttk.Combobox(row, values=[label for label, _ in pythons], state="readonly", width=60)
+        choice.current(0)
+        choice.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        def browse():
+            filename = filedialog.askopenfilename(parent=dialog, title="Choose a Python interpreter")
+            if filename:
+                pythons.append((f"Python {describe_python(filename)}   {filename}", Path(filename)))
+                choice["values"] = [label for label, _ in pythons]
+                choice.current(len(pythons) - 1)
+
+        def create():
+            base = pythons[choice.current()][1]
+            if self.project.venv_python().parent.parent.exists() and not messagebox.askyesno(
+                "Create Environment", "The project already has a .venv. Replace it?", parent=dialog
+            ):
+                return
+            dialog.destroy()
+            self.create_environment(base)
+
+        ttk.Button(row, text="Browse...", command=browse).pack(side=tk.LEFT, padx=(4, 0))
+        buttons = ttk.Frame(dialog, padding=8)
+        buttons.pack(fill=tk.X)
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="Create", command=create).pack(side=tk.RIGHT, padx=(0, 4))
+        dialog.grab_set()
+
+    def create_environment(self, base, then=None):
+        """Make the project's .venv from the base interpreter with venv (or uv if venv
+        fails and uv is installed), install the project's libraries, and use it."""
+        project = self.project
+        if project is None or not self._idle():
+            return
+        venv = project.folder / ".venv"
+
+        def created(code):
+            if code == 0:
+                return ready()
+            uv = shutil.which("uv")
+            if uv is None:
+                self.immediate.write(
+                    "--- Couldn't create the environment. On Linux the system Python may need its venv "
+                    "package (e.g. python3-venv), or choose another Python. ---\n"
+                )
+                return
+            self.immediate.write("--- venv didn't work; trying uv instead ---\n")
+            shutil.rmtree(venv, ignore_errors=True)  # whatever venv left half-made
+            self._start([uv, "venv", "--seed", "--python", str(base), str(venv)],
+                        on_exit=lambda c: ready() if c == 0 else self.immediate.write("--- Couldn't create the environment. ---\n"))
+
+        def ready():
+            project.set_python(None)  # the new .venv is used from now on
+            self._python_info.clear()
+            self.explorer_refresh()
+
+            def done():
+                self.immediate.write("--- The environment is ready. ---\n")
+                if then:
+                    then()
+
+            if project.dependencies:
+                self._pip_install(project.dependencies, done)
+            else:
+                done()
+
+        self.immediate.write(f"--- Creating .venv from Python {describe_python(base)} ---\n")
+        self._start([str(base), "-m", "venv", "--clear", str(venv)], on_exit=created)
+
+    def add_library(self, requirement=None):
+        """pip install a library into the project's environment, and list it in pyproject.toml."""
+        if self.project is None or not self._idle():
+            return
+        if requirement is None:
+            requirement = simpledialog.askstring(
+                "Add Library", "Library to install from PyPI (for example: requests):", parent=self.root
+            )
+        requirement = (requirement or "").strip()
+        if not requirement:
+            return
+        if requirement.startswith("-"):
+            messagebox.showerror("Add Library", "Enter a library name, not a pip option.", parent=self.root)
+            return
+
+        def install():
+            self._pip_install([requirement], lambda: self._library_added(requirement))
+
+        if self.project.python() is not None:
+            install()
+        elif messagebox.askyesno(
+            "Add Library",
+            "This project doesn't have its own environment yet, so the library would go into the "
+            "IDE's Python. Create one (.venv) first?",
+            parent=self.root,
+        ):
+            self.create_environment(find_pythons()[0], then=install)
+
+    def _pip_install(self, requirements, on_success):
+        python = self.project.python() if self.project else None
+        if python is None:
+            return
+        self.immediate.write(f"--- Installing {', '.join(requirements)} ---\n")
+        self._start(
+            [str(python), "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off", *requirements],
+            on_exit=lambda code: on_success() if code == 0 else self.immediate.write("--- pip couldn't install it, so nothing was added. ---\n"),
+        )
+
+    def _library_added(self, requirement):
+        self.project.add_dependency(requirement)
+        self.explorer_refresh()
+        self.immediate.write(f"--- Added {requirement} to the project. ---\n")
 
     def immediate_line(self, line):
         self.immediate.write(f">>> {line}\n")

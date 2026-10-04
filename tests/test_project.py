@@ -12,11 +12,15 @@ import pytest
 
 from pybasic import forms, formfile
 from pybasic.controls import REGISTRY
-from pybasic.project import Project, ProjectError, describe_python, set_setting
+from pybasic.project import Project, ProjectError, add_dependency, describe_python, find_pythons, requirement_name, set_setting
 
 ROOT = Path(__file__).parent.parent
 
+# Reading pyproject.toml is the IDE's job and needs tomllib; running a program doesn't.
+needs_tomllib = pytest.mark.skipif(sys.version_info < (3, 11), reason="reading pyproject.toml needs Python 3.11")
 
+
+@needs_tomllib
 def test_create(tmp_path):
     project = Project.create(tmp_path / "My Inventory")
     assert project.name == "my-inventory"
@@ -49,6 +53,7 @@ def test_bad_names(tmp_path, name, message):
         project.add_form(name)
 
 
+@needs_tomllib
 def test_startup_falls_back_to_the_first_form(tmp_path):
     (tmp_path / "B.form").write_text(formfile.dumps(formfile.FormDesign(name="B")))
     (tmp_path / "A.form").write_text(formfile.dumps(formfile.FormDesign(name="A")))
@@ -71,6 +76,7 @@ def test_set_setting_edits_only_that_line(before, after):
     assert set_setting(before, "startup", "Main") == after
 
 
+@needs_tomllib
 def test_removing_and_escaping_settings():
     text = '[tool.pybasic]\nstartup = "Main"\npython = "x"\n\n[tool.other]\n'
     assert set_setting(text, "python", None) == '[tool.pybasic]\nstartup = "Main"\n\n[tool.other]\n'
@@ -81,6 +87,7 @@ def test_removing_and_escaping_settings():
     assert tomllib.loads(windows)["tool"]["pybasic"]["python"] == r"C:\envs\app\python.exe"
 
 
+@needs_tomllib
 def test_choosing_the_interpreter(tmp_path):
     project = Project.create(tmp_path / "p")
     assert project.python() is None  # the IDE's own
@@ -131,7 +138,7 @@ def test_modal_dialog_and_ending_when_the_last_form_closes(tmp_path):
     project = make_two_form_project(tmp_path / "p")
     env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONUNBUFFERED="1")
     process = subprocess.Popen(
-        [sys.executable, "-m", "pybasic.run", "--immediate", str(project.folder)],
+        [sys.executable, "-m", "pybasic.run", "--immediate", "--startup", "Main", str(project.folder)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
     )
     output = queue.Queue()
@@ -195,3 +202,33 @@ def test_default_and_explicit_instances(tmp_path, monkeypatch):
                 form.root.destroy()
         forms.reset()
         sys.modules.pop("Dialog", None)
+
+
+@pytest.mark.parametrize(
+    "before, after",
+    [
+        ('[project]\nname = "x"\n', '[project]\ndependencies = ["rich"]\nname = "x"\n'),
+        ('[project]\ndependencies = []\n', '[project]\ndependencies = [\n    "rich",\n]\n'),
+        ('[project]\ndependencies = [\n  "Rich==13",  # pinned, ] in a comment\n  "requests[socks]>=2",\n]\n\n[tool.pybasic]\n',
+         '[project]\ndependencies = [\n    "requests[socks]>=2",\n    "rich",\n]\n\n[tool.pybasic]\n'),
+        ('[tool.pybasic]\n', '[tool.pybasic]\n\n[project]\ndependencies = ["rich"]\n'),
+    ],
+)
+@needs_tomllib
+def test_add_dependency(before, after):
+    assert add_dependency(before, "rich") == after
+
+
+@pytest.mark.parametrize(
+    "requirement, name",
+    [("requests", "requests"), ("Requests[socks]>=2", "requests"), ("typing_extensions ; python_version<'3.11'", "typing-extensions"),
+     ("my.pkg @ https://x/y.whl", "my-pkg")],
+)
+def test_requirement_name(requirement, name):
+    assert requirement_name(requirement) == name
+
+
+def test_find_pythons_starts_with_the_ides_own():
+    pythons = find_pythons()
+    assert pythons and pythons[0].exists()
+    assert len({os.path.realpath(p) for p in pythons}) == len(pythons)

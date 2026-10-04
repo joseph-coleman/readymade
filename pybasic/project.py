@@ -17,15 +17,16 @@ import json
 import keyword
 import os
 import re
+import shutil
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 from pybasic import codegen, formfile
 
 PYPROJECT = "pyproject.toml"
+RUNTIME_PYTHON = (3, 10)  # the oldest Python that can run a project; tested with 3.10.19 and Tk 9.0
 
 
 class ProjectError(Exception):
@@ -62,6 +63,10 @@ class Project:
     def settings(self):
         if not self.pyproject.exists():
             return {}
+        try:
+            import tomllib  # here, not at the top: running a program mustn't need Python 3.11
+        except ModuleNotFoundError:
+            raise ProjectError("Reading pyproject.toml needs Python 3.11 or later") from None
         try:
             return tomllib.loads(self.pyproject.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError as e:
@@ -103,6 +108,18 @@ class Project:
             if (self.folder / candidate).exists():
                 return self.folder / candidate
         return None
+
+    def venv_python(self):
+        """Where the project's .venv puts its interpreter on this platform."""
+        return self.folder / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+    @property
+    def dependencies(self):
+        return list(self.settings().get("project", {}).get("dependencies", []))
+
+    def add_dependency(self, requirement):
+        text = self.pyproject.read_text(encoding="utf-8") if self.pyproject.exists() else new_pyproject(self.folder.name)
+        self.pyproject.write_text(add_dependency(text, requirement), encoding="utf-8")
 
     def set_python(self, path):
         """Use the interpreter at path (None: back to .venv or the IDE's Python).
@@ -146,7 +163,7 @@ def new_pyproject(name):
         "[project]\n"
         f'name = "{dist}"\n'
         'version = "0.1.0"\n'
-        'requires-python = ">=3.11"\n'
+        'requires-python = ">=3.10"\n'  # what pybasic's runtime needs; the IDE itself needs 3.11
         "dependencies = []\n"
         "\n"
         "[tool.pybasic]\n"
@@ -174,6 +191,78 @@ def set_setting(text, key, value):
     return text[:start] + body + text[end:]
 
 
+def requirement_name(requirement):
+    """The package a requirement like "Requests[socks]>=2" is for, normalized: "requests"."""
+    name = re.split(r"[\s<>=!~;\[(@]", requirement.strip(), maxsplit=1)[0]
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def add_dependency(text, requirement):
+    """Add requirement to [project] dependencies in pyproject.toml text, replacing
+    any entry for the same package and leaving the rest of the text as it was."""
+    requirement = requirement.strip()
+    header = re.search(r"(?m)^\[project\][ \t]*$", text)
+    if header is None:
+        return text.rstrip("\n") + f"\n\n[project]\ndependencies = [{json.dumps(requirement)}]\n"
+    start = header.end()
+    following = re.search(r"(?m)^\[", text[start:])
+    end = start + following.start() if following else len(text)
+    key = re.search(r"(?m)^dependencies[ \t]*=[ \t]*\[", text[start:end])
+    if key is None:
+        line = f"\ndependencies = [{json.dumps(requirement)}]"
+        return text[:start] + line + text[start:]
+    open_at = start + key.end() - 1
+    close_at = _closing_bracket(text, open_at)
+    import tomllib
+
+    current = tomllib.loads("d = " + text[open_at : close_at + 1])["d"]
+    kept = [r for r in current if requirement_name(r) != requirement_name(requirement)]
+    items = "".join(f"\n    {json.dumps(r)}," for r in [*kept, requirement])
+    return text[:open_at] + f"[{items}\n]" + text[close_at + 1 :]
+
+
+def _closing_bracket(text, open_at):
+    """The index of the ] matching the [ at open_at, skipping strings and comments."""
+    depth, i = 0, open_at
+    while i < len(text):
+        c = text[i]
+        if c in "\"'":
+            quote = c
+            i += 1
+            while i < len(text) and text[i] != quote:
+                i += 2 if text[i] == "\\" and quote == '"' else 1
+        elif c == "#":
+            i = text.find("\n", i) if "\n" in text[i:] else len(text)
+            continue
+        elif c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    raise ProjectError("pyproject.toml has a dependencies list with no closing ]")
+
+
+def find_pythons():
+    """Python interpreters on this machine that a project environment could be based on."""
+    candidates = [getattr(sys, "_base_executable", None) or sys.executable]
+    if os.name == "nt":
+        try:  # the py launcher lists the installed Pythons
+            listing = subprocess.run(["py", "-0p"], capture_output=True, text=True, timeout=15).stdout
+            candidates += re.findall(r"(?m)([A-Za-z]:\\.*?\.exe)\s*$", listing)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    else:
+        candidates += [shutil.which(name) for name in ("python3", *(f"python3.{n}" for n in range(10, 16)))]
+    found, seen = [], set()
+    for candidate in candidates:
+        if candidate and os.path.realpath(candidate) not in seen:
+            seen.add(os.path.realpath(candidate))
+            found.append(Path(candidate))
+    return found
+
+
 def describe_python(path):
     """The interpreter's version, plus any problem running pybasic with it."""
     probe = "import sys; print('%d.%d.%d' % sys.version_info[:3]); import tkinter"
@@ -183,8 +272,8 @@ def describe_python(path):
         return f"can't run it ({e.__class__.__name__})"
     version = result.stdout.strip() or "?"
     problems = []
-    if tuple(int(n) for n in version.split(".")[:2] if n.isdigit()) < (3, 11):
-        problems.append("pybasic needs 3.11+")
+    if tuple(int(n) for n in version.split(".")[:2] if n.isdigit()) < RUNTIME_PYTHON:
+        problems.append("pybasic needs %d.%d+" % RUNTIME_PYTHON)
     if result.returncode != 0:
         problems.append("no tkinter")
     return ", ".join([version, *problems])

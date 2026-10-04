@@ -64,8 +64,11 @@ class ProjectExplorer(ttk.Frame):
         self.menu.add_command(label="View Code", command=lambda: self._open("code"))
         self.menu.add_command(label="Set as Startup", command=self._set_startup)
         self.python_menu = tk.Menu(self, tearoff=False)
+        self.python_menu.add_command(label="Create Environment...", command=app.ask_create_environment)
         self.python_menu.add_command(label="Choose Python Interpreter...", command=app.choose_python)
         self.python_menu.add_command(label="Use Default Python", command=lambda: app.set_python(None))
+        self.libraries_menu = tk.Menu(self, tearoff=False)
+        self.libraries_menu.add_command(label="Add Library...", command=app.add_library)
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
@@ -82,6 +85,9 @@ class ProjectExplorer(ttk.Frame):
         modules = self.tree.insert(top, tk.END, text="Modules", open=True)
         for name in project.modules():
             self.tree.insert(modules, tk.END, iid=f"module:{name}", text=f"{name}.py")
+        libraries = self.tree.insert(top, tk.END, iid="libraries", text="Libraries", open=True)
+        for requirement in project.dependencies:
+            self.tree.insert(libraries, tk.END, text=requirement)
 
     def _selected(self):
         kind, _, name = self.tree.focus().partition(":")
@@ -90,6 +96,9 @@ class ProjectExplorer(ttk.Frame):
     def _open(self, view):
         if self.tree.focus() == "python":
             self.app.choose_python()
+            return "break"
+        if self.tree.focus() == "libraries":
+            self.app.add_library()
             return "break"
         kind, name = self._selected()
         if kind == "form":
@@ -106,6 +115,9 @@ class ProjectExplorer(ttk.Frame):
         self.tree.focus(row)
         if row == "python":
             self.python_menu.tk_popup(e.x_root, e.y_root)
+            return
+        if row == "libraries" or self.tree.parent(row) == "libraries":
+            self.libraries_menu.tk_popup(e.x_root, e.y_root)
             return
         is_form = row.startswith("form:")
         for item in ("View Object", "Set as Startup"):
