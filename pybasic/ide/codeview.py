@@ -22,7 +22,12 @@ _TOKENS = re.compile(
 )
 INDENT = codegen.INDENT  # four spaces; Tab never inserts a tab character
 _ERROR_COLOR = "#fff59d"
-_GUTTER, _NUMBER, _NUMBER_CURRENT = "#f0f0f0", "#999999", "#333333"  # VB marked the current line in yellow
+_GUTTER, _NUMBER, _NUMBER_CURRENT = "#f0f0f0", "#999999", "#333333"
+_PAIRS = {"(": ")", "[": "]", "{": "}"}
+_QUOTES = ("'", '"')
+_CLOSE_BEFORE = set(")]}:;,.")  # a pair closes itself only before one of these, a space or the line's end
+_STRING_PREFIXES = {"", "r", "b", "f", "u", "rb", "br", "fr", "rf"}  # quotes after these still pair up
+_AUTO = "auto_closed"  # tags closers the editor added  # VB marked the current line in yellow
 _COLORS = {"keyword": "#000080", "comment": "#008000", "string": "#a31515"}  # VB's blue and green
 _IMPLEMENTED = "  ✓"
 
@@ -79,6 +84,15 @@ class CodeView(ttk.Frame):
                 pass
         self.text.bind("<BackSpace>", self._backspace)
         self.text.bind("<Control-slash>", self.toggle_comment)  # (Text's own Ctrl+/ selects everything)
+        # Brackets and quotes close themselves.
+        for keysym, opener in (("parenleft", "("), ("bracketleft", "["), ("braceleft", "{")):
+            self.text.bind(f"<KeyPress-{keysym}>", lambda e, o=opener: self._open(o))
+        for keysym, closer in (("parenright", ")"), ("bracketright", "]"), ("braceright", "}")):
+            self.text.bind(f"<KeyPress-{keysym}>", lambda e, c=closer: self._step_over(c))
+        for keysym, quote in (("quotedbl", '"'), ("apostrophe", "'")):
+            self.text.bind(f"<KeyPress-{keysym}>", lambda e, q=quote: self._quote(q))
+        for sequence in ("<ButtonRelease-1>", "<Up>", "<Down>", "<Prior>", "<Next>"):  # the cursor went elsewhere
+            self.text.bind(sequence, lambda e: self.text.tag_remove(_AUTO, "1.0", tk.END), add="+")
         for sequence in ("<Configure>", "<KeyRelease>", "<ButtonRelease-1>"):  # resized, or the cursor moved
             self.text.bind(sequence, lambda e: self._show_numbers(), add="+")
 
@@ -206,14 +220,72 @@ class CodeView(ttk.Frame):
         return "break"
 
     def _backspace(self, _):
-        """In a line's leading spaces, Backspace goes back to the previous tab stop."""
+        """Backspace between a pair the editor just made, like (|), deletes both. In a line's
+        leading spaces, it goes back to the previous tab stop."""
         if self.text.tag_ranges("sel"):
             return None
+        before, after = self.text.get("insert -1c"), self.text.get("insert")
+        closer = _PAIRS.get(before) or (before if before in _QUOTES else None)
+        if closer == after and _AUTO in self.text.tag_names("insert"):
+            self.text.delete("insert -1c", "insert +1c")
+            return "break"
         before = self.text.get("insert linestart", "insert")
         if not before or before.strip(" "):
             return None  # not in the indentation: the usual Backspace
         width = len(before) % len(INDENT) or len(INDENT)
         self.text.delete(f"insert -{width}c", "insert")
+        return "break"
+
+    # ----- brackets and quotes -----
+
+    def _open(self, opener):
+        if self.text.tag_ranges("sel"):
+            return self._wrap(opener, _PAIRS[opener])
+        if not self._closing_fits():
+            return None  # e.g. before a word: just the opener
+        return self._insert_pair(opener, _PAIRS[opener])
+
+    def _step_over(self, closer):
+        """Typing a closer the editor added steps over it rather than adding another."""
+        if not self.text.tag_ranges("sel") and self.text.get("insert") == closer and _AUTO in self.text.tag_names("insert"):
+            self.text.tag_remove(_AUTO, "insert")
+            self.text.mark_set("insert", "insert +1c")
+            return "break"
+        return None
+
+    def _quote(self, quote):
+        if self.text.tag_ranges("sel"):
+            return self._wrap(quote, quote)
+        if self._step_over(quote):
+            return "break"
+        before = self.text.get("insert linestart", "insert")
+        if before.endswith(quote * 2) and not before.endswith(quote * 3) and self._closing_fits():
+            return self._insert_pair(quote, quote * 3)  # the third quote of a docstring: """|"""
+        word = re.search(r"\w*$", before).group()
+        if word.lower() not in _STRING_PREFIXES or not self._closing_fits():
+            return None  # e.g. the apostrophe in don't
+        return self._insert_pair(quote, quote)
+
+    def _closing_fits(self):
+        after = self.text.get("insert")
+        return after.isspace() or after in _CLOSE_BEFORE
+
+    def _insert_pair(self, opener, closer):
+        self.text.insert("insert", opener + closer)
+        self.text.tag_add(_AUTO, f"insert -{len(closer)}c", "insert")  # so it can be stepped over or deleted with the opener
+        self.text.mark_set("insert", f"insert -{len(closer)}c")
+        self.text.see("insert")
+        return "break"
+
+    def _wrap(self, opener, closer):
+        """Put the selection inside the pair, keeping it selected."""
+        def wrap():
+            # Text inserted at either edge of the selection isn't selected, so it stays on the text.
+            self.text.insert("sel.first", opener)
+            self.text.insert("sel.last", closer)
+
+        self._one_step(wrap)
+        self.text.mark_set("insert", "sel.last")
         return "break"
 
     def toggle_comment(self, _=None):

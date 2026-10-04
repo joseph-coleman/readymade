@@ -145,3 +145,84 @@ def test_toggle_comment_on_mixed_and_blank_lines(code):
     code.toggle_comment()  # no selection: the current line
     assert code.get_source().splitlines()[2] == "# b = 2"
     assert "<Control-Key-slash>" in code.text.bind()
+
+
+def type_text(code, text):
+    """Type into the code window as a person would, through its key bindings."""
+    keysyms = {"(": "parenleft", ")": "parenright", "[": "bracketleft", "]": "bracketright", "{": "braceleft",
+               "}": "braceright", '"': "quotedbl", "'": "apostrophe", " ": "space", "=": "equal", ",": "comma",
+               ".": "period", ":": "colon", "#": "numbersign"}
+    code.text.focus_force()
+    code.update()
+    for char in text:
+        code.text.event_generate(f"<KeyPress-{keysyms.get(char, char)}>")
+    code.update()
+
+
+def typed(code, text, start=""):
+    code.set_source(start)
+    code.text.mark_set("insert", "end-1c")
+    type_text(code, text)
+    return code.get_source(), code.text.index("insert")
+
+
+def test_brackets_close_themselves_and_are_stepped_over(code):
+    assert typed(code, "print(") == ("print()", "1.6")  # the cursor between the pair
+    assert typed(code, "print(x)") == ("print(x)", "1.8")  # typing ) steps over the one the editor added
+    assert typed(code, "f(g(1))") == ("f(g(1))", "1.7")
+    assert typed(code, "d = {a[0]}") == ("d = {a[0]}", "1.10")
+
+
+def test_brackets_dont_close_before_a_word(code):
+    code.set_source("value")
+    code.text.mark_set("insert", "1.0")
+    type_text(code, "(")
+    assert code.get_source() == "(value"
+
+
+def test_a_closer_you_typed_isnt_stepped_over(code):
+    code.set_source("()")
+    code.text.mark_set("insert", "1.1")
+    type_text(code, ")")
+    assert code.get_source() == "())"
+
+
+def test_quotes(code):
+    assert typed(code, 'x = "hi"') == ('x = "hi"', "1.8")
+    assert typed(code, "# don't") == ("# don't", "1.7")  # no pair after a letter
+    assert typed(code, 'f"{x}"')[0] == 'f"{x}"'  # string prefixes still pair up
+    assert typed(code, 'rb"')[0] == 'rb""'
+    assert typed(code, '"""') == ('""""""', "1.3")  # a docstring: """|"""
+
+
+def test_backspace_removes_a_pair_the_editor_made(code):
+    typed(code, "print(")
+    code._backspace(None)
+    assert code.get_source() == "print"
+    typed(code, 'x = "')
+    code._backspace(None)
+    assert code.get_source() == "x = "
+    code.set_source("()")  # typed by hand: Backspace removes just the opener
+    code.text.mark_set("insert", "1.1")
+    assert code._backspace(None) is None
+
+
+def test_typing_a_bracket_or_quote_wraps_the_selection(code):
+    code.set_source("x = name\ny = other\n")
+    select(code, "1.4", "1.8")
+    type_text(code, "(")
+    assert code.get_source().splitlines()[0] == "x = (name)" and code.text.get("sel.first", "sel.last") == "name"
+    select(code, "1.4", "2.5")  # across lines
+    type_text(code, '"')
+    assert code.get_source() == 'x = "(name)\ny = o"ther\n'
+    assert code.text.get("sel.first", "sel.last") == "(name)\ny = o"
+    code.text.edit_undo()
+    assert code.get_source() == "x = (name)\ny = other\n"  # each wrap is one undo step
+
+
+def test_moving_away_forgets_which_closers_were_added(code):
+    typed(code, "print(")
+    code.text.event_generate("<ButtonRelease-1>")
+    code.update()
+    type_text(code, ")")
+    assert code.get_source() == "print())"

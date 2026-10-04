@@ -283,6 +283,10 @@ def drive(d):
     d.shot("code-editing")
     d.key("ctrl+slash")
     d.check("Ctrl+/ again uncomments", editor.code.get_source() == before, True)
+    d.key("ctrl+End")
+    d.type('x = print("hi", [1, 2])')
+    d.check("brackets and quotes close themselves, and typing the closer steps over", editor.code.get_source().splitlines()[-1], 'x = print("hi", [1, 2])')
+    editor.code.replace_source(before)
     editor.show_design()
     widget = editor.surface.controls["Button2"].widget
 
