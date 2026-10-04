@@ -232,3 +232,28 @@ def test_find_pythons_starts_with_the_ides_own():
     pythons = find_pythons()
     assert pythons and pythons[0].exists()
     assert len({os.path.realpath(p) for p in pythons}) == len(pythons)
+
+
+def test_find_pythons_looks_on_the_path_and_in_conda(tmp_path, monkeypatch):
+    def fake_python(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+        return path
+
+    bin_name = "python.exe" if os.name == "nt" else "python3"
+    on_path = [fake_python(tmp_path / "a" / bin_name), fake_python(tmp_path / "b" / bin_name)]
+    store = fake_python(tmp_path / "WindowsApps" / bin_name)
+    env = tmp_path / "conda" / "envs" / "app"
+    conda_python = fake_python(env / ("python.exe" if os.name == "nt" else "bin/python"))
+    fake_conda = tmp_path / "conda.py"
+    fake_conda.write_text(f"import json; print(json.dumps({{'envs': [{str(env)!r}]}}))")
+    script = tmp_path / ("fake-conda.bat" if os.name == "nt" else "fake-conda")
+    script.write_text(f'@"{sys.executable}" "{fake_conda}"' if os.name == "nt" else f'#!/bin/sh\nexec "{sys.executable}" "{fake_conda}"\n')
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", os.pathsep.join(str(p.parent) for p in [*on_path, store]))
+    monkeypatch.setenv("CONDA_EXE", str(script))
+    monkeypatch.delenv("MAMBA_EXE", raising=False)
+
+    pythons = find_pythons()
+    assert pythons[1:] == [*on_path, conda_python]  # the IDE's own first, then these
+    assert store not in pythons

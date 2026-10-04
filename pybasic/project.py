@@ -245,22 +245,51 @@ def _closing_bracket(text, open_at):
 
 
 def find_pythons():
-    """Python interpreters on this machine that a project environment could be based on."""
-    candidates = [getattr(sys, "_base_executable", None) or sys.executable]
+    """Python interpreters on this machine that a project environment could be based on:
+    the IDE's own, every python on the PATH, conda/mamba environments, and (on
+    Windows) those the py launcher knows about."""
+    candidates = [Path(getattr(sys, "_base_executable", None) or sys.executable)]
+    names = ["python.exe"] if os.name == "nt" else ["python3", *(f"python3.{n}" for n in range(10, 16))]
+    candidates += _on_path(names)
+    candidates += _conda_pythons()
     if os.name == "nt":
-        try:  # the py launcher lists the installed Pythons
-            listing = subprocess.run(["py", "-0p"], capture_output=True, text=True, timeout=15).stdout
-            candidates += re.findall(r"(?m)([A-Za-z]:\\.*?\.exe)\s*$", listing)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-    else:
-        candidates += [shutil.which(name) for name in ("python3", *(f"python3.{n}" for n in range(10, 16)))]
+        candidates += _py_launcher_pythons()
     found, seen = [], set()
     for candidate in candidates:
-        if candidate and os.path.realpath(candidate) not in seen:
-            seen.add(os.path.realpath(candidate))
-            found.append(Path(candidate))
+        real = os.path.realpath(candidate)
+        # Skip the Microsoft Store's placeholders: running one opens the Store.
+        if real not in seen and candidate.is_file() and "WindowsApps" not in candidate.parts:
+            seen.add(real)
+            found.append(candidate)
     return found
+
+
+def _on_path(names):
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        for name in names:
+            if folder and (Path(folder) / name).is_file():
+                yield Path(folder) / name
+
+
+def _conda_pythons():
+    """The interpreters of conda (or mamba) environments, when conda is in use."""
+    tool = os.environ.get("CONDA_EXE") or os.environ.get("MAMBA_EXE")
+    if not tool:
+        return []
+    try:
+        listing = subprocess.run([tool, "env", "list", "--json"], capture_output=True, text=True, timeout=30)
+        envs = json.loads(listing.stdout)["envs"]
+    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError):
+        return []
+    return [Path(env) / ("python.exe" if os.name == "nt" else "bin/python") for env in envs]
+
+
+def _py_launcher_pythons():
+    try:
+        listing = subprocess.run(["py", "-0p"], capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return [Path(p) for p in re.findall(r"(?m)([A-Za-z]:\\.*?\.exe)\s*$", listing)]
 
 
 def describe_python(path):

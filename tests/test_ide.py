@@ -359,3 +359,49 @@ def test_add_library_offers_to_create_an_environment_first(app, monkeypatch):
     monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a) or False)
     app.add_library("tinypkg")
     assert asked and app.process is None  # declined, so nothing went into the IDE's Python
+
+
+def write_code(app, name, code):
+    path = app.project.folder / f"{name}.py"
+    path.write_text(code)
+    for editor in app.editors:  # reload it if it's open
+        if editor.path.with_suffix(".py") == path:
+            editor.code.set_source(code)
+            editor._saved = (formfile.dumps(editor.design), code) if hasattr(editor, "design") else code
+
+
+def test_run_time_error_is_shown_at_its_line(app):
+    app.form.add_control("Button", 8, 8)
+    app.save()
+    write_code(app, "Form1", "from pybasic import Form\n\n\nclass Form1(Form):\n"
+               "    def Button1_click(self):\n        total = 0\n        self.text = str(1 / total)\n")
+    app.open_form("Form1", "design")
+    app.run()
+    app.immediate_line("_ = Button1.widget.invoke()")
+    deadline = time.time() + 15
+    while "ZeroDivisionError" not in app.form.code.error_bar.cget("text") and time.time() < deadline:
+        app.root.update()
+        time.sleep(0.02)
+    code = app.form.code
+    assert app.form.frame.select() == str(code)  # switched to the code
+    assert code.error_bar.cget("text") == "Line 7: ZeroDivisionError: division by zero"
+    assert code.text.tag_ranges("error") and str(code.text.tag_ranges("error")[0]) == "7.0"
+    assert "--- ZeroDivisionError: division by zero  (Form1.py, line 7) ---" in app.immediate.output.get("1.0", "end")
+    app.immediate_line("form.close()")  # the program kept running after the error
+    assert "--- Ended (exit code 0) ---" in wait_for_exit(app)
+
+    code.text.insert("7.0", "# ")  # editing clears the highlight
+    app.root.update()
+    assert not code.text.tag_ranges("error") and not code.error_bar.winfo_ismapped()
+
+
+def test_startup_errors_in_modules_open_the_module(app):
+    app.project.add_module("helpers")
+    write_code(app, "helpers", "def greeting():\n    return GREETING\n")
+    write_code(app, "Form1", "from pybasic import Form\nimport helpers\n\n\nclass Form1(Form):\n"
+               "    def Form_load(self):\n        self.text = helpers.greeting()\n")
+    app.run()
+    wait_for_exit(app)
+    module = next(e for e in app.editors if e.name == "helpers")
+    assert app.documents.select() == str(module.frame)
+    assert module.code.error_bar.cget("text") == "Line 2: NameError: name 'GREETING' is not defined"

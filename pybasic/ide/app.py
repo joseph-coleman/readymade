@@ -23,6 +23,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from pybasic.formfile import FormFileError
 from pybasic.ide.editors import FormEditor, ModuleEditor
 from pybasic.ide.panels import ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
+from pybasic.ide.tracebacks import TracebackWatcher
 from pybasic.project import Project, ProjectError, describe_python, find_pythons
 
 _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containing pybasic/
@@ -36,6 +37,7 @@ class App:
         self.form: FormEditor | None = None  # the form whose tab is showing
         self.process: subprocess.Popen | None = None  # the running program, or venv/pip
         self._on_exit = None
+        self._watcher: TracebackWatcher | None = None  # finds errors in the running program's output
         self._output: queue.Queue = queue.Queue()
         self._console = _DesignTimeConsole(self)
         self._python_info: dict[str, str] = {}  # interpreter path -> describe_python(), which is slow
@@ -345,8 +347,21 @@ class App:
         if not python.exists():
             self.immediate.write(f"(The project's Python, {python}, doesn't exist. Choose another in the Project menu.)\n")
             return
+        for editor in self.editors:
+            editor.code.clear_error()
         self.immediate.write(f"--- Running {self.project.name} ({startup}, Python: {where}). Type Python below to inspect it. ---\n")
         self._start([str(python), "-m", "pybasic.run", "--immediate", "--startup", startup, str(folder)], interactive=True)
+        self._watcher = TracebackWatcher(folder, self.show_error)
+
+    def show_error(self, path, line, message):
+        """Point out a run-time error: open the code where it happened and highlight the line."""
+        self.immediate.write(f"--- {message}  ({path.name}, line {line}) ---\n")
+        if path.with_suffix(".form").exists():
+            editor = self.open_form(path.stem, "code")
+        else:
+            editor = self.open_module(path.stem)
+        if editor is not None:
+            editor.code.show_error(line, message)
 
     def _idle(self):
         if self.process is None:
@@ -374,6 +389,7 @@ class App:
             return
         self.process = process
         self._on_exit = on_exit
+        self._watcher = None
         threading.Thread(target=_pump, args=(process.stdout, self._output), daemon=True).start()
         self.root.after(50, self._poll_output)
 
@@ -390,12 +406,15 @@ class App:
             if item is None:
                 code = self.process.wait() if self.process else None
                 self.process = None
+                self._watcher = None
                 if self._on_exit:
                     self._on_exit(code)
                 else:
                     self.immediate.write(f"--- Ended (exit code {code}) ---\n")
                 return
             self.immediate.write(item)
+            if self._watcher:
+                self._watcher.feed(item)
         self.root.after(50, self._poll_output)
 
     # ----- environments and libraries -----
