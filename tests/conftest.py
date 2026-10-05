@@ -70,3 +70,9 @@ def no_dialogs(monkeypatch):
 
     for name in ("showerror", "showwarning", "showinfo", "askyesno", "askyesnocancel", "askokcancel"):
         monkeypatch.setattr(messagebox, name, fail)
+
+
+@pytest.fixture(autouse=True)
+def own_settings(monkeypatch, tmp_path_factory):
+    """Each test gets its own user settings folder, never the real one."""
+    monkeypatch.setenv("PYBASIC_CONFIG_DIR", str(tmp_path_factory.mktemp("settings")))

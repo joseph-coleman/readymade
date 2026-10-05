@@ -19,7 +19,7 @@ class Form1(Form):
 
     def Timer1_timer(self):
         self.n += 1
-        self.Label3.text = self.n 
+        self.Label3.text = self.n
 
     def Button2_click(self):
         self.Timer1.enabled = not self.Timer1.enabled
@@ -29,18 +29,18 @@ class Form1(Form):
 
     def mnuOpenWindow_click(self):
         forms.Form2.show()
-        pass
+        # pass
 
     def mnuColorPicker_click(self):
         color_picked = color_dialog("red", title="Pick a color")
         print(color_picked)
-        pass
-        #import sys
-        #print(sys.version)
-        #try:
-        #    print(1/0)
-        #except ZeroDivisionError:
-        #    print("divided by zero")
+        # pass
+        # import sys
+        # print(sys.version)
+        # try:
+        #     print(1/0)
+        # except ZeroDivisionError:
+        #     print("divided by zero")
 
 
 if __name__ == "__main__":

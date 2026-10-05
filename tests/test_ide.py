@@ -832,3 +832,88 @@ def test_make_exe_stops_when_the_projects_python_is_missing(app):
     output = wait_until_idle(app)
     assert "doesn't exist. Choose another in the Project menu." in output
     assert "Installing" not in output and app.process is None
+
+
+FAKE_LINTER = """import sys
+source = sys.stdin.read() if "--stdin" in sys.argv else open(sys.argv[-1]).read()
+for n, line in enumerate(source.splitlines(), 1):
+    if "bad" in line:
+        print(f"{sys.argv[-1]}:{n}:{line.index('bad') + 1}: X100 found bad")
+"""
+
+
+def add_fake_linters(app, tmp_path):
+    (tmp_path / "fake_linter.py").write_text(FAKE_LINTER)
+    script = str(tmp_path / "fake_linter.py").replace("\\\\", "/")
+    pyproject = app.project.pyproject
+    pyproject.write_text(pyproject.read_text() + (
+        "\n[tool.pybasic.lint-tools.typing-check]\n"
+        f'command = ["{{python}}", "{script}", "--stdin", "{{file}}"]\nstdin = true\n'
+        "\n[tool.pybasic.lint-tools.save-check]\n"
+        f'command = ["{{python}}", "{script}", "{{file}}"]\n'
+    ))
+
+
+def wait_for(app, condition, seconds=15):
+    deadline = time.time() + seconds
+    while not condition() and time.time() < deadline:
+        app.root.update()
+        time.sleep(0.02)
+    return condition()
+
+
+def test_problems_show_while_typing_and_after_saving(app, tmp_path):
+    from pybasic import lint
+
+    add_fake_linters(app, tmp_path)
+    lint.set_choices(app.project, ["typing-check"], ["save-check"])
+    app.linter.check_all()
+    app.form.show_code()  # on screen, so the line numbers are drawn
+    code = app.form.code
+    code.text.insert("end", "\nvalue = bad_name\n")
+    code.text.event_generate("<<Modified>>")
+    assert wait_for(app, lambda: [p.tool for p in code.problems()] == ["typing-check"])  # unsaved: the stdin tool only
+    problem = code.problems()[0]
+    tag = next(iter(code._problem_tags))
+    assert code.text.get(f"{tag}.first", f"{tag}.last") == "bad_name"  # the word is underlined
+    code.text.see(f"{problem.line}.0")
+    code.text.mark_set("insert", f"{problem.line}.0")
+    app.root.update()
+    code._draw_numbers()
+    assert code.gutter.find_withtag("problem")  # marked next to its line number
+    assert code.problem_bar.cget("text") == "typing-check: X100 found bad"  # the message, for the cursor's line
+
+    assert app.save()
+    assert wait_for(app, lambda: sorted(p.tool for p in code.problems()) == ["save-check", "typing-check"])
+
+    lint.set_choices(app.project, [], [])  # turned off: the marks go
+    app.linter.check_all()
+    assert wait_for(app, lambda: code.problems() == [] and not code._problem_tags)
+
+
+def test_a_missing_tool_is_reported_once(app):
+    from pybasic import lint
+
+    lint.set_choices(app.project, ["mypy"], [])  # not installed for the tests
+    app.linter.check_all()
+    app.open_form("Form1")
+    assert wait_for(app, lambda: "mypy isn't installed" in app.immediate.output.get("1.0", "end"))
+    app.linter.check_all()
+    wait_for(app, lambda: False, seconds=1)
+    assert app.immediate.output.get("1.0", "end").count("mypy isn't installed") == 1
+
+
+def test_the_linting_dialog(app, tmp_path):
+    from pybasic import lint
+    from pybasic.ide.lintdialog import LintDialog
+
+    add_fake_linters(app, tmp_path)
+    dialog = LintDialog(app)
+    assert set(dialog.tools) >= {"pyflakes", "ruff", "flake8", "pylint", "mypy", "typing-check", "save-check"}
+    statuses = {name: [w.cget("text") for w in frame.winfo_children()] for name, frame in dialog.status.items()}
+    assert statuses["ruff"] == ["not installed"]  # and no Install button: there's no environment yet
+    assert "create an environment" in dialog.where.cget("text")
+    dialog.shared["ruff"].set(True)
+    dialog.mine["typing-check"].set(True)
+    dialog.ok()
+    assert lint.choices(app.project) == (["ruff"], ["typing-check"])

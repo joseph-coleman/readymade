@@ -23,6 +23,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from pybasic import package
 from pybasic.formfile import FormFileError
 from pybasic.ide.editors import FormEditor, ModuleEditor
+from pybasic.ide.lintdialog import LintDialog
+from pybasic.ide.linting import Linter
 from pybasic.ide.menueditor import MenuEditor
 from pybasic.ide.panels import ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
 from pybasic.ide.tracebacks import TracebackWatcher
@@ -42,6 +44,7 @@ class App:
         self._watcher: TracebackWatcher | None = None  # finds errors in the running program's output
         self._output: queue.Queue = queue.Queue()
         self._console = _DesignTimeConsole(self)
+        self.linter = Linter(self)
         self._python_info: dict[str, str] = {}
         self.clipboard: list[dict] = []  # copied controls, for pasting into any form  # interpreter path -> describe_python(), which is slow
         self._build_ui()
@@ -121,6 +124,8 @@ class App:
         project.add_command(label="Add Library...", command=self.add_library)
         project.add_separator()
         project.add_command(label="Choose Python Interpreter...", command=self.choose_python)
+        project.add_separator()
+        project.add_command(label="Linting...", command=lambda: self.project and LintDialog(self))
         project.add_command(label="Use Default Python", command=lambda: self.set_python(None))
         view = tk.Menu(menubar, tearoff=False)
         view.add_command(label="Code", accelerator="F7", command=lambda: self.form and self.form.show_code())
@@ -417,6 +422,8 @@ class App:
     def _add_tab(self, editor):
         self.editors.append(editor)
         self.documents.add(editor.frame, text=editor.title())
+        editor.code.on_change = lambda: self.linter.check(editor)  # soon after typing stops
+        self.linter.check(editor, saved=True)
 
     def _current_editor(self):
         try:
@@ -462,7 +469,10 @@ class App:
 
     def save(self):
         """Save every changed document. Returns False if any failed."""
-        ok = all([e.save() for e in list(self.editors) if e.is_dirty()])
+        changed = [e for e in list(self.editors) if e.is_dirty()]
+        ok = all([e.save() for e in changed])
+        for editor in changed:
+            self.linter.check(editor, saved=True)
         self.update_title()
         return ok
 
@@ -508,6 +518,14 @@ class App:
         if editor is not None:
             editor.code.show_error(line, message)
 
+    def environment(self):
+        """Environment variables for programs and tools run for the project: they can import pybasic."""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [_PACKAGE_ROOT, env.get("PYTHONPATH")]))
+        env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        return env
+
     def _idle(self):
         if self.process is None:
             return True
@@ -517,10 +535,7 @@ class App:
     def _start(self, args, interactive=False, on_exit=None):
         """Run a program or tool in the project folder, showing its output in the Immediate
         window. on_exit(exit code) runs when it ends; by default the code is reported."""
-        env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join(filter(None, [_PACKAGE_ROOT, env.get("PYTHONPATH")]))
-        env["PYTHONUNBUFFERED"] = "1"
-        env["PYTHONIOENCODING"] = "utf-8"
+        env = self.environment()
         try:
             process = subprocess.Popen(
                 args, stdin=subprocess.PIPE if interactive else subprocess.DEVNULL,

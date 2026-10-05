@@ -69,6 +69,10 @@ class FormEditor:
         self.selection = [obj]
 
     @property
+    def code_path(self):
+        return self.path.with_suffix(".py")
+
+    @property
     def toolbox(self):
         return self.app.toolbox
 
@@ -581,6 +585,10 @@ class ModuleEditor:
     @property
     def code(self):
         return self.frame
+
+    @property
+    def code_path(self):
+        return self.path
 
     def title(self):
         return f"{self.path.name}{'*' if self.is_dirty() else ''}"

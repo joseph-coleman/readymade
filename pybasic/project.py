@@ -213,8 +213,7 @@ def new_pyproject(name):
 def set_setting(text, key, value):
     """Set (or with None, remove) key in pyproject.toml's [tool.pybasic] table,
     leaving everything else in the text as it was."""
-    line = f"{key} = {json.dumps(value)}"  # a JSON string is also a valid TOML string
-    existing = rf"(?m)^{re.escape(key)}[ \t]*=.*$"
+    line = f"{key} = {json.dumps(value)}"  # JSON strings and lists are also valid TOML
     header = re.search(r"(?m)^\[tool\.pybasic\][ \t]*$", text)
     if header is None:
         return text if value is None else text.rstrip("\n") + f"\n\n[tool.pybasic]\n{line}\n"
@@ -222,12 +221,17 @@ def set_setting(text, key, value):
     following = re.search(r"(?m)^\[", text[start:])  # the next table ends this one
     end = start + following.start() if following else len(text)
     body = text[start:end]
-    if value is None:
-        body = re.sub(existing + r"\n?", "", body, count=1)
-    elif re.search(existing, body):
-        body = re.sub(existing, lambda m: line, body, count=1)
+    existing = re.search(rf"(?m)^{re.escape(key)}[ \t]*=[ \t]*", body)
+    if existing is None:
+        body = body if value is None else "\n" + line + body
     else:
-        body = "\n" + line + body
+        # The old value ends with its line, or for a list, with the line of its closing ].
+        value_end = existing.end()
+        if body[value_end:value_end + 1] == "[":
+            value_end = _closing_bracket(body, value_end)
+        line_end = body.find("\n", value_end)
+        line_end = len(body) if line_end < 0 else line_end + (1 if value is None else 0)
+        body = body[:existing.start()] + ("" if value is None else line) + body[line_end:]
     return text[:start] + body + text[end:]
 
 

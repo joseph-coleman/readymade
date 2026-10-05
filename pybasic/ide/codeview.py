@@ -19,6 +19,7 @@ from pybasic.ide.panels import MONO
 INDENT = codegen.INDENT  # four spaces; Tab never inserts a tab character
 _ERROR_COLOR = "#fff59d"
 _GUTTER, _NUMBER, _NUMBER_CURRENT = "#f0f0f0", "#999999", "#333333"
+_PROBLEM, _PROBLEM_BG = "#e51400", "#fdecea"
 _PAIRS = {"(": ")", "[": "]", "{": "}"}
 _QUOTES = ("'", '"')
 _CLOSE_BEFORE = set(")]}:;,.")  # a pair closes itself only before one of these, a space or the line's end
@@ -64,6 +65,10 @@ class CodeView(ttk.Frame):
         self.app = app
         self._highlight_job = None
         self._numbers_job = None
+        self.on_change = None  # called soon after typing stops (the IDE checks the code then)
+        self._change_job = None
+        self._problems = {}  # tool name -> [lint.Problem]
+        self._problem_tags = {}  # Text tag -> the Problem it underlines
 
         bar = ttk.Frame(self, padding=(0, 2))
         if objects:
@@ -93,6 +98,13 @@ class CodeView(ttk.Frame):
         for tag, color in highlight.COLORS.items():
             self.text.tag_configure(tag, foreground=color)
         self.text.tag_configure("error", background=_ERROR_COLOR)
+        # Messages for problems on the cursor's line, under the code.
+        self.problem_bar = tk.Label(self, anchor="w", padx=6, pady=1, bg=_PROBLEM_BG, fg=_PROBLEM)
+        try:
+            self.text.tag_configure("problem", underline=True, underlinefg=_PROBLEM)
+            self._underline = {"underline": True, "underlinefg": _PROBLEM}
+        except tk.TclError:  # a Tk before 8.6.6 can't colour underlines
+            self._underline = {"underline": True}
         self.text.tag_raise("sel")
 
         # Let the window's shortcuts (Ctrl+O, F5, ...) run before Text's own key bindings.
@@ -336,6 +348,58 @@ class CodeView(ttk.Frame):
             self._select_lines(first, last)
         return "break"
 
+    def _changed(self):
+        self._change_job = None
+        if self.on_change:
+            self.on_change()
+
+    # ----- problems found by lint tools -----
+
+    def set_problems(self, tool, problems):
+        """Show a lint tool's latest problems (replacing its earlier ones)."""
+        self._problems[tool] = list(problems)
+        self._mark_problems()
+
+    def keep_problems_of(self, tools):
+        """Forget the problems of tools no longer in use."""
+        if set(self._problems) - set(tools):
+            self._problems = {t: p for t, p in self._problems.items() if t in tools}
+            self._mark_problems()
+
+    def problems(self):
+        return [problem for found in self._problems.values() for problem in found]
+
+    def _mark_problems(self):
+        """Underline each problem's word. Tags move with the text, so marks stay put while editing."""
+        for tag in self._problem_tags:
+            self.text.tag_delete(tag)
+        self._problem_tags = {}
+        lines = int(self.text.index("end-1c").split(".")[0])
+        for i, problem in enumerate(self.problems()):
+            if problem.line > lines:
+                continue
+            start = self.text.index(f"{problem.line}.{problem.column}")
+            end = self.text.index(f"{start} wordend") if self.text.get(start).isalnum() or self.text.get(start) == "_" else f"{start} +1c"
+            tag = f"problem{i}"
+            self.text.tag_add(tag, start, end)
+            self.text.tag_configure(tag, **self._underline)
+            self._problem_tags[tag] = problem
+        self.text.tag_raise("sel")
+        self._show_numbers()
+
+    def _problem_lines(self):
+        return {tag: int(self.text.index(f"{tag}.first").split(".")[0])
+                for tag in self._problem_tags if self.text.tag_ranges(tag)}
+
+    def _show_problems_here(self, current):
+        here = [f"{self._problem_tags[tag].tool}: {self._problem_tags[tag].message}"
+                for tag, line in self._problem_lines().items() if line == current]
+        if here:
+            self.problem_bar.configure(text="   \u2022   ".join(here))
+            self.problem_bar.pack(side=tk.BOTTOM, fill=tk.X, before=self._body)
+        else:
+            self.problem_bar.pack_forget()
+
     # ----- line numbers -----
 
     def _show_numbers(self):
@@ -347,15 +411,20 @@ class CodeView(ttk.Frame):
         self._numbers_job = None
         self.gutter.delete("all")
         lines = int(self.text.index("end-1c").split(".")[0])
-        width = tkfont.nametofont(MONO).measure("0" * max(2, len(str(lines)))) + 12
+        width = tkfont.nametofont(MONO).measure("0" * max(2, len(str(lines)))) + 18  # room for a problem mark
         if int(self.gutter.cget("width")) != width:
             self.gutter.configure(width=width)
         current = int(self.text.index("insert").split(".")[0])
+        problem_lines = set(self._problem_lines().values())
+        self._show_problems_here(current)
         index = self.text.index("@0,0")  # the first line in view
         while (place := self.text.dlineinfo(index)) is not None:
             n = int(index.split(".")[0])
             self.gutter.create_text(width - 6, place[1], anchor="ne", text=str(n), font=MONO,
                                     fill=_NUMBER_CURRENT if n == current else _NUMBER)
+            if n in problem_lines:
+                middle = place[1] + place[3] // 2
+                self.gutter.create_oval(3, middle - 3, 9, middle + 3, fill=_PROBLEM, outline="", tags="problem")
             following = self.text.index(f"{index} +1line")
             if following == index:
                 break  # the last line
@@ -427,6 +496,10 @@ class CodeView(ttk.Frame):
         self.text.edit_modified(False)
         self.clear_error()  # once the code changes, the error may no longer be there
         self._show_numbers()
+        if self.on_change:
+            if self._change_job:
+                self.after_cancel(self._change_job)
+            self._change_job = self.after(800, self._changed)
         if self._highlight_job:
             self.after_cancel(self._highlight_job)
         self._highlight_job = self.after(200, self.highlight)

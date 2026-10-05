@@ -22,7 +22,8 @@ Ideas and gaps noted along the way, roughly by area.
 - **Themes**: a dark theme; the colours are all in `pybasic/ide/highlight.py`. Also mark a run-time error's line in the line numbers.
 - **Folding** and an outline, from an error-tolerant parser (parso, MIT). The same parsing would let Enter see past the current line: today, after a call spread over several lines, the next line keeps the continuation indent instead of returning to the statement's level.
 - **Completion and go to definition** (Jedi, MIT).
-- **Formatting** (Black, or Ruff's formatter; both MIT). Linting is under Biggest features.
+- **Formatting** (Black, or Ruff's formatter; both MIT), configurable like linting.
+- **Linting follow-ups**: a Problems list next to the Immediate window (every problem in the project, click to jump); quick fixes (`ruff check --fix`); different colours for errors and warnings; pylint/mypy checking as you type via a temporary copy.
 - These libraries would be IDE-only dependencies, like Pygments in the `ide` extra (`pip install -e ".[ide]"`), so programs never need them.
 
 ## Bigger features
@@ -35,5 +36,4 @@ Ideas and gaps noted along the way, roughly by area.
   - The Format menu (align, same size, spacing, center, order) is for absolutely placed controls only; its pure geometry lives in `pybasic/ide/arrange.py`. Grid/pack containers would disable it for their controls or offer their own equivalents (sticky, anchor, padx/pady, weights). Selections already stay within one container, so the container can decide which tools apply.
 - **Backend Swappable**:  Being able to design for a PyQt6 or some other GUI backend instead of Tkinter for a project.  There are two optional paths to this: One is keeping Tkinter for the IDE and designing a project with a different GUI backend, or having the IDE match the target project GUI.  Is a GUI target potentially a plugin?  Either way, this looks like a separation of concerns type of refactor.
 - **Plugins**: A plugin architecture to extend features.  Allow other people to create plugins like VB or VS Code allows.
-- **Linting**: Support for linters.  Could just start with one to begin with. 
 - **Interactive Help**:  VB had great help support by being able to press F1 for help on whatever the cursor was over.  Python has great help support via docstrings, which is better than what VB had. 
