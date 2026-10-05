@@ -296,6 +296,23 @@ def drive(d):
             "def total(items):\n    for item in items:\n        if item:\n            return item\n"
             "        return None\n    x = [\n        \n    ]")
     editor.code.replace_source(before)
+
+    from pybasic.ide import assist
+
+    if assist.AVAILABLE:
+        print("Completion with real keys")
+        d.key("ctrl+End")
+        d.type("import os")
+        d.key("Return")
+        d.type("os.pa")
+        deadline = time.time() + 15
+        while not editor.code.completions.is_open() and time.time() < deadline:
+            d.pump(0.1)
+        d.check("the list opens as you type", editor.code.completions.is_open(), True)
+        d.shot("completion")
+        d.key("Down", "Return")  # past "pardir" to "path"
+        d.check("Down chooses, Enter takes the name", editor.code.get_source().splitlines()[-1], "os.path")
+        editor.code.replace_source(before)
     editor.show_design()
     widget = editor.surface.controls["Button2"].widget
 

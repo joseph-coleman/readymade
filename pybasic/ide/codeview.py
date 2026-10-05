@@ -28,6 +28,114 @@ _AUTO = "auto_closed"  # tags closers the editor added
 _ENDS_BLOCK = re.compile(r"(return|pass|break|continue|raise)\b")  # statements after which a block is done
 
 
+def _in_string(text):
+    """Whether the end of text is inside a string (on this line)."""
+    quote, i = None, 0
+    while i < len(text):
+        if quote:
+            if text[i] == "\\":
+                i += 2
+                continue
+            if text.startswith(quote, i):
+                i += len(quote)
+                quote = None
+                continue
+        elif text[i] in "\"'":
+            quote = text[i : i + 3] if text[i : i + 3] in ('"""', "'''") else text[i]
+            i += len(quote)
+            continue
+        i += 1
+    return quote is not None
+
+
+class CompletionList:
+    """The list of completions under the cursor. Typing narrows it; Up/Down choose;
+    Enter or Tab accepts; Escape, clicking elsewhere or leaving the window closes it."""
+
+    def __init__(self, code):
+        self.code = code
+        self.window = None
+        self.items = []
+        self.shown = []
+        self.start = None  # where the name being completed begins
+
+    def is_open(self):
+        return self.window is not None
+
+    def open(self, items, start):
+        self.items = items
+        self.start = start
+        if self.window is None:
+            self.window = tk.Toplevel(self.code)
+            self.window.overrideredirect(True)
+            self.listbox = tk.Listbox(self.window, font=MONO, activestyle="none", exportselection=False,
+                                      height=8, width=44, bg="white", highlightthickness=1)
+            self.listbox.pack(fill=tk.BOTH, expand=True)
+            self.listbox.bind("<Double-Button-1>", lambda e: self.accept())
+        self.refresh()
+
+    def refresh(self):
+        """Narrow the list to what's been typed, or close it if that's no longer a name."""
+        if self.window is None:
+            return
+        text = self.code.text
+        if text.compare("insert", "<", self.start) or text.index("insert").split(".")[0] != self.start.split(".")[0]:
+            return self.close()
+        typed = text.get(self.start, "insert")
+        if typed and not typed.isidentifier():
+            return self.close()
+        self.shown = sorted((c for c in self.items if c.name.lower().startswith(typed.lower())),
+                            key=lambda c: (c.name.startswith("_"), not c.name.startswith(typed)))
+        if not self.shown or (len(self.shown) == 1 and self.shown[0].name == typed):
+            return self.close()
+        chosen = self.listbox.curselection()
+        was = self.listbox.get(chosen[0]).split()[0] if chosen else None  # keep the choice if it's still there
+        names = [c.name for c in self.shown]
+        self.listbox.delete(0, tk.END)
+        for c in self.shown:
+            self.listbox.insert(tk.END, f"{c.name:<32}{c.kind}")
+        self.listbox.configure(height=min(8, len(self.shown)))
+        index = names.index(was) if was in names else 0
+        self.listbox.selection_set(index)
+        self.listbox.see(index)
+        place = text.bbox(self.start) or text.bbox("insert")
+        if place:
+            x, y, _, height = place
+            self.window.geometry(f"+{text.winfo_rootx() + x}+{text.winfo_rooty() + y + height}")
+            self.window.lift()
+
+    def move(self, step):
+        current = self.listbox.curselection()
+        index = max(0, min(len(self.shown) - 1, (current[0] if current else 0) + step))
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(index)
+        self.listbox.see(index)
+
+    def accept(self):
+        """Put the chosen name in place of what's been typed. False if the list wasn't open."""
+        if self.window is None:
+            return False
+        current = self.listbox.curselection()
+        if current:
+            name, text = self.shown[current[0]].name, self.code.text
+
+            def put():
+                text.delete(self.start, "insert")
+                text.insert(self.start, name)
+
+            self.code._one_step(put)
+        self.close()
+        return True
+
+    def close(self):
+        """Close the list. True if it was open."""
+        if self.window is None:
+            return False
+        self.window.destroy()
+        self.window = None
+        return True
+
+
 def _scan(line):
     """(the line without its comment, the columns of brackets still open at its end).
     Strings are skipped, so brackets, quotes and # inside them don't count."""
@@ -127,8 +235,20 @@ class CodeView(ttk.Frame):
             self.text.bind(f"<KeyPress-{keysym}>", lambda e, c=closer: self._step_over(c))
         for keysym, quote in (("quotedbl", '"'), ("apostrophe", "'")):
             self.text.bind(f"<KeyPress-{keysym}>", lambda e, q=quote: self._quote(q))
-        for sequence in ("<ButtonRelease-1>", "<Up>", "<Down>", "<Prior>", "<Next>"):  # the cursor went elsewhere
+        for sequence in ("<ButtonRelease-1>", "<Prior>", "<Next>"):  # the cursor went elsewhere
             self.text.bind(sequence, lambda e: self.text.tag_remove(_AUTO, "1.0", tk.END), add="+")
+        # Completion (the IDE answers on_complete) and Go to Definition (on_goto).
+        self.on_complete = None  # on_complete(code, manual) asks for completions at the cursor
+        self.on_goto = None  # on_goto(code, index) goes to the definition of the name there
+        self.completions = CompletionList(self)
+        self.text.bind("<Up>", lambda e: self._up_down(-1))
+        self.text.bind("<Down>", lambda e: self._up_down(1))
+        self.text.bind("<Escape>", lambda e: "break" if self.completions.close() else None)
+        self.text.bind("<Control-space>", lambda e: self._ask_completions(manual=True))
+        self.text.bind("<KeyRelease>", self._key_released, add="+")
+        self.text.bind("<FocusOut>", lambda e: self.completions.close(), add="+")
+        self.text.bind("<ButtonPress-1>", lambda e: self.completions.close(), add="+")
+        self.text.bind("<Control-Button-1>", self._control_click)
         for sequence in ("<Configure>", "<KeyRelease>", "<ButtonRelease-1>"):  # resized, or the cursor moved
             self.text.bind(sequence, lambda e: self._show_numbers(), add="+")
 
@@ -232,6 +352,8 @@ class CodeView(ttk.Frame):
             self.text.configure(autoseparators=True)
 
     def _tab(self, _):
+        if self.completions.accept():
+            return "break"
         lines = self._selected_lines()
         if lines and (lines[0] != lines[1] or self._whole_line_selected(lines[0])):
             first, last = lines
@@ -333,6 +455,53 @@ class CodeView(ttk.Frame):
         self._one_step(wrap)
         self.text.mark_set("insert", "sel.last")
         return "break"
+
+    # ----- completion and Go to Definition -----
+
+    def word_start(self):
+        """Where the name being typed at the cursor begins (the cursor itself after a ".")."""
+        before = self.text.get("insert linestart", "insert")
+        typed = re.search(r"[A-Za-z_]\w*$", before)
+        return self.text.index(f"insert -{len(typed.group())}c") if typed else self.text.index("insert")
+
+    def _ask_completions(self, manual=False):
+        if self.on_complete and str(self.text.cget("state")) != "disabled":
+            self.on_complete(self, manual)
+        return "break"
+
+    def _key_released(self, e):
+        if self.completions.is_open():
+            self.completions.refresh()
+        elif e.keysym == "period" or (e.char and (e.char.isalnum() or e.char == "_") and self._typed_enough()):
+            self._ask_completions()
+
+    def _typed_enough(self):
+        """Offer completions once three letters of a name are typed (not in a comment or string)."""
+        before = self.text.get("insert linestart", "insert")
+        code, _ = _scan(before)
+        typed = re.search(r"[A-Za-z_]\w*$", before)
+        return len(code) == len(before) and typed is not None and len(typed.group()) == 3 and not _in_string(before)
+
+    def _up_down(self, step):
+        if self.completions.is_open():
+            self.completions.move(step)
+            return "break"
+        self.text.tag_remove(_AUTO, "1.0", tk.END)  # the cursor went elsewhere
+        return None
+
+    def _control_click(self, e):
+        if self.on_goto:
+            self.on_goto(self, self.text.index(f"@{e.x},{e.y}"))
+        return "break"
+
+    def show_location(self, line, column, length=0):
+        """Put the cursor at a line and column, selecting a name there."""
+        self.text.tag_remove("sel", "1.0", tk.END)
+        self.text.mark_set("insert", f"{line}.{column}")
+        if length:
+            self.text.tag_add("sel", "insert", f"insert +{length}c")
+        self.text.see("insert")
+        self.text.focus_set()
 
     def toggle_comment(self, _=None):
         """Comment the selected lines (or the current one) out, or back in if they all are.
@@ -450,6 +619,8 @@ class CodeView(ttk.Frame):
 
     def _newline(self, _):
         """Enter, with the next line indented to suit what's before the cursor (one undo step)."""
+        if self.completions.accept():
+            return "break"
         if self.text.tag_ranges("sel"):
             self.text.delete("sel.first", "sel.last")
         before = self.text.get("insert linestart", "insert")

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import gc
 import inspect
 import threading
 import time
@@ -207,6 +208,31 @@ def _step():
         root.after(1 if busy else _WAITING, _step)
     except tk.TclError:  # the program has ended
         _pump_root = None
+
+
+def collect_garbage_on(root, every=1000):
+    """While root's window runs, collect garbage only on its (the GUI) thread.
+
+    Python collects garbage in whichever thread happens to be allocating. If that's a
+    worker thread (in_thread work, or the IDE's linting and completion) and the garbage
+    holds a Tk object, like a closed form's StringVar, freeing it calls into Tk from
+    the wrong thread, and Tk aborts the process. So automatic collection is off while
+    the window runs; this collects instead: young objects every second, all every ten.
+    Reference counting still frees most things straight away."""
+    gc.disable()
+    count = 0
+
+    def collect():
+        nonlocal count
+        count += 1
+        gc.collect(2 if count % 10 == 0 else 1)
+        try:
+            root.after(every, collect)
+        except tk.TclError:
+            pass  # the window has closed
+
+    root.after(every, collect)
+    root.bind("<Destroy>", lambda e: gc.enable() if e.widget is root else None, add="+")
 
 
 def shutdown():

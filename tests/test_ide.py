@@ -1000,3 +1000,70 @@ def test_the_formatting_dialog(app):
 
 def test_format_document_has_its_shortcut(app):
     assert app.root.bind("<Alt-KeyPress-F>")
+
+
+needs_jedi = pytest.mark.skipif(not __import__("pybasic.ide.assist", fromlist=["AVAILABLE"]).AVAILABLE,
+                                reason="needs Jedi (pip install -e '.[ide]')")
+
+
+def form_with_code(app, code):
+    form = app.form
+    form.add_control("Label", 8, 8)
+    form.add_control("Button", 8, 40)
+    form.show_code()
+    form.code.set_source(code)
+    return form
+
+
+@needs_jedi
+def test_completion_list_while_typing(app):
+    from test_codeview import type_text
+
+    form = form_with_code(app, "from pybasic import Form\n\n\nclass Form1(Form):\n    def Button1_click(self):\n        \n")
+    code = form.code
+    code.text.mark_set("insert", "6.8")
+    type_text(code, "self.")
+    assert wait_for(app, code.completions.is_open)
+    shown = [c.name for c in code.completions.shown]
+    assert "Label1" in shown and "Button1" in shown
+    type_text(code, "Lab")  # narrows the list
+    assert [c.name for c in code.completions.shown] == ["Label1"]
+    code._newline(None)  # Enter accepts
+    assert code.text.get("6.0", "6.end") == "        self.Label1" and not code.completions.is_open()
+
+    type_text(code, ".")
+    assert wait_for(app, code.completions.is_open)
+    code.completions.move(1)
+    code._up_down(-1)  # Up/Down move through the list rather than the code
+    assert code.completions.listbox.curselection() == (0,)
+    code._up_down(1)
+    code.text.event_generate("<KeyRelease-Down>")  # releasing the key mustn't reset the choice
+    code.update()
+    assert code.completions.listbox.curselection() == (1,)
+    code.text.event_generate("<Escape>")
+    assert not code.completions.is_open()
+
+
+@needs_jedi
+def test_go_to_definition(app):
+    form = form_with_code(app, "from pybasic import Form\n\n\nclass Form1(Form):\n"
+                               "    def Button1_click(self):\n        self.Label1.text = self.greeting()\n\n"
+                               "    def greeting(self):\n        return 'hi'\n")
+    app.go_to_definition(form, "6.14")  # self.Label1
+    assert form.frame.select() == str(form.surface) and form.selected == "Label1"  # shown in the designer
+
+    app.go_to_definition(form, "6.35")  # self.greeting
+    assert form.frame.select() == str(form.code)
+    assert form.code.text.index("insert") == "8.8" and form.code.text.get("sel.first", "sel.last") == "greeting"
+
+    app.go_to_definition(form, "1.21")  # Form, in pybasic itself: read-only
+    viewer = app._current_editor()
+    assert viewer.title() == "form.py (read-only)" and str(viewer.code.text.cget("state")) == "disabled"
+    assert viewer.code.text.get("insert linestart", "insert lineend").startswith("class Form")
+    assert viewer.code.on_change is None  # never linted
+
+
+def test_completion_says_when_jedi_is_missing(app, monkeypatch):
+    monkeypatch.setattr(app, "assistant", None)
+    app.go_to_definition()
+    assert "need Jedi" in app.immediate.output.get("1.0", "end")

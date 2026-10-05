@@ -50,6 +50,7 @@ def main_loop():
     """Run the program until the last loaded form closes."""
     global _app
     if _loaded:
+        events.collect_garbage_on(app_root())  # Tk objects must only be freed on this thread
         app_root().mainloop()
     events.shutdown()  # stop async handlers that are still running
     if _app is not None:

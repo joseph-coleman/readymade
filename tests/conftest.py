@@ -76,3 +76,13 @@ def no_dialogs(monkeypatch):
 def own_settings(monkeypatch, tmp_path_factory):
     """Each test gets its own user settings folder, never the real one."""
     monkeypatch.setenv("PYBASIC_CONFIG_DIR", str(tmp_path_factory.mktemp("settings")))
+
+
+@pytest.fixture(autouse=True)
+def collect_garbage_here():
+    """Free each test's leftover Tk objects on the main thread, before the next test's
+    background threads (linting, completion, program output) could, which would crash Tk."""
+    yield
+    import gc
+
+    gc.collect()

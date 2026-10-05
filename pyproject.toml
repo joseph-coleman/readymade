@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-ide = ["pygments>=2.15"]  # better code colouring; the IDE works without it
+ide = ["pygments>=2.15", "jedi>=0.19"]  # colouring, completion and Go to Definition; the IDE works without them
 
 [project.scripts]
 pybasic = "pybasic.ide.app:main"

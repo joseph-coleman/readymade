@@ -233,3 +233,17 @@ def test_async_handlers_are_found_in_the_code():
     assert codegen.defined_methods(source) == {"btnGo_click"}
     assert codegen.find_method(source, "btnGo_click") == 2
     assert "async def btnStart_click(self):" in codegen.rename_control(source, "btnGo", "btnStart", ["click"])
+
+
+def test_garbage_is_collected_on_the_gui_thread_while_a_window_runs():
+    import gc
+    import tkinter as tk
+
+    from pybasic.events import collect_garbage_on
+
+    root = tk.Tk()
+    collect_garbage_on(root, every=10)
+    assert not gc.isenabled()  # no collecting in whatever thread happens to allocate
+    root.update()
+    root.destroy()
+    assert gc.isenabled()  # back to normal once the window has closed

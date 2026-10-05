@@ -16,7 +16,7 @@ from tkinter import messagebox, ttk
 from pybasic import codegen, formfile, menus
 from pybasic.controls import REGISTRY, Event
 from pybasic.form import FORM, FORM_EVENTS, check_name
-from pybasic.ide import arrange
+from pybasic.ide import arrange, assist
 from pybasic.ide.codeview import CodeView
 from pybasic.ide.designer import GRID, DesignSurface, snap
 
@@ -71,6 +71,11 @@ class FormEditor:
     @property
     def code_path(self):
         return self.path.with_suffix(".py")
+
+    def prepared_code(self):
+        """The code as Jedi sees it, with the controls and menu items declared (see assist.py)."""
+        controls = [(spec["type"], spec["name"]) for spec in self.design.controls]
+        return assist.prepare(self.code.get_source(), self.design.name, controls, menus.names(self.design.menu))
 
     @property
     def toolbox(self):
@@ -590,6 +595,9 @@ class ModuleEditor:
     def code_path(self):
         return self.path
 
+    def prepared_code(self):
+        return assist.prepare(self.code.get_source())
+
     def title(self):
         return f"{self.path.name}{'*' if self.is_dirty() else ''}"
 
@@ -613,6 +621,33 @@ class ModuleEditor:
             messagebox.showerror("Save", str(e), parent=self.app.root)
             return False
         self._saved = source
+        return True
+
+
+class ViewerEditor(ModuleEditor):
+    """Code from outside the project, like a library's, opened by Go to Definition: read-only."""
+
+    read_only = True
+
+    def __init__(self, app, path):
+        self.app = app
+        self.path = path
+        self.frame = CodeView(app.documents, self, objects=False)
+        self._saved = path.read_text(encoding="utf-8", errors="replace")
+        self.frame.set_source(self._saved)
+        self.frame.text.configure(state="disabled")
+
+    @property
+    def name(self):
+        return self.path.name
+
+    def title(self):
+        return f"{self.path.name} (read-only)"
+
+    def is_dirty(self):
+        return False
+
+    def save(self):
         return True
 
 

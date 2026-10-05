@@ -156,6 +156,7 @@ def type_text(code, text):
     code.update()
     for char in text:
         code.text.event_generate(f"<KeyPress-{keysyms.get(char, char)}>")
+        code.text.event_generate(f"<KeyRelease-{keysyms.get(char, char)}>")  # as a real key does
     code.update()
 
 

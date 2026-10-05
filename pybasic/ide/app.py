@@ -20,9 +20,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from pybasic import formatting, menus, package
+from pybasic import events, formatting, menus, package
 from pybasic.formfile import FormFileError
-from pybasic.ide.editors import FormEditor, ModuleEditor
+from pybasic.ide import assist
+from pybasic.ide.editors import FormEditor, ModuleEditor, ViewerEditor
 from pybasic.ide.linting import Linter
 from pybasic.ide.menueditor import MenuEditor
 from pybasic.ide.panels import ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
@@ -36,6 +37,7 @@ _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containin
 class App:
     def __init__(self, root: tk.Tk, path: Path | None = None):
         self.root = root
+        events.collect_garbage_on(root)  # the IDE's threads mustn't free Tk objects (see events.py)
         self.project: Project | None = None
         self.editors: list[FormEditor | ModuleEditor] = []
         self.form: FormEditor | None = None  # the form whose tab is showing
@@ -45,6 +47,8 @@ class App:
         self._output: queue.Queue = queue.Queue()
         self._console = _DesignTimeConsole(self)
         self.linter = Linter(self)
+        self.assistant = assist.Assistant(_PACKAGE_ROOT) if assist.AVAILABLE else None
+        self._completions: queue.Queue = queue.Queue()  # answers from the assistant's thread
         self._python_info: dict[str, str] = {}
         self.clipboard: list[dict] = []  # copied controls, for pasting into any form  # interpreter path -> describe_python(), which is slow
         self._build_ui()
@@ -89,6 +93,7 @@ class App:
         ):
             root.bind(sequence, lambda e, c=command: (c(), "break")[1])
         root.bind(menus.shortcut_sequence("Alt+Shift+F"), lambda e: (self.format_document(), "break")[1])
+        root.bind("<F12>", lambda e: (self.go_to_definition(), "break")[1])
         for sequence, redo in (("<Control-z>", False), ("<Control-y>", True), ("<Control-Z>", True)):
             root.bind(sequence, lambda e, r=redo: self._undo_key(r))
         for sequence, action in (("<Control-x>", "cut"), ("<Control-c>", "copy"), ("<Control-v>", "paste")):
@@ -116,6 +121,7 @@ class App:
         edit.add_separator()
         edit.add_command(label="Toggle Comment", accelerator="Ctrl+/", command=self.toggle_comment)
         edit.add_command(label="Format Document", accelerator="Shift+Alt+F", command=self.format_document)
+        edit.add_command(label="Go to Definition", accelerator="F12", command=self.go_to_definition)
         format_menu = self._build_format_menu(menubar)
         project = tk.Menu(menubar, tearoff=False)
         project.add_command(label="Add Form...", command=self.add_form)
@@ -355,10 +361,108 @@ class App:
         if editor is not None and not self._designing():
             editor.code.toggle_comment()
 
+    # ----- completion and Go to Definition (assist.py) -----
+
+    def _assist_unavailable(self, manual):
+        if self.assistant is None or self.project is None:
+            if manual:
+                self.immediate.write("(Completion and Go to Definition need Jedi: pip install -e \".[ide]\")\n")
+            return True
+        return False
+
+    def complete(self, editor, manual=False):
+        """Ask for completions at the cursor, in the background; they're shown if still wanted."""
+        if self._assist_unavailable(manual):
+            return
+        code = editor.code
+        line, column = map(int, code.text.index("insert").split("."))
+        start, prepared = code.word_start(), editor.prepared_code()
+        python, folder, path = self.project.python(), self.project.folder, editor.code_path
+        code.completion_request = getattr(code, "completion_request", 0) + 1
+        request = code.completion_request
+
+        def work():
+            items = []
+            try:
+                items = self.assistant.complete(prepared, line, column, path, folder, python)
+            finally:  # always answer, so the IDE stops waiting
+                self._completions.put((editor, request, start, items))
+
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(30, self._show_completions)
+
+    def _show_completions(self):
+        try:
+            editor, request, start, items = self._completions.get_nowait()
+        except queue.Empty:
+            self.root.after(30, self._show_completions)
+            return
+        code = editor.code
+        # Only the latest request, and only while the cursor is still on that name.
+        if editor in self.editors and request == code.completion_request and items and code.word_start() == start:
+            code.completions.open(items, start)
+
+    def go_to_definition(self, editor=None, index="insert"):
+        """Edit > Go to Definition (F12, or Ctrl+click): open the code where a name is defined.
+        A form's control or menu item is shown in the designer."""
+        editor = editor or self._current_editor()
+        if editor is None or self._assist_unavailable(manual=True):
+            return
+        code = editor.code
+        line, column = map(int, code.text.index(index).split("."))
+        word = code.text.get(f"{index} wordstart", f"{index} wordend").strip()
+        self.root.configure(cursor="watch")
+        self.root.update_idletasks()
+        try:
+            found = self.assistant.definition(editor.prepared_code(), line, column, editor.code_path,
+                                              self.project.folder, self.project.python())
+        finally:
+            self.root.configure(cursor="")
+        if found is None:
+            self.immediate.write(f"(No definition found for {word or 'that'}.)\n")
+        elif found.kind in ("control", "menu") and isinstance(editor, FormEditor):
+            editor.show_design()
+            if found.kind == "control":
+                editor.select(found.name)
+            else:
+                self._show_menu_item(editor, found.name)
+        elif found.kind == "builtin":
+            self.immediate.write(f"({found.name} is built into Python, so there's no source to show.)\n")
+        else:
+            target = self._open_code(found.path)
+            if target is not None:
+                target.code.show_location(found.line, found.column, len(found.name))
+
+    def _show_menu_item(self, editor, name):
+        dialog = self.menu_editor()
+        if dialog is not None:
+            item = next((i for i in menus.walk(dialog.items) if i.get("name") == name), None)
+            if item is not None:
+                dialog.tree.selection_set(str(id(item)))
+                dialog.tree.see(str(id(item)))
+
+    def _open_code(self, path):
+        """Open a .py file: a form's code or a module of the project, else read-only."""
+        if self.project and path.parent.resolve() == self.project.folder.resolve() and path.suffix == ".py":
+            if path.with_suffix(".form").exists():
+                return self.open_form(path.stem, "code")
+            return self.open_module(path.stem)
+        viewer = next((e for e in self.editors if isinstance(e, ViewerEditor) and e.path == path), None)
+        if viewer is None:
+            try:
+                viewer = ViewerEditor(self, path)
+            except OSError as e:
+                self.immediate.write(f"(Couldn't open {path}: {e})\n")
+                return None
+            self._add_tab(viewer)
+        self.documents.select(viewer.frame)
+        self._tab_changed()
+        return viewer
+
     def format_document(self):
         """Edit > Format Document: the code of the document that's showing."""
         editor = self._current_editor()
-        if editor is not None and self.project is not None:
+        if editor is not None and self.project is not None and not getattr(editor, "read_only", False):
             if not formatting.tools_for(self.project):
                 self.immediate.write("(No formatter is chosen for this project: see Project > Formatting...)\n")
             else:
@@ -454,8 +558,11 @@ class App:
     def _add_tab(self, editor):
         self.editors.append(editor)
         self.documents.add(editor.frame, text=editor.title())
-        editor.code.on_change = lambda: self.linter.check(editor)  # soon after typing stops
-        self.linter.check(editor, saved=True)
+        editor.code.on_complete = lambda code, manual: self.complete(editor, manual)
+        editor.code.on_goto = lambda code, index: self.go_to_definition(editor, index)
+        if not getattr(editor, "read_only", False):
+            editor.code.on_change = lambda: self.linter.check(editor)  # soon after typing stops
+            self.linter.check(editor, saved=True)
 
     def _current_editor(self):
         try:
