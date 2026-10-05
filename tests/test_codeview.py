@@ -273,3 +273,9 @@ def test_enter_tidies_whitespace(code):
     code.text.mark_set("insert", "1.10")
     type_text(code, "\n")
     assert code.get_source() == "    a = 1;\n    b = 2"  # the rest starts at the indent
+
+
+def test_replacing_all_the_code_is_one_undo_step(code):
+    code.replace_source("something else\n")
+    code.text.edit_undo()
+    assert code.get_source() == SOURCE

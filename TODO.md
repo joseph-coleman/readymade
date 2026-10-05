@@ -22,7 +22,7 @@ Ideas and gaps noted along the way, roughly by area.
 - **Themes**: a dark theme; the colours are all in `pybasic/ide/highlight.py`. Also mark a run-time error's line in the line numbers.
 - **Folding** and an outline, from an error-tolerant parser (parso, MIT). The same parsing would let Enter see past the current line: today, after a call spread over several lines, the next line keeps the continuation indent instead of returning to the statement's level.
 - **Completion and go to definition** (Jedi, MIT).
-- **Formatting** (Black, or Ruff's formatter; both MIT), configurable like linting.
+- **Formatting follow-ups**: format just the selection; let a project insist on no formatting (today an unset project falls back to each person's default); format in the background instead of briefly waiting with a busy cursor.
 - **Linting follow-ups**: a Problems list next to the Immediate window (every problem in the project, click to jump); quick fixes (`ruff check --fix`); different colours for errors and warnings; pylint/mypy checking as you type via a temporary copy.
 - These libraries would be IDE-only dependencies, like Pygments in the `ide` extra (`pip install -e ".[ide]"`), so programs never need them.
 

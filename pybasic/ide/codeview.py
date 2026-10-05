@@ -150,11 +150,21 @@ class CodeView(ttk.Frame):
         if source == self.get_source():
             return
         top = self.text.yview()[0]
-        self.text.edit_separator()
-        self.text.delete("1.0", tk.END)
-        self.text.insert("1.0", source)
-        self.text.edit_separator()
+
+        def replace():
+            self.text.delete("1.0", tk.END)
+            self.text.insert("1.0", source)
+
+        # One step: on its own, Tk starts a new undo step when deleting turns into inserting.
+        self._one_step(replace)
         self.text.yview_moveto(top)
+
+    def replace_keeping_place(self, source):
+        """Replace all the code (one undo step), keeping the cursor's line and column, e.g. after formatting."""
+        place = self.text.index("insert")
+        self.replace_source(source)
+        self.text.mark_set("insert", place)  # Tk keeps it within the new text
+        self.text.see("insert")
 
     def apply_edit(self, edit):
         self.text.edit_separator()

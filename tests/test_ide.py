@@ -905,10 +905,10 @@ def test_a_missing_tool_is_reported_once(app):
 
 def test_the_linting_dialog(app, tmp_path):
     from pybasic import lint
-    from pybasic.ide.lintdialog import LintDialog
+    from pybasic.ide.tooldialog import linting_dialog
 
     add_fake_linters(app, tmp_path)
-    dialog = LintDialog(app)
+    dialog = linting_dialog(app)
     assert set(dialog.tools) >= {"pyflakes", "ruff", "flake8", "pylint", "mypy", "typing-check", "save-check"}
     statuses = {name: [w.cget("text") for w in frame.winfo_children()] for name, frame in dialog.status.items()}
     assert statuses["ruff"] == ["not installed"]  # and no Install button: there's no environment yet
@@ -917,3 +917,86 @@ def test_the_linting_dialog(app, tmp_path):
     dialog.mine["typing-check"].set(True)
     dialog.ok()
     assert lint.choices(app.project) == (["ruff"], ["typing-check"])
+
+
+FAKE_FORMATTER = """import re, sys
+source = sys.stdin.read()
+if "def f(:" in source:
+    sys.stderr.write("error: cannot parse\\n")
+    sys.exit(123)
+sys.stdout.write(re.sub(r"(\\w)=(\\w)", r"\\1 = \\2", source))  # spaces around =
+"""
+
+
+def add_fake_formatter(app, tmp_path):
+    (tmp_path / "fake_formatter.py").write_text(FAKE_FORMATTER)
+    script = str(tmp_path / "fake_formatter.py").replace("\\\\", "/")
+    pyproject = app.project.pyproject
+    pyproject.write_text(pyproject.read_text() + (
+        f'\n[tool.pybasic.format-tools.spacer]\ncommand = ["{{python}}", "{script}"]\n'))
+
+
+def test_format_document(app, tmp_path):
+    from pybasic import formatting
+
+    add_fake_formatter(app, tmp_path)
+    form = app.form
+    form.show_code()
+    form.code.text.insert("end", "\nx=1\ny=2\n")
+    line = form.code.text.search("y=2", "1.0").split(".")[0]
+    form.code.text.mark_set("insert", f"{line}.2")
+    app.format_document()
+    assert "No formatter is chosen" in app.immediate.output.get("1.0", "end")
+    formatting.set_choices(app.project, [], ["spacer"])  # my default, as the project hasn't chosen
+    before = form.code.get_source()
+    app.format_document()
+    assert form.code.get_source().endswith("\nx = 1\ny = 2\n")
+    assert form.code.text.index("insert") == f"{line}.2"  # the cursor stays put
+    form.code.text.edit_undo()
+    assert form.code.get_source() == before  # one undo step
+
+    form.code.text.insert("end", "def f(:\n")
+    broken = form.code.get_source()
+    assert app.format_code(form) is False
+    assert form.code.get_source() == broken  # left as it was
+    assert "spacer couldn't format Form1.py: error: cannot parse" in app.immediate.output.get("1.0", "end")
+
+
+def test_the_projects_formatter_wins_and_format_on_save(app, tmp_path):
+    from pybasic import formatting
+
+    add_fake_formatter(app, tmp_path)
+    formatting.set_choices(app.project, ["spacer"], ["black"])
+    assert [t.name for t in formatting.tools_for(app.project)] == ["spacer"]  # not combined: the project's choice
+    formatting.set_choices(app.project, [], ["black", "isort"])
+    assert [t.name for t in formatting.tools_for(app.project)] == ["isort", "black"]  # my default, imports first
+
+    formatting.set_choices(app.project, ["spacer"], [])
+    formatting.set_on_save(app.project, False, True)  # my default: on
+    assert formatting.format_on_save(app.project)
+    form = app.form
+    form.code.text.insert("end", "\nx=1\n")
+    assert app.save()
+    assert (app.project.folder / "Form1.py").read_text().endswith("\nx = 1\n")  # formatted, then saved
+    form.code.text.insert("end", "def f(:\n")
+    assert app.save()  # a formatter that can't still lets the save go ahead
+    assert (app.project.folder / "Form1.py").read_text().endswith("def f(:\n")
+
+
+def test_the_formatting_dialog(app):
+    from pybasic import formatting
+    from pybasic.ide.tooldialog import formatting_dialog
+
+    dialog = formatting_dialog(app)
+    assert list(dialog.tools)[:5] == ["isort", "autopep8", "yapf", "black", "ruff"]  # the order they run in
+    dialog.shared["black"].set(True)
+    dialog.mine["ruff"].set(True)
+    dialog.switch[0].set(True)  # format when saving, for the project
+    dialog.ok()
+    assert formatting.choices(app.project) == (["black"], ["ruff"])
+    assert formatting.on_save_choices(app.project) == (True, False)
+    assert "format-on-save = true" in app.project.pyproject.read_text()
+
+
+def test_format_document_has_its_shortcut(app):
+    assert app.root.bind("<Alt-KeyPress-F>")

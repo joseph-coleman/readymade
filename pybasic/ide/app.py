@@ -20,13 +20,13 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from pybasic import package
+from pybasic import formatting, menus, package
 from pybasic.formfile import FormFileError
 from pybasic.ide.editors import FormEditor, ModuleEditor
-from pybasic.ide.lintdialog import LintDialog
 from pybasic.ide.linting import Linter
 from pybasic.ide.menueditor import MenuEditor
 from pybasic.ide.panels import ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
+from pybasic.ide.tooldialog import formatting_dialog, linting_dialog
 from pybasic.ide.tracebacks import TracebackWatcher
 from pybasic.project import Project, ProjectError, describe_python, find_pythons
 
@@ -88,6 +88,7 @@ class App:
             ("<Shift-F7>", lambda: self.form and self.form.show_design()),
         ):
             root.bind(sequence, lambda e, c=command: (c(), "break")[1])
+        root.bind(menus.shortcut_sequence("Alt+Shift+F"), lambda e: (self.format_document(), "break")[1])
         for sequence, redo in (("<Control-z>", False), ("<Control-y>", True), ("<Control-Z>", True)):
             root.bind(sequence, lambda e, r=redo: self._undo_key(r))
         for sequence, action in (("<Control-x>", "cut"), ("<Control-c>", "copy"), ("<Control-v>", "paste")):
@@ -114,6 +115,7 @@ class App:
             edit.add_command(label=label, accelerator=key, command=lambda a=action: self.edit(a))
         edit.add_separator()
         edit.add_command(label="Toggle Comment", accelerator="Ctrl+/", command=self.toggle_comment)
+        edit.add_command(label="Format Document", accelerator="Shift+Alt+F", command=self.format_document)
         format_menu = self._build_format_menu(menubar)
         project = tk.Menu(menubar, tearoff=False)
         project.add_command(label="Add Form...", command=self.add_form)
@@ -125,7 +127,8 @@ class App:
         project.add_separator()
         project.add_command(label="Choose Python Interpreter...", command=self.choose_python)
         project.add_separator()
-        project.add_command(label="Linting...", command=lambda: self.project and LintDialog(self))
+        project.add_command(label="Linting...", command=lambda: self.project and linting_dialog(self))
+        project.add_command(label="Formatting...", command=lambda: self.project and formatting_dialog(self))
         project.add_command(label="Use Default Python", command=lambda: self.set_python(None))
         view = tk.Menu(menubar, tearoff=False)
         view.add_command(label="Code", accelerator="F7", command=lambda: self.form and self.form.show_code())
@@ -352,6 +355,35 @@ class App:
         if editor is not None and not self._designing():
             editor.code.toggle_comment()
 
+    def format_document(self):
+        """Edit > Format Document: the code of the document that's showing."""
+        editor = self._current_editor()
+        if editor is not None and self.project is not None:
+            if not formatting.tools_for(self.project):
+                self.immediate.write("(No formatter is chosen for this project: see Project > Formatting...)\n")
+            else:
+                self.format_code(editor)
+
+    def format_code(self, editor):
+        """Format an open document's code with the project's formatters (one undo step).
+        Returns False, leaving the code as it was, if a formatter couldn't."""
+        tools = formatting.tools_for(self.project)
+        if not tools:
+            return True
+        source = editor.code.get_source()
+        self.root.configure(cursor="watch")
+        self.root.update_idletasks()
+        try:
+            formatted, trouble = formatting.format_source(
+                tools, self.python()[0], self.project.folder, editor.code_path, source, self.environment())
+        finally:
+            self.root.configure(cursor="")
+        if trouble:
+            self.immediate.write(f"--- {trouble} ---\n")
+            return False
+        editor.code.replace_keeping_place(formatted)
+        return True
+
     def _clipboard_key(self, action):
         """Ctrl+X/C/V act on controls only while the design surface has the keyboard;
         anywhere else (code, Properties, Immediate) they're the usual text keys."""
@@ -470,6 +502,9 @@ class App:
     def save(self):
         """Save every changed document. Returns False if any failed."""
         changed = [e for e in list(self.editors) if e.is_dirty()]
+        if self.project and changed and formatting.format_on_save(self.project):
+            for editor in changed:
+                self.format_code(editor)  # if it can't, the save still goes ahead
         ok = all([e.save() for e in changed])
         for editor in changed:
             self.linter.check(editor, saved=True)
