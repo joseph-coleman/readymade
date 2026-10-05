@@ -63,7 +63,7 @@ def create(parent, spec, design=False):
     return cls(parent, spec, design)
 
 
-def _geometry(attr):
+def _geometry(attr, doc):
     def get(self):
         return getattr(self, "_" + attr)
 
@@ -71,10 +71,14 @@ def _geometry(attr):
         setattr(self, "_" + attr, int(value))
         self._place()
 
-    return property(get, set)
+    return property(get, set, doc=doc)
 
 
 class Control:
+    """A control on a form. Every control has left, top, width and height (in pixels,
+    within its container: the form or a Frame), enabled and visible. `widget` is
+    its Tk widget, for anything pybasic doesn't cover."""
+
     widget: tk.Widget
     _left: int
     _top: int
@@ -154,13 +158,14 @@ class Control:
         if value != current:
             raise AttributeError(f"{prop} can only be changed in the designer")
 
-    left = _geometry("left")
-    top = _geometry("top")
-    width = _geometry("width")
-    height = _geometry("height")
+    left = _geometry("left", "Distance from the left edge of its container (the form or a Frame), in pixels.")
+    top = _geometry("top", "Distance from the top edge of its container (the form or a Frame), in pixels.")
+    width = _geometry("width", "Width, in pixels.")
+    height = _geometry("height", "Height, in pixels.")
 
     @property
     def visible(self):
+        """Whether it's shown. A hidden control keeps its place and properties."""
         return self._visible
 
     @visible.setter
@@ -170,6 +175,7 @@ class Control:
 
     @property
     def enabled(self):
+        """Whether it responds to the user. A disabled control is greyed out."""
         return self._enabled
 
     @enabled.setter
@@ -207,6 +213,7 @@ class _WidgetText:
 
     @property
     def text(self):
+        """The text it shows: a Label's words, a Button's or CheckBox's label, a Frame's title."""
         return self.widget.cget("text")
 
     @text.setter
@@ -216,6 +223,8 @@ class _WidgetText:
 
 @register
 class Label(_WidgetText, Control):
+    """Text on a form, such as a caption or a result. It can't be typed in, but it can be clicked."""
+
     type_name = "Label"
     default_size = (96, 24)
     events = _MOUSE_EVENTS
@@ -295,6 +304,7 @@ class TextBox(Control):
 
     @property
     def text(self):
+        """What's in the box. Setting it replaces the contents (and raises change)."""
         return self.editor.get("1.0", "end-1c") if self._multiline else self._var.get()
 
     @text.setter
@@ -310,6 +320,7 @@ class TextBox(Control):
 
     @property
     def multiline(self):
+        """Whether it's a multi-line text area rather than a single line. Set in the designer."""
         return self._multiline
 
     @multiline.setter
@@ -318,6 +329,7 @@ class TextBox(Control):
 
     @property
     def scrollbars(self):
+        """A multi-line box's scrollbars: "none", "horizontal", "vertical" or "both". Set in the designer."""
         return self._scrollbars
 
     @scrollbars.setter
@@ -326,6 +338,7 @@ class TextBox(Control):
 
     @property
     def enabled(self):
+        """Whether it responds to the user. A disabled control is greyed out."""
         return self._enabled
 
     @enabled.setter
@@ -358,7 +371,8 @@ class TextBox(Control):
 
 @register
 class Frame(_WidgetText, Control):
-    """A captioned container. Controls drawn inside it are positioned relative to it."""
+    """A captioned box that groups controls. Controls drawn inside it belong to it: they're
+    positioned relative to it and move with it, and its OptionButtons form their own group."""
 
     inner: tk.Frame
     type_name = "Frame"
@@ -380,6 +394,7 @@ class Frame(_WidgetText, Control):
 
     @property
     def enabled(self):
+        """Whether it responds to the user. A disabled control is greyed out."""
         return self._enabled
 
     @enabled.setter
@@ -391,6 +406,8 @@ class Frame(_WidgetText, Control):
 
 @register
 class Button(_WidgetText, Control):
+    """A push button. Its click event runs when it's clicked, or pressed with Space while it has the focus."""
+
     type_name = "Button"
     default_size = (96, 28)
     events = (Event("click"), *_FOCUS_EVENTS, Event("mousedown", ("x", "y")), Event("mouseup", ("x", "y")))
@@ -409,6 +426,8 @@ class Button(_WidgetText, Control):
 
 @register
 class CheckBox(_WidgetText, Control):
+    """A box that can be ticked. value is True while it's ticked; click runs each time it changes."""
+
     type_name = "CheckBox"
     default_size = (120, 24)
     events = (Event("click", policy="latest"), *_FOCUS_EVENTS)
@@ -420,6 +439,7 @@ class CheckBox(_WidgetText, Control):
 
     @property
     def value(self):
+        """True while it's ticked."""
         return bool(self._var.get())
 
     @value.setter
@@ -456,6 +476,7 @@ class OptionButton(_WidgetText, Control):
 
     @property
     def value(self):
+        """True when it's the chosen option of its group. Setting it True un-chooses the others."""
         return self._group.get() == self._key
 
     @value.setter
@@ -477,6 +498,7 @@ class _ListMixin:
 
     @property
     def items(self) -> list[str]:
+        """The list's items, as strings. Assigning a list replaces them all."""
         raise NotImplementedError
 
     @items.setter
@@ -485,19 +507,23 @@ class _ListMixin:
 
     @property
     def list_count(self):
+        """How many items there are."""
         return len(self.items)
 
     def add_item(self, item, index=None):
+        """Add an item at the end, or at position index (counting from 0)."""
         items = self.items
         items.insert(len(items) if index is None else index, str(item))
         self.items = items
 
     def remove_item(self, index):
+        """Remove the item at position index (counting from 0)."""
         items = self.items
         del items[index]
         self.items = items
 
     def clear(self):
+        """Remove every item."""
         self.items = []
 
 
@@ -520,6 +546,7 @@ class ComboBox(_ListMixin, Control):
 
     @property
     def text(self):
+        """The text in the box: the chosen item, or what was typed if it's editable."""
         return self._var.get()
 
     @text.setter
@@ -528,6 +555,7 @@ class ComboBox(_ListMixin, Control):
 
     @property
     def items(self):
+        """The list's items, as strings. Assigning a list replaces them all."""
         return list(self._combo.tk.splitlist(self._combo.cget("values")))
 
     @items.setter
@@ -548,6 +576,7 @@ class ComboBox(_ListMixin, Control):
 
     @property
     def editable(self):
+        """Whether the user can type their own text (True) or only choose from the list (False)."""
         return self._editable
 
     @editable.setter
@@ -557,6 +586,7 @@ class ComboBox(_ListMixin, Control):
 
     @property
     def enabled(self):
+        """Whether it responds to the user. A disabled control is greyed out."""
         return self._enabled
 
     @enabled.setter
@@ -581,6 +611,9 @@ class ComboBox(_ListMixin, Control):
 
 @register
 class ListBox(_ListMixin, Control):
+    """A list to choose from. click runs when the choice changes; list_index and text tell
+    which item is chosen."""
+
     type_name = "ListBox"
     default_size = (120, 96)
     events = (Event("click", policy="latest"), Event("dblclick"), *_FOCUS_EVENTS)
@@ -593,6 +626,7 @@ class ListBox(_ListMixin, Control):
 
     @property
     def items(self):
+        """The list's items, as strings. Assigning a list replaces them all."""
         return list(self._list.get(0, tk.END))
 
     @items.setter
@@ -659,6 +693,7 @@ class Timer(Control):
 
     @property
     def interval(self):
+        """Milliseconds between timer events; 0 stops them."""
         return self._interval
 
     @interval.setter
@@ -668,6 +703,7 @@ class Timer(Control):
 
     @property
     def enabled(self):
+        """Whether it responds to the user. A disabled control is greyed out."""
         return self._enabled
 
     @enabled.setter

@@ -28,7 +28,7 @@ def test_forms_declare_their_controls_and_menu_items_for_jedi():
                           "    mnuOpen: _pybasic_menus.MenuItem"]
     assert prepared.to_jedi(1) == 1 and prepared.to_jedi(6) == 10  # lines below the class move down 4
     assert prepared.from_jedi(10) == 6 and prepared.from_jedi(6) is None  # an added line isn't in the editor
-    assert prepared.added[6] == ("control", "Label1") and prepared.added[8] == ("menu", "mnuOpen")
+    assert prepared.added[6] == ("control", "Label1", "Label") and prepared.added[8] == ("menu", "mnuOpen", "MenuItem")
 
 
 def test_code_without_the_form_class_is_left_alone():
@@ -68,3 +68,24 @@ def test_definitions(ask):
     assert (helper.kind, helper.path, helper.line, helper.column) == ("file", ask.path, 9, 8)  # its real line
     form = ask("definition", 1, 20)
     assert form.kind == "file" and form.path.name == "form.py" and form.name == "Form"
+
+
+@needs_jedi
+def test_help_on_code(tmp_path):
+    source = ('import os\nfrom pybasic import Form, msgbox\n\n\nclass Form1(Form):\n    def Form_load(self):\n'
+              '        self.Label1.text = os.path.join("a", "b").upper()\n        msgbox(len("x"))\n')
+    prepared = assist.prepare(source, "Form1", [("Label", "Label1")])
+    assistant = assist.Assistant(Path(__file__).parent.parent)
+
+    def help_at(line, column):
+        return assistant.help(prepared, line, column, tmp_path / "Form1.py", tmp_path, None)
+
+    assert help_at(7, 14) == ("control", "Label1", "Label")  # the IDE shows the control's own help
+    text = help_at(7, 21)  # .text: a pybasic property; Jedi doesn't read property docstrings, so pybasic does
+    assert text.title.endswith(".text") and "The text it shows" in text.text
+    join = help_at(7, 36)
+    assert join.title == "os.path.join" and join.docs_url == "https://docs.python.org/3/library/os.path.html#os.path.join"
+    assert help_at(7, 51).docs_url == "https://docs.python.org/3/library/stdtypes.html#str.upper"
+    assert help_at(8, 15).docs_url == "https://docs.python.org/3/library/functions.html#len"
+    msgbox = help_at(8, 10)
+    assert msgbox.title == "pybasic.dialogs.msgbox" and "Show a message" in msgbox.text and msgbox.docs_url == ""

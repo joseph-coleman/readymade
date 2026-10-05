@@ -62,6 +62,10 @@ def main_loop():
 
 
 class Form:
+    """A window of the program, designed in the IDE. Its controls are attributes
+    (self.Label1), and so are its menu items (self.mnuOpen). forms.Name is the
+    shared instance of each form; show() displays it, close() closes it."""
+
     default_event = "load"
     events = FORM_EVENTS
     root: tk.Toplevel
@@ -133,6 +137,7 @@ class Form:
 
     @property
     def text(self):
+        """The form's title, shown in its title bar."""
         return self.root.title()
 
     @text.setter
@@ -141,6 +146,7 @@ class Form:
 
     @property
     def width(self):
+        """The form's width, in pixels (inside its border)."""
         return self._size[0]
 
     @width.setter
@@ -150,6 +156,7 @@ class Form:
 
     @property
     def height(self):
+        """The form's height, in pixels (inside its border, below any menu)."""
         return self._size[1]
 
     @height.setter

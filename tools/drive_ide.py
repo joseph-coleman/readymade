@@ -316,6 +316,13 @@ def drive(d):
     editor.show_design()
     widget = editor.surface.controls["Button2"].widget
 
+    print("F1 help on the selected control")
+    d.click(*d.at(editor.surface.controls["TextBox1"].widget))
+    d.key("F1")
+    d.check("F1 shows the control's help", (app.bottom.select() == str(app.help), app.help.title.cget("text")), (True, "TextBox1"))
+    d.shot("help")
+    app.bottom.select(app.immediate)
+
     print("Double-click it to get to its click handler")
     d.click(*d.at(widget), repeat=2)
     d.check("code tab shown", editor.frame.select(), str(editor.code))

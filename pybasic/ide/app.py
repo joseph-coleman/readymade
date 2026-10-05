@@ -12,6 +12,7 @@ import code
 import contextlib
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -26,12 +27,14 @@ from pybasic.ide import assist
 from pybasic.ide.editors import FormEditor, ModuleEditor, ViewerEditor
 from pybasic.ide.linting import Linter
 from pybasic.ide.menueditor import MenuEditor
-from pybasic.ide.panels import ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
+from pybasic.ide import helptext
+from pybasic.ide.panels import HelpPanel, ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
 from pybasic.ide.tooldialog import formatting_dialog, linting_dialog
 from pybasic.ide.tracebacks import TracebackWatcher
 from pybasic.project import Project, ProjectError, describe_python, find_pythons
 
 _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containing pybasic/
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")  # terminal colour and cursor codes
 
 
 class App:
@@ -77,9 +80,14 @@ class App:
         top.add(self.toolbox, weight=0)
         top.add(self.documents, weight=1)
         top.add(side, weight=0)
-        self.immediate = ImmediateWindow(outer, on_line=self.immediate_line)
+        # Below: the Immediate window, and F1's help.
+        self.bottom = ttk.Notebook(outer)
+        self.immediate = ImmediateWindow(self.bottom, on_line=self.immediate_line)
+        self.help = HelpPanel(self.bottom)
+        self.bottom.add(self.immediate, text="Immediate")
+        self.bottom.add(self.help, text="Help")
         outer.add(top, weight=1)
-        outer.add(self.immediate, weight=0)
+        outer.add(self.bottom, weight=0)
 
         for sequence, command in (
             ("<Control-n>", self.new_project),
@@ -94,6 +102,7 @@ class App:
             root.bind(sequence, lambda e, c=command: (c(), "break")[1])
         root.bind(menus.shortcut_sequence("Alt+Shift+F"), lambda e: (self.format_document(), "break")[1])
         root.bind("<F12>", lambda e: (self.go_to_definition(), "break")[1])
+        root.bind("<F1>", lambda e: (self.show_help(), "break")[1])
         for sequence, redo in (("<Control-z>", False), ("<Control-y>", True), ("<Control-Z>", True)):
             root.bind(sequence, lambda e, r=redo: self._undo_key(r))
         for sequence, action in (("<Control-x>", "cut"), ("<Control-c>", "copy"), ("<Control-v>", "paste")):
@@ -151,6 +160,10 @@ class App:
         menubar.add_cascade(label="View", menu=view)
         menubar.add_cascade(label="Tools", menu=tools)
         menubar.add_cascade(label="Run", menu=run)
+        help_menu = tk.Menu(menubar, tearoff=False)
+        help_menu.add_command(label="Help on This", accelerator="F1", command=self.show_help)
+        help_menu.add_command(label="pybasic Overview", command=lambda: self.show_topic(helptext.home()))
+        menubar.add_cascade(label="Help", menu=help_menu)
         self.root.configure(menu=menubar)
 
     # ----- the project -----
@@ -459,6 +472,51 @@ class App:
         self._tab_changed()
         return viewer
 
+    # ----- F1 help -----
+
+    def show_topic(self, topic):
+        self.help.show(topic)
+        self.bottom.select(self.help)
+
+    def show_help(self):
+        """F1: help on whatever you're working on: a property in the Properties panel, the
+        designer's selection, the name at the cursor in the code, or else an overview."""
+        try:
+            focus = self.root.focus_get()
+        except KeyError:
+            focus = None
+        form = self.form
+        prop = self.properties.prop_with_focus(focus)
+        if prop and form is not None and self.properties.current:
+            spec = form.design.control(form.selected)
+            self.show_topic(helptext.prop(spec["type"] if spec else "Form", prop))
+        elif form is not None and self._designing():
+            spec = form.design.control(form.selected)
+            topic = helptext.control(spec["type"], spec["name"]) if spec else helptext.form(form.design.name)
+            self.show_topic(topic)
+        elif self._current_editor() is not None:
+            self.show_topic(self._code_help(self._current_editor()))
+        else:
+            self.show_topic(helptext.home())
+
+    def _code_help(self, editor):
+        code = editor.code
+        word = code.text.get("insert wordstart", "insert wordend").strip()
+        if self.assistant is None or self.project is None:
+            return helptext.Topic(word or "Help", "", 'Help on code needs Jedi: pip install -e ".[ide]"')
+        line, column = map(int, code.text.index("insert").split("."))
+        self.root.configure(cursor="watch")
+        self.root.update_idletasks()
+        try:
+            found = self.assistant.help(editor.prepared_code(), line, column, editor.code_path,
+                                        self.project.folder, self.project.python())
+        finally:
+            self.root.configure(cursor="")
+        if isinstance(found, tuple):  # one of the form's controls or menu items
+            kind, name, type_name = found
+            return helptext.control(type_name, name) if kind == "control" else helptext.menu_item(name)
+        return found or helptext.Topic(word or "Help", "", f"No help found for {word or 'that'}.")
+
     def format_document(self):
         """Edit > Format Document: the code of the document that's showing."""
         editor = self._current_editor()
@@ -666,6 +724,12 @@ class App:
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [_PACKAGE_ROOT, env.get("PYTHONPATH")]))
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
+        # Plain text only: the Immediate window can't show colours, and the IDE reads the
+        # tracebacks and tool output, which colour codes (e.g. from FORCE_COLOR) would garble.
+        for name in ("FORCE_COLOR", "CLICOLOR_FORCE"):
+            env.pop(name, None)
+        env["PYTHON_COLORS"] = "0"
+        env["NO_COLOR"] = "1"
         return env
 
     def _idle(self):
@@ -690,6 +754,7 @@ class App:
                 on_exit(-1)
             return
         self.process = process
+        self.bottom.select(self.immediate)  # its output appears there
         self._on_exit = on_exit
         self._watcher = None
         threading.Thread(target=_pump, args=(process.stdout, self._output), daemon=True).start()
@@ -714,6 +779,7 @@ class App:
                 else:
                     self.immediate.write(f"--- Ended (exit code {code}) ---\n")
                 return
+            item = _ANSI.sub("", item)  # in case a program prints colours itself
             self.immediate.write(item)
             if self._watcher:
                 self._watcher.feed(item)

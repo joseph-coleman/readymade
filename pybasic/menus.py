@@ -169,6 +169,7 @@ class MenuItem:
 
     @property
     def text(self):
+        """The item's text, with & before its access key (like "&Open...")."""
         return self._text
 
     @text.setter
@@ -179,6 +180,7 @@ class MenuItem:
 
     @property
     def enabled(self):
+        """Whether it can be chosen. A disabled item is greyed out, and its shortcut does nothing."""
         return str(self._menu.entrycget(self._index, "state")) != tk.DISABLED
 
     @enabled.setter
@@ -187,6 +189,7 @@ class MenuItem:
 
     @property
     def checked(self):
+        """Whether it shows a check mark. Clicking doesn't change it; the click handler can."""
         return self._checked
 
     @checked.setter

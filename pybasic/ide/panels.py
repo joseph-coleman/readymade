@@ -141,6 +141,7 @@ class PropertiesPanel(ttk.Frame):
         self.app = app
         self.current = None
         self._rows: dict[str, tuple[tk.StringVar, bool]] = {}  # prop -> (shown value, edited in a dialog)
+        self._editors: dict[str, tk.Widget] = {}  # prop -> its editing widget
         ttk.Label(self, text="Properties").pack(anchor="w")
         self.objects = ttk.Combobox(self, state="readonly", width=24)
         self.objects.pack(fill=tk.X, pady=(2, 6))
@@ -169,6 +170,7 @@ class PropertiesPanel(ttk.Frame):
         for child in self.grid_frame.winfo_children():
             child.destroy()
         self._rows = {}
+        self._editors = {}
         self.current = None
 
     def show(self, obj):
@@ -196,6 +198,13 @@ class PropertiesPanel(ttk.Frame):
                 editor.bind("<FocusOut>", lambda e, p=prop: self.commit(p))
             editor.grid(row=row, column=1, sticky="ew", pady=1)
             self._rows[prop] = (var, in_dialog)
+            self._editors[prop] = editor
+
+    def prop_with_focus(self, widget):
+        """The property whose row has the keyboard focus (for F1), or None."""
+        if widget is None:
+            return None
+        return next((prop for prop, editor in self._editors.items() if str(widget).startswith(str(editor))), None)
 
     def commit(self, prop):
         if self.app is None or self.current is None or prop not in self._rows:
@@ -268,7 +277,6 @@ class ImmediateWindow(ttk.Frame):
         self._on_line = on_line
         self._history: list[str] = []
         self._history_pos = 0
-        ttk.Label(self, text="Immediate").pack(anchor="w")
         body = ttk.Frame(self)
         body.pack(fill=tk.BOTH, expand=True)
         self.output = tk.Text(body, height=8, font=MONO, state=tk.DISABLED, wrap="word")
@@ -306,3 +314,40 @@ class ImmediateWindow(ttk.Frame):
         self.entry.delete(0, tk.END)
         if self._history_pos < len(self._history):
             self.entry.insert(0, self._history[self._history_pos])
+
+
+class HelpPanel(ttk.Frame):
+    """F1's help: a topic's title, what it is, and its text, with a link to the Python
+    documentation when there's a page about it."""
+
+    def __init__(self, master):
+        super().__init__(master, padding=(4, 2))
+        top = ttk.Frame(self)
+        top.pack(fill=tk.X)
+        self.title = ttk.Label(top, font=("TkDefaultFont", 11, "bold"))
+        self.title.pack(side=tk.LEFT)
+        self.subtitle = ttk.Label(top, foreground="gray40")
+        self.subtitle.pack(side=tk.LEFT, padx=8)
+        self.docs = ttk.Button(top, text="Python documentation")
+        body = ttk.Frame(self)
+        body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        self.text = tk.Text(body, height=8, font=MONO, wrap="word", state=tk.DISABLED, padx=4)
+        scroll = ttk.Scrollbar(body, command=self.text.yview)
+        self.text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.url = ""
+
+    def show(self, topic):
+        self.title.configure(text=topic.title)
+        self.subtitle.configure(text=topic.subtitle)
+        self.text.configure(state=tk.NORMAL)
+        self.text.delete("1.0", tk.END)
+        self.text.insert("1.0", topic.text)
+        self.text.configure(state=tk.DISABLED)
+        self.url = topic.docs_url
+        if self.url:
+            self.docs.configure(command=lambda url=self.url: __import__("webbrowser").open(url))
+            self.docs.pack(side=tk.RIGHT)
+        else:
+            self.docs.pack_forget()

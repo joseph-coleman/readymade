@@ -72,12 +72,12 @@ def prepare(source, class_name="", controls=(), menu_items=()):
     body = next((line for line in lines[header:] if line.strip()), "    ")
     indent = body[: len(body) - len(body.lstrip())] or "    "
     added_lines = [f"{indent}from pybasic import controls as {_HIDDEN}controls, menus as {_HIDDEN}menus"]
-    added = {header + 1: ("import", "")}
+    added = {header + 1: ("import", "", "")}
     for type_name, name in controls:
-        added[header + 1 + len(added_lines)] = ("control", name)
+        added[header + 1 + len(added_lines)] = ("control", name, type_name)
         added_lines.append(f"{indent}{name}: {_HIDDEN}controls.{type_name}")
     for name in menu_items:
-        added[header + 1 + len(added_lines)] = ("menu", name)
+        added[header + 1 + len(added_lines)] = ("menu", name, "MenuItem")
         added_lines.append(f"{indent}{name}: {_HIDDEN}menus.MenuItem")
     return Prepared("\n".join(lines[:header] + added_lines + lines[header:]), header, added)
 
@@ -112,6 +112,34 @@ class Assistant:
                 return []
         return [Completion(c.name, c.type) for c in found if not c.name.startswith(_HIDDEN)]
 
+    def help(self, prepared, line, column, path, folder, python):
+        """Help on the name at (line, column): a Topic, ("control", name, type) or ("menu", name, ...)
+        for a form's own, or None."""
+        from pybasic.ide.helptext import Topic
+
+        with self._lock:
+            try:
+                found = self._script(prepared, path, folder, python).help(prepared.to_jedi(line), column)
+                if not found:
+                    return None
+                name = found[0]
+                if name.module_path and Path(name.module_path) == Path(path) and name.line in prepared.added:
+                    return prepared.added[name.line]
+                text = name.docstring()
+                if not text.strip() and name.type in ("statement", "instance", "param"):
+                    inferred = name.infer()  # a variable: help on what it holds
+                    if inferred:
+                        name, text = inferred[0], inferred[0].docstring()
+                full = name.full_name or name.name
+                kind = name.type
+            except Exception:  # Jedi can fail on unusual code
+                return None
+        if not text.strip() and full.startswith("pybasic."):
+            text = _pybasic_doc(full)  # e.g. properties, whose docstrings Jedi doesn't read
+        where = full.rsplit(".", 1)[0] if "." in full and kind != "module" else ""
+        subtitle = kind + (f" in {where}" if where and where != "builtins" else "")
+        return Topic(full, subtitle, text.strip() or "(No documentation.)", _docs_url(kind, full))
+
     def definition(self, prepared, line, column, path, folder, python):
         """Where the name at (line, column) is defined, or None."""
         with self._lock:
@@ -123,9 +151,47 @@ class Assistant:
             return None
         target = found[0]
         if target.module_path and Path(target.module_path) == Path(path) and target.line in prepared.added:
-            kind, name = prepared.added[target.line]
+            kind, name, _ = prepared.added[target.line]
             return Definition(kind, name)
         if not target.module_path or target.line is None:
             return Definition("builtin", target.name)
         line = prepared.from_jedi(target.line) if Path(target.module_path) == Path(path) else target.line
         return Definition("file", target.name, Path(target.module_path), line, target.column)
+
+
+def _docs_url(kind, full):
+    """The Python documentation's page about a standard-library name, or ""."""
+    import sys
+
+    top = full.split(".")[0]
+    if kind == "keyword" or top.startswith("_"):
+        return ""
+    if top == "builtins":
+        rest = full[len("builtins."):]
+        # Functions and types like len and int are on the built-in functions page; methods like str.upper on stdtypes.
+        return f"https://docs.python.org/3/library/{'stdtypes' if '.' in rest else 'functions'}.html#{rest}"
+    if top in sys.stdlib_module_names:
+        if kind == "module":
+            return f"https://docs.python.org/3/library/{full}.html"
+        module = full.rsplit(".", 1)[0]
+        return f"https://docs.python.org/3/library/{module if module.count('.') <= 1 else top}.html#{full}"
+    return ""
+
+
+def _pybasic_doc(full):
+    """The docstring of something in pybasic, read from pybasic itself (it's loaded in the IDE)."""
+    import importlib
+    import inspect
+
+    parts = full.split(".")
+    for split in range(len(parts) - 1, 0, -1):
+        try:
+            thing = importlib.import_module(".".join(parts[:split]))
+        except ImportError:
+            continue
+        for part in parts[split:]:
+            thing = inspect.getattr_static(thing, part, None)
+            if thing is None:
+                return ""
+        return inspect.getdoc(thing) or ""
+    return ""

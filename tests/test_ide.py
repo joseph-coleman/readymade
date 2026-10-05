@@ -1067,3 +1067,78 @@ def test_completion_says_when_jedi_is_missing(app, monkeypatch):
     monkeypatch.setattr(app, "assistant", None)
     app.go_to_definition()
     assert "need Jedi" in app.immediate.output.get("1.0", "end")
+
+
+def test_programs_and_tools_run_without_colour(app, monkeypatch):
+    monkeypatch.setenv("FORCE_COLOR", "3")  # as some terminals set it
+    env = app.environment()
+    assert "FORCE_COLOR" not in env and env["PYTHON_COLORS"] == "0" and env["NO_COLOR"] == "1"
+    app.form.add_control("Label", 8, 8)
+    write_code(app, "Form1", "from pybasic import Form\n\n\nclass Form1(Form):\n"
+               "    def Form_load(self):\n        print('\\x1b[31mred\\x1b[0m')\n        self.close()\n")
+    app.run()
+    output = wait_for_exit(app)
+    assert "red\n" in output and "\x1b" not in output  # colour a program prints itself is dropped too
+
+
+def test_every_designer_property_and_event_has_help():
+    import inspect
+
+    from pybasic.controls import REGISTRY
+    from pybasic.ide import helptext
+
+    for type_name, cls in REGISTRY.items():
+        assert inspect.getdoc(cls), type_name
+        for prop in cls.prop_defaults():
+            assert inspect.getdoc(getattr(cls, prop)), f"{type_name}.{prop} has no docstring for F1"
+        for event in cls.events:
+            assert event.name in helptext.EVENTS, f"{type_name}'s {event.name} event isn't described"
+
+
+def test_f1_in_the_designer_and_properties(app):
+    form = app.form
+    form.add_control("ListBox", 8, 8)
+    form.select("ListBox1")
+    form.show_design()
+    form.surface.canvas.focus_force()
+    app.root.update()
+    app.show_help()
+    assert app.bottom.select() == str(app.help)
+    assert app.help.title.cget("text") == "ListBox1"
+    help_text = app.help.text.get("1.0", "end")
+    assert "add_item" in help_text and "list_index" in help_text and "ListBox1_click(self)" in help_text
+
+    items = app.properties._editors["width"]
+    items.focus_force()
+    app.root.update()
+    app.show_help()
+    assert app.help.title.cget("text") == "width" and "Width, in pixels" in app.help.text.get("1.0", "end")
+
+    form.select(FORM)
+    form.surface.canvas.focus_force()
+    app.root.update()
+    app.show_help()
+    assert app.help.title.cget("text") == "Form1" and "Form_load(self)" in app.help.text.get("1.0", "end")
+
+
+def test_running_shows_the_immediate_window_again(app):
+    app.show_topic(__import__("pybasic.ide.helptext", fromlist=["home"]).home())
+    assert app.bottom.select() == str(app.help)
+    app.run()
+    assert app.bottom.select() == str(app.immediate)
+    app.immediate_line("form.close()")
+    wait_for_exit(app)
+
+
+@needs_jedi
+def test_f1_in_code(app):
+    form = form_with_code(app, "from pybasic import Form, msgbox\n\n\nclass Form1(Form):\n"
+                               "    def Button1_click(self):\n        self.Label1.text = 'x'\n        msgbox('hi')\n")
+    form.code.text.mark_set("insert", "6.14")  # self.Label1
+    form.code.text.focus_force()
+    app.root.update()
+    app.show_help()
+    assert app.help.title.cget("text") == "Label1" and "Label1_click(self)" in app.help.text.get("1.0", "end")
+    form.code.text.mark_set("insert", "7.10")  # msgbox
+    app.show_help()
+    assert app.help.title.cget("text") == "pybasic.dialogs.msgbox"
