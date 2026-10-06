@@ -518,6 +518,7 @@ def drive(d):
 
     print("Draw an Image and choose its picture from outside the project")
     import tkinter as tk
+    from tkinter import font as tkfont
 
     pictures = Path(tempfile.mkdtemp(prefix="pybasic-pictures-"))
     photo = tk.PhotoImage(master=d.root, width=32, height=32)
@@ -568,6 +569,39 @@ def drive(d):
     d.check("drag paints the Image's pixels", d.ask("[Image1.pixel(px, 16) for px in (2, 16, 28)]"),
             ["#3060c0", "#ff0000", "#ff0000"])
     d.shot("canvas-running")
+    app.immediate_line("form.close()")
+    deadline = time.time() + 10
+    while app.process is not None and time.time() < deadline:
+        d.pump(0.05)
+
+    print("Colours, font and alignment for Label1, with the Properties panel and the font dialog")
+    editor.show_design()
+    d.pump()
+    d.click(*d.at(editor.surface.controls["Label1"].widget))
+    d.check("Label1 selected", editor.selected, "Label1")
+    entry = d.prop_editor("backcolor").winfo_children()[0]
+    d.click(*d.at(entry))
+    d.key("End")
+    d.key(*["BackSpace"] * 10)
+    d.type("#ffe080")
+    d.key("Return")
+    d.check("backcolor typed", editor.design.control("Label1")["backcolor"], "#ffe080")
+    family = sorted(tkfont.families(d.root))[-1]
+    # The font dialog waits for its answer inside the click; its family box starts selected.
+    typist = subprocess.Popen(["sh", "-c", f"sleep 2; xdotool type --delay 20 '{family}'; xdotool key Return"])
+    d.click(*d.at(d.prop_editor("font").winfo_children()[-1]))  # the "..." button
+    typist.wait(timeout=20)
+    d.pump(0.3)
+    d.check("font chosen in the dialog", editor.design.control("Label1")["font"], family)
+    d.click(*d.at(d.prop_editor("alignment")))  # open the dropdown: left, center, right
+    d.key("Down", "Down", "Return")
+    d.check("alignment chosen", editor.design.control("Label1")["alignment"], "right")
+    label = editor.surface.controls["Label1"].widget
+    d.check("designer shows them", (label["background"], str(label["anchor"])), ("#ffe080", "e"))
+    d.shot("appearance")
+    d.key("F5")
+    d.check("the running program shows them", d.ask("(Label1.widget['background'], str(Label1.widget['anchor']), Label1.font)"),
+            ("#ffe080", "e", family))
     app.immediate_line("form.close()")
     deadline = time.time() + 10
     while app.process is not None and time.time() < deadline:

@@ -267,7 +267,7 @@ def test_choosing_a_picture_in_the_designer(tmp_path, monkeypatch):
         assert panel.app.file_types_for(name, "picture") == pictures.FILE_TYPES
         asked = {}
         monkeypatch.setattr(filedialog, "askopenfilename", lambda **kw: asked.update(kw) or str(picture))
-        panel._choose_file("picture")
+        panel._choose("picture")
         assert Path(asked["initialdir"]) == app.project.folder
         assert editor._spec(name)["picture"] == "images/cat.png"
         assert panel._rows["picture"][0].get() == "images/cat.png"

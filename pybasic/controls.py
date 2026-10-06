@@ -15,9 +15,10 @@ import tkinter as tk
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
+from tkinter import font as tkfont
 from tkinter import ttk
 
-from pybasic import pictures
+from pybasic import appearance, pictures
 from pybasic import shapes as _shapes
 from pybasic.shapes import Shape
 
@@ -110,35 +111,61 @@ class Control:
 
     # Properties holding a file path, and the files to offer for them: {prop: {label: patterns}}.
     file_props: dict[str, dict[str, str]] = {}
+    # With no backcolor of its own, a label-like control shows its container's colour.
+    inherits_backcolor = False
 
     def __init__(self, parent, spec, design=False, folder=None):
         self.name = spec["name"]
         self.design = design
         self.folder = Path(folder) if folder else Path.cwd()
+        self._ready = False
+        self._originals = {}  # (widget, Tk option) -> its value before pybasic changed it
         self.widget = self.create_widget(parent)
+        _controls[self.widget] = weakref.ref(self)
         if design:
             for widget in self.design_widgets():
                 widget["takefocus"] = 0
                 widget["cursor"] = "arrow"
-        self._ready = False
         for prop, default in self.prop_defaults().items():
             setattr(self, prop, spec.get(prop, default))
         self._ready = True
+        self._paint()
+        self._apply_font()
+        self._apply_alignment()
+        self._apply_cursor()
         self._place()
 
     @classmethod
     def prop_defaults(cls):
         """Every designable property with its default, in Properties panel order."""
         width, height = cls.default_size
+        look = {}
+        if issubclass(cls, _BackColor):
+            look["backcolor"] = cls.default_backcolor
+        if issubclass(cls, _ForeColor):
+            look["forecolor"] = ""
+        if issubclass(cls, _Font):
+            look["font"] = ""
+        if issubclass(cls, _Aligned):
+            look["alignment"] = cls.default_alignment
+        if issubclass(cls, _VAligned):
+            look["valignment"] = cls.default_valignment
         return {
             **copy.deepcopy(cls.extra_props),
+            **look,
             "left": 0,
             "top": 0,
             "width": width,
             "height": height,
             "enabled": True,
             "visible": True,
+            **({"cursor": "default"} if issubclass(cls, _Cursor) else {}),
         }
+
+    @classmethod
+    def choices(cls, prop):
+        """The values a property is limited to, or None."""
+        return {**LOOK_CHOICES, **cls.prop_choices}.get(prop) if prop in cls.prop_defaults() else None
 
     @classmethod
     def new_spec(cls, name, left, top, width=None, height=None, container=None):
@@ -218,6 +245,190 @@ class Control:
     def __repr__(self):
         return f"<{self.type_name} {self.name}>"
 
+    # ----- how it looks: colours, font, alignment, cursor (see the mixins below) -----
+
+    def _set(self, widget, option, value):
+        """Set a Tk option; None puts back the widget's own value."""
+        key = (str(widget), option)
+        if key not in self._originals:
+            self._originals[key] = widget.cget(option)
+        widget.configure({option: self._originals[key] if value is None else value})
+
+    def _background(self):
+        """The background to show, or None for the widget's usual one."""
+        own = getattr(self, "_backcolor", "")
+        if own:
+            return own
+        return self.widget.master.cget("background") if self.inherits_backcolor else None
+
+    def _foreground(self):
+        return getattr(self, "_forecolor", "") or None
+
+    def _painted(self):
+        """The widgets whose colours follow backcolor and forecolor."""
+        return self.design_widgets()
+
+    def _paint(self):
+        if not self._ready:
+            return
+        bg, fg = self._background(), self._foreground()
+        hover = appearance.lighter(bg) if bg and bg.startswith("#") else None
+        for widget in self._painted():
+            options = widget.keys()
+            for option, value in (("background", bg), ("activebackground", hover), ("foreground", fg),
+                                  ("activeforeground", fg), ("insertbackground", fg)):
+                if option in options:
+                    self._set(widget, option, value)
+        if "highlightbackground" in self.widget.keys():  # the focus ring's surroundings: the container's colour
+            self.widget["highlightbackground"] = self.widget.master.cget("background")
+
+    def _font_widgets(self):
+        return [self.widget]
+
+    def _apply_font(self):
+        if not self._ready or not isinstance(self, _Font):
+            return
+        for widget in self._font_widgets():
+            if not self._font:
+                self._set(widget, "font", None)
+                continue
+            self._set(widget, "font", None)  # remember (and start from) its usual font
+            usual = tkfont.Font(root=widget, font=widget.cget("font")).actual()
+            self._set(widget, "font", appearance.tk_font(self._font, usual))
+
+    def _apply_alignment(self):
+        if self._ready and isinstance(self, _Aligned):
+            self._align(self._alignment, getattr(self, "_valignment", "middle"))
+
+    def _align(self, alignment, valignment):
+        self.widget.configure(anchor=appearance.anchor(alignment, valignment), justify=alignment)
+
+    def _apply_cursor(self):
+        if not self._ready or not isinstance(self, _Cursor) or self.design:
+            return  # the designer keeps its own cursor
+        for widget in self.design_widgets():
+            self._set(widget, "cursor", appearance.CURSORS[self._cursor] or None)
+
+
+# Each control's Tk widget -> the control, so a container can repaint what's inside it.
+_controls: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def repaint_inside(widget):
+    """Repaint the controls in a container widget (a form, or a Frame), after its colour changed."""
+    for child in widget.winfo_children():
+        ref = _controls.get(child)
+        control = ref() if ref else None
+        if control is not None:
+            control._paint()
+
+
+LOOK_CHOICES = {"alignment": appearance.ALIGNMENTS, "valignment": appearance.VALIGNMENTS,
+                "cursor": tuple(appearance.CURSORS)}
+
+
+class _BackColor:
+    """A backcolor property."""
+
+    default_backcolor = ""
+    _backcolor: str
+
+    @property
+    def backcolor(self):
+        """The background colour, as "#rrggbb"; "" for the usual colour (for a label, check box,
+        option button, frame or picture: the colour of the form or Frame it's on)."""
+        return self._backcolor
+
+    @backcolor.setter
+    def backcolor(self, value):
+        self._backcolor = appearance.check_color(value)
+        self._paint()
+
+
+class _ForeColor:
+    """A forecolor property."""
+
+    _forecolor: str
+
+    @property
+    def forecolor(self):
+        """The text colour, as "#rrggbb"; "" for the usual colour."""
+        return self._forecolor
+
+    @forecolor.setter
+    def forecolor(self, value):
+        self._forecolor = appearance.check_color(value)
+        self._paint()
+
+
+class _Font:
+    """A font property."""
+
+    _font: str
+
+    @property
+    def font(self):
+        """The font, like "Arial, 12, bold": its family, its size in points, then any of bold,
+        italic and underline. Leave parts out for the usual ones: ", 14" is the usual font at
+        14 points, and "" the usual font. Code can also use a tuple: ("Arial", 12, "bold")."""
+        return self._font
+
+    @font.setter
+    def font(self, value):
+        self._font = appearance.format_font(value)
+        self._apply_font()
+
+
+class _Aligned:
+    """An alignment property."""
+
+    default_alignment = "left"
+    _alignment: str
+
+    @property
+    def alignment(self):
+        """Where its text goes across: "left", "center" or "right"."""
+        return self._alignment
+
+    @alignment.setter
+    def alignment(self, value):
+        self._alignment = appearance.check_choice("alignment", value, appearance.ALIGNMENTS)
+        self._apply_alignment()
+
+
+class _VAligned:
+    """A valignment property."""
+
+    default_valignment = "middle"
+    _valignment: str
+
+    @property
+    def valignment(self):
+        """Where its text goes up and down: "top", "middle" or "bottom"."""
+        return self._valignment
+
+    @valignment.setter
+    def valignment(self, value):
+        self._valignment = appearance.check_choice("valignment", value, appearance.VALIGNMENTS)
+        self._apply_alignment()
+
+
+class _Cursor:
+    """A cursor property."""
+
+    _cursor: str
+
+    @property
+    def cursor(self):
+        """The mouse pointer over it: "default" (its usual one), "arrow", "hand", "text",
+        "cross", "wait", "move", "help", "resize_ew" (left and right) or "resize_ns" (up and down)."""
+        return self._cursor
+
+    @cursor.setter
+    def cursor(self, value):
+        self._cursor = appearance.check_choice("cursor", value, tuple(appearance.CURSORS))
+        self._apply_cursor()
+
 
 class _WidgetText:
     """A text property backed by the widget's own text option."""
@@ -235,10 +446,11 @@ class _WidgetText:
 
 
 @register
-class Label(_WidgetText, Control):
+class Label(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, Control):
     """Text on a form, such as a caption or a result. It can't be typed in, but it can be clicked."""
 
     type_name = "Label"
+    inherits_backcolor = True
     default_size = (96, 24)
     events = _MOUSE_EVENTS
     extra_props = {"text": ""}
@@ -251,7 +463,7 @@ SCROLLBARS = ("none", "horizontal", "vertical", "both")
 
 
 @register
-class TextBox(Control):
+class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _Cursor, Control):
     """A text field. With multiline True it's a multi-line text area, optionally with
     scrollbars. As in VB, both are set in the designer, and scrollbars only apply to
     multi-line boxes. `editor` is the Entry or Text the user types in.
@@ -286,6 +498,10 @@ class TextBox(Control):
         self.editor = tk.Text(frame, width=1, height=1, font="TkTextFont", wrap="none" if horizontal else "word", undo=True)
         self.editor.grid(row=0, column=0, sticky="nsew")
         self.editor.bind("<Tab>", self._tab_out)
+        # A Text has no alignment of its own, only its tags', so keep all of its text tagged.
+        self.editor.tag_configure("pybasic-align", justify="left")
+        for sequence in ("<KeyRelease>", "<ButtonRelease-2>"):
+            self.editor.bind(sequence, self._retag, add="+")
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
         self._parts = [frame, self.editor]
@@ -306,6 +522,22 @@ class TextBox(Control):
 
     def design_widgets(self):
         return self._parts
+
+    def _painted(self):
+        return [w for w in self._parts if not isinstance(w, tk.Scrollbar)]
+
+    def _font_widgets(self):
+        return [self.editor]
+
+    def _align(self, alignment, valignment):
+        if self._multiline:
+            self.editor.tag_configure("pybasic-align", justify=alignment)
+            self._retag()
+        else:
+            self.editor["justify"] = alignment
+
+    def _retag(self, _=None):
+        self.editor.tag_add("pybasic-align", "1.0", "end")
 
     @staticmethod
     def _tab_out(e):
@@ -329,6 +561,7 @@ class TextBox(Control):
         state = self.editor.cget("state")
         self.editor["state"] = tk.NORMAL
         self.editor.replace("1.0", "end-1c", str(value))
+        self._retag()
         self.editor["state"] = state
 
     @property
@@ -383,7 +616,7 @@ class TextBox(Control):
 
 
 @register
-class Frame(_WidgetText, Control):
+class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, Control):
     """A captioned box that groups controls. Controls drawn inside it belong to it: they're
     positioned relative to it and move with it, and its OptionButtons form their own group."""
 
@@ -391,12 +624,12 @@ class Frame(_WidgetText, Control):
     type_name = "Frame"
     default_size = (200, 120)
     is_container = True
+    inherits_backcolor = True
     events = _MOUSE_EVENTS
     extra_props = {"text": ""}
 
     def create_widget(self, parent):
         frame = tk.LabelFrame(parent)
-        self._caption_color = frame.cget("fg")
         # Children go in an inner frame so that (0, 0) is just inside the border and caption.
         self.inner = tk.Frame(frame)
         self.inner.pack(fill=tk.BOTH, expand=True)
@@ -414,14 +647,27 @@ class Frame(_WidgetText, Control):
     def enabled(self, value):
         # A LabelFrame has no state of its own, so a disabled frame just greys its caption.
         self._enabled = bool(value)
-        self.widget["fg"] = self._caption_color if self._enabled else "gray50"
+        self._paint()
+
+    def _foreground(self):
+        return super()._foreground() if self._enabled else "gray50"
+
+    def _paint(self):
+        super()._paint()
+        if self._ready:
+            repaint_inside(self.inner)  # controls showing its colour follow it
+
+    def _align(self, alignment, valignment):
+        self.widget["labelanchor"] = {"left": "nw", "center": "n", "right": "ne"}[alignment]
 
 
 @register
-class Button(_WidgetText, Control):
-    """A push button. Its click event runs when it's clicked, or pressed with Space while it has the focus."""
+class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, Control):
+    """A push button. Its click event runs when it's clicked, or pressed with Space while it has the focus.
+    (On macOS, buttons keep the system's own colours.)"""
 
     type_name = "Button"
+    default_alignment = "center"
     default_size = (96, 28)
     events = (Event("click"), *_FOCUS_EVENTS, Event("mousedown", ("x", "y")), Event("mouseup", ("x", "y")))
     extra_props = {"text": ""}
@@ -438,10 +684,11 @@ class Button(_WidgetText, Control):
 
 
 @register
-class CheckBox(_WidgetText, Control):
+class CheckBox(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, Control):
     """A box that can be ticked. value is True while it's ticked; click runs each time it changes."""
 
     type_name = "CheckBox"
+    inherits_backcolor = True
     default_size = (120, 24)
     events = (Event("click", policy="latest"), *_FOCUS_EVENTS)
     extra_props = {"text": "", "value": False}
@@ -471,10 +718,11 @@ _option_groups: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 @register
-class OptionButton(_WidgetText, Control):
+class OptionButton(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, Control):
     """A radio button. Option buttons in the same container form one group, as in VB."""
 
     type_name = "OptionButton"
+    inherits_backcolor = True
     default_size = (120, 24)
     events = (Event("click", policy="latest"), *_FOCUS_EVENTS)
     extra_props = {"text": "", "value": False}
@@ -541,7 +789,7 @@ class _ListMixin:
 
 
 @register
-class ComboBox(_ListMixin, Control):
+class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, Control):
     """A drop-down list. With editable False the user can only pick from the list."""
 
     type_name = "ComboBox"
@@ -613,6 +861,39 @@ class ComboBox(_ListMixin, Control):
         else:
             self.widget["state"] = "normal" if self._editable else "readonly"
 
+    def _paint(self):
+        # A ttk widget takes its colours from a style, so each coloured ComboBox gets its own.
+        if not self._ready:
+            return
+        bg, fg = self._background(), self._foreground()
+        if bg or fg:
+            name = f"pybasic{id(self)}.TCombobox"
+            style = ttk.Style(self._combo)
+            style.configure(name, **{k: v for k, v in (("fieldbackground", bg), ("foreground", fg)) if v})
+            style.map(name, **{k: [("readonly", v)] for k, v in (("fieldbackground", bg), ("foreground", fg)) if v})
+            self._combo["style"] = name
+        else:
+            self._combo["style"] = "TCombobox"
+        self._list_option("background", bg)
+        self._list_option("foreground", fg)
+
+    def _apply_font(self):
+        super()._apply_font()
+        if self._ready:
+            self._list_option("font", self._combo.cget("font") if self._font else None)
+
+    def _align(self, alignment, valignment):
+        self._combo["justify"] = alignment
+
+    def _list_option(self, option, value):
+        """Set an option of the drop-down list (a Tk widget pybasic doesn't otherwise see)."""
+        call = self._combo.tk.call
+        path = call("ttk::combobox::PopdownWindow", self._combo) + ".f.l"
+        key = (path, option)
+        if key not in self._originals:
+            self._originals[key] = call(path, "cget", f"-{option}")
+        call(path, "configure", f"-{option}", self._originals[key] if value is None else value)
+
     def bind_event(self, event, handler):
         if event == "change":
             self._var.trace_add("write", lambda *_: handler())
@@ -623,7 +904,7 @@ class ComboBox(_ListMixin, Control):
 
 
 @register
-class ListBox(_ListMixin, Control):
+class ListBox(_ListMixin, _BackColor, _ForeColor, _Font, _Cursor, Control):
     """A list to choose from. click runs when the choice changes; list_index and text tell
     which item is chosen."""
 
@@ -679,7 +960,7 @@ _TEXT_ANCHORS = {"nw": "la", "n": "ma", "ne": "ra", "w": "lm", "center": "mm", "
 
 
 @register
-class Image(Control):
+class Image(_BackColor, _Cursor, Control):
     """A picture from a file: PNG or GIF, and with Pillow installed also JPEG and others.
     picture is the file's path, relative to the program's folder (see app_path); sizing
     chooses how picture and control fit each other. In code, picture can also be set to
@@ -698,6 +979,7 @@ class Image(Control):
 
     type_name = "Image"
     default_size = (96, 96)
+    inherits_backcolor = True
     events = (*_MOUSE_EVENTS, Event("mousemove", ("x", "y")), Event("drag", ("x", "y")))
     extra_props = {"picture": "", "sizing": "autosize", "border": False}
     prop_choices = {"sizing": ("autosize", "normal", "center", "stretch", "zoom")}
@@ -896,10 +1178,10 @@ class Image(Control):
 
     def text(self, x, y, text, color="#000000", font=None, anchor="nw"):
         """Words at (x, y). anchor is which part of the text is at (x, y): "nw" (top left),
-        "n", "ne", "w", "center", "e", "sw", "s" or "se". font is like ("Arial", 12, "bold")."""
+        "n", "ne", "w", "center", "e", "sw", "s" or "se". font is like "Arial, 12, bold"."""
         _shapes.check_choice("anchor", anchor, _shapes.ANCHORS)
         draw = self._surface()
-        typeface = pictures.font(tuple(font) if font else None, self.widget.winfo_fpixels("1p"))
+        typeface = pictures.font(appearance.format_font(font) or None, self.widget.winfo_fpixels("1p"))
         draw.text((x, y), str(text), fill=pictures.rgba(color), font=typeface, anchor=_TEXT_ANCHORS[anchor])
         self._drawn()
 
@@ -946,7 +1228,7 @@ def _pixel_style(color, fill, thickness):
 
 
 @register
-class Canvas(Control):
+class Canvas(_BackColor, _Cursor, Control):
     """A drawing surface. Its drawing methods (line, rectangle, oval, circle, arc, polygon,
     text, picture, point) each return a Shape, which stays until it's deleted: move it,
     recolour it, hide it, check what it overlaps. Mouse events say where the mouse is and
@@ -969,7 +1251,9 @@ class Canvas(Control):
         Event("mousedown", ("x", "y", "shape")), Event("mouseup", ("x", "y", "shape")),
         Event("mousemove", ("x", "y")), Event("drag", ("x", "y")),
     )
-    extra_props = {"backcolor": "#ffffff", "border": False}
+    extra_props = {"border": False}
+    default_backcolor = "#ffffff"
+    inherits_backcolor = True
 
     # Each event: (Tk binding, whether the handler gets the shape).
     _events = {
@@ -995,18 +1279,6 @@ class Canvas(Control):
             return False
         x, y = self._pressed_at
         return abs(e.x - x) <= 4 and abs(e.y - y) <= 4
-
-    @property
-    def backcolor(self):
-        """The background colour, as "#rrggbb"."""
-        return self.widget.cget("background")
-
-    @backcolor.setter
-    def backcolor(self, value):
-        try:
-            self.widget.configure(background=value)
-        except tk.TclError:
-            raise ValueError(f"{value!r} isn't a colour; use \"#rrggbb\", like \"#ffffff\" for white") from None
 
     @property
     def border(self):
@@ -1074,9 +1346,11 @@ class Canvas(Control):
 
     def text(self, x, y, text, color="#000000", font=None, anchor="nw", group="") -> Shape:
         """Words at (x, y). anchor is which part of the text is at (x, y): "nw" (top left),
-        "n", "ne", "w", "center", "e", "sw", "s" or "se". font is like ("Arial", 12, "bold")."""
+        "n", "ne", "w", "center", "e", "sw", "s" or "se". font is like "Arial, 12, bold"."""
         _shapes.check_choice("anchor", anchor, _shapes.ANCHORS)
-        options = {"font": font} if font else {}
+        options = {}
+        if font:
+            options["font"] = appearance.tk_font(font, tkfont.nametofont("TkDefaultFont", root=self.widget).actual())
         return self._add("text", "text", (x, y), group, text=str(text), fill=color, anchor=anchor, **options)
 
     def picture(self, x, y, path, anchor="nw", group="") -> Shape:

@@ -3,7 +3,6 @@
 Ideas and gaps noted along the way, roughly by area.
 
 ## Runtime
-- **Font dialog** (`font_dialog()`): Tk has no standard cross-platform font chooser like VB's CommonDialog ShowFont, so this needs a small dialog of our own.
 - **Menu item `visible`**: Tk can't hide a menu entry; supporting it means rebuilding the menu.
 - **Break mode**: pause a running program at an error, as VB did (needs a debugger).
 - **macOS shortcuts**: treat "Ctrl" as ⌘ (Command) and "Alt" as Option on macOS, the way Qt and Electron's CmdOrCtrl do, and show native ⌘O labels. Needs a Mac to check how Tk on macOS parses accelerator labels, and whether its native menus already fire the shortcut (which would make pybasic's own binding run handlers twice).
@@ -34,7 +33,8 @@ Ideas and gaps noted along the way, roughly by area.
 - **More controls**: third-party controls from installed libraries appearing in the Toolbox.
 - **Image drawing follow-ups**: flood fill (Pillow's `ImageDraw.floodfill`); mouse coordinates in the picture's pixels when it's scaled (stretch, zoom) or centred; anti-aliased shapes (Pillow draws them jagged; drawing larger and shrinking is the usual trick); undo for paint programs (keep copies of the picture).
 - **Canvas follow-ups**: keyboard events (a Tk canvas takes no focus by default); scrolling and zooming a canvas bigger than the control; saving a canvas as a picture (Tk can only write PostScript, so this needs drawing through Pillow too); dragging shapes with less code (perhaps `shape.draggable = True`).
-- **Colours**: `backcolor` and `forecolor` for controls and forms (`#rrggbb`, chosen with the colour dialog from the Properties panel), including the area around an Image's picture.
+- **Appearance follow-ups**: a form `font` that new controls start with (as VB's form Font was); colours for disabled controls (Tk greys them its own way); `selectcolor` for check box and option button indicators. Known limits: macOS buttons keep the system's colours, and Windows' native theme may ignore a ComboBox's field colour (both are Tk's).
+- **More properties**: TextBox `readonly`, `password` and `maxlength`; a form's `default_button` and `cancel_button` (Enter and Escape); tab order (`tabindex`); `tooltip`; `tag`.
 - **Image follow-ups**: show an Image's outline in the designer when its picture is smaller than the control (sizing normal, center or zoom); offer to delete a copied picture from images/ when nothing uses it any more; animated GIFs; pictures on Buttons and Labels (Tk supports both).
 
 ## Biggest features

@@ -17,6 +17,8 @@ import sys
 import tkinter as tk
 from fractions import Fraction
 
+from pybasic import appearance
+
 try:
     from PIL import Image as _PILImage
     from PIL import ImageColor as _ImageColor
@@ -162,13 +164,8 @@ def font(spec=None, pixels_per_point=1.0):
 
 
 def _font_parts(spec):
-    if spec is None:
-        return None, 12, frozenset()
-    if isinstance(spec, str):
-        spec = (spec,)
-    size = int(spec[1]) if len(spec) > 1 else 12
-    words = {w.lower() for style in spec[2:] for w in str(style).split()}
-    return spec[0], size, frozenset(words & {"bold", "italic"})
+    family, size, styles = appearance.parse_font(spec)
+    return family or None, size or 12, frozenset(styles) & {"bold", "italic"}
 
 
 def _font_file(family, styles):

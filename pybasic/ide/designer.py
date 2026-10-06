@@ -15,7 +15,7 @@ from __future__ import annotations
 import tkinter as tk
 
 from pybasic import menus
-from pybasic.controls import create
+from pybasic.controls import create, repaint_inside
 from pybasic.form import FORM
 
 GRID = 8
@@ -100,7 +100,9 @@ class DesignSurface(tk.Frame):
     def refresh_form(self):
         design = self.app.design
         self.title.configure(text=design.text)
-        self.canvas.configure(width=design.width, height=design.height)
+        self.canvas.configure(width=design.width, height=design.height,
+                              background=design.backcolor or self.window.cget("background"))
+        repaint_inside(self.canvas)  # controls showing the form's colour
         self._draw_grid(design.width, design.height)
 
     def refresh_menu(self):

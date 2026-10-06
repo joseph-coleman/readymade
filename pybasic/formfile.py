@@ -24,6 +24,8 @@ class FormDesign:
     text: str = "Form1"
     width: int = 400
     height: int = 300
+    backcolor: str = ""  # "" is the usual colour
+    cursor: str = "default"
     controls: list[dict] = field(default_factory=list)
     menu: list[dict] = field(default_factory=list)  # see pybasic.menus
 
@@ -71,8 +73,13 @@ def dumps(design):
         "text": design.text,
         "width": design.width,
         "height": design.height,
-        "controls": [_ordered(c) for c in design.controls],
     }
+    # Only forms that change these mention them, so other forms' files don't change.
+    if design.backcolor:
+        data["backcolor"] = design.backcolor
+    if design.cursor != "default":
+        data["cursor"] = design.cursor
+    data["controls"] = [_ordered(c) for c in design.controls]
     if design.menu:  # only forms with a menu mention it, so other forms' files don't change
         data["menu"] = [_ordered_menu_item(item) for item in design.menu]
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
@@ -108,6 +115,8 @@ def loads(text, source="<string>"):
         text=data.get("text", ""),
         width=int(data.get("width", 400)),
         height=int(data.get("height", 300)),
+        backcolor=data.get("backcolor", ""),
+        cursor=data.get("cursor", "default"),
         controls=controls,
         menu=menu,
     )

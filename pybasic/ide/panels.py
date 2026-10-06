@@ -142,13 +142,65 @@ class PropertiesPanel(ttk.Frame):
         self.current = None
         self._rows: dict[str, tuple[tk.StringVar, bool]] = {}  # prop -> (shown value, edited in a dialog)
         self._editors: dict[str, tk.Widget] = {}  # prop -> its editing widget
+        self._swatches: dict[str, tk.Label] = {}  # colour prop -> the patch showing its colour
         ttk.Label(self, text="Properties").pack(anchor="w")
         self.objects = ttk.Combobox(self, state="readonly", width=24)
         self.objects.pack(fill=tk.X, pady=(2, 6))
         self.objects.bind("<<ComboboxSelected>>", lambda e: self.app and self.app.select(self.objects.get()))
-        self.grid_frame = ttk.Frame(self)
-        self.grid_frame.pack(fill=tk.X)
+        # The rows scroll when there are more than fit.
+        body = ttk.Frame(self)
+        body.pack(fill=tk.BOTH, expand=True)
+        style = ttk.Style(self)
+        style.configure("Dots.TButton", padding=(2, 0))
+        self._scroller = tk.Canvas(body, highlightthickness=0, bd=0, background=style.lookup("TFrame", "background"))
+        self._bar = ttk.Scrollbar(body, command=self._scroller.yview)
+        self._scroller.configure(yscrollcommand=self._bar.set)
+        self._scroller.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.grid_frame = ttk.Frame(self._scroller)
         self.grid_frame.columnconfigure(1, weight=1)
+        self._rows_window = self._scroller.create_window(0, 0, window=self.grid_frame, anchor="nw")
+        self.grid_frame.bind("<Configure>", lambda e: self._fit_rows())
+        self._scroller.bind("<Configure>", lambda e: self._fit_rows())
+
+    def _fit_rows(self):
+        """Make the rows as wide as the panel, and show the scrollbar only when they don't all fit."""
+        self._scroller.itemconfigure(self._rows_window, width=self._scroller.winfo_width())
+        if int(self._scroller["width"]) != self.grid_frame.winfo_reqwidth():
+            self._scroller["width"] = self.grid_frame.winfo_reqwidth()  # the panel's natural width, not a canvas's
+        height = self.grid_frame.winfo_reqheight()
+        self._scroller.configure(scrollregion=(0, 0, 0, height))
+        if height > self._scroller.winfo_height() > 1:
+            if not self._bar.winfo_ismapped():
+                self._bar.pack(side=tk.RIGHT, fill=tk.Y, before=self._scroller)
+        else:
+            self._bar.pack_forget()
+            self._scroller.yview_moveto(0)
+
+    def _wheel(self, e):
+        if self._bar.winfo_ismapped():
+            step = -1 if (e.num == 4 or e.delta > 0) else 1
+            self._scroller.yview_scroll(step * 2, "units")
+        return "break"  # and a dropdown under the mouse keeps its value
+
+    def _see(self, widget):
+        """Scroll so a row being edited (say, reached with Tab) is in view."""
+        total = self.grid_frame.winfo_reqheight()
+        if total <= self._scroller.winfo_height():
+            return
+        top = widget.winfo_rooty() - self.grid_frame.winfo_rooty()
+        bottom = top + widget.winfo_height()
+        shown_top = self._scroller.canvasy(0)
+        shown_bottom = shown_top + self._scroller.winfo_height()
+        if top < shown_top:
+            self._scroller.yview_moveto(top / total)
+        elif bottom > shown_bottom:
+            self._scroller.yview_moveto((bottom - self._scroller.winfo_height()) / total)
+
+    def _connect_row(self, widget):
+        for w in (widget, *widget.winfo_children()):
+            for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                w.bind(sequence, self._wheel)
+            w.bind("<FocusIn>", lambda e, row=widget: self._see(row), add="+")
 
     def attach(self, editor):
         """Show the properties of another form's objects (None: nothing)."""
@@ -171,6 +223,7 @@ class PropertiesPanel(ttk.Frame):
             child.destroy()
         self._rows = {}
         self._editors = {}
+        self._swatches = {}
         self.current = None
 
     def show(self, obj):
@@ -181,31 +234,43 @@ class PropertiesPanel(ttk.Frame):
         props = self.app.props_for(obj)
         multiline = dict(props).get("multiline", False)
         for row, (prop, value) in enumerate(props):
-            ttk.Label(self.grid_frame, text=prop).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=1)
+            label = ttk.Label(self.grid_frame, text=prop)
+            label.grid(row=row, column=0, sticky="w", padx=(0, 6), pady=1)
+            self._connect_row(label)
             var = tk.StringVar(value=_display(value))
             in_dialog = isinstance(value, list) or (prop == "text" and multiline)
             choices = ("True", "False") if isinstance(value, bool) else self.app.choices_for(obj, prop)
-            if self.app.file_types_for(obj, prop):
+            chooser = self.app.chooser_for(obj, prop)
+            if chooser:  # typed, or chosen in a dialog with the "..." button
                 editor = ttk.Frame(self.grid_frame)
                 entry = ttk.Entry(editor, textvariable=var, width=8)
                 entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
                 entry.bind("<Return>", lambda e, p=prop: self.commit(p))
                 entry.bind("<FocusOut>", lambda e, p=prop: self.commit(p))
-                ttk.Button(editor, text="\u2026", width=2, command=lambda p=prop: self._choose_file(p)).pack(side=tk.LEFT)
+                if chooser == "color":
+                    swatch = self._swatches[prop] = tk.Label(editor, width=2, relief="solid", bd=1)
+                    swatch.pack(side=tk.LEFT, padx=(2, 0), fill=tk.Y)
+                    self._swatch_usual = swatch.cget("background")  # shown for "", the usual colour
+                    self._show_swatch(prop, value)
+                ttk.Button(editor, text="\u2026", width=2, style="Dots.TButton",
+                           command=lambda p=prop: self._choose(p)).pack(side=tk.LEFT)
             elif choices:
                 editor = ttk.Combobox(self.grid_frame, textvariable=var, values=choices, state="readonly", width=16)
                 editor.bind("<<ComboboxSelected>>", lambda e, p=prop: self.commit(p))
             elif in_dialog:
                 editor = ttk.Frame(self.grid_frame)
                 ttk.Entry(editor, textvariable=var, width=8, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
-                ttk.Button(editor, text="\u2026", width=2, command=lambda p=prop: self._edit_lines(p)).pack(side=tk.LEFT)
+                ttk.Button(editor, text="\u2026", width=2, style="Dots.TButton",
+                           command=lambda p=prop: self._edit_lines(p)).pack(side=tk.LEFT)
             else:
                 editor = ttk.Entry(self.grid_frame, textvariable=var, width=18)
                 editor.bind("<Return>", lambda e, p=prop: self.commit(p))
                 editor.bind("<FocusOut>", lambda e, p=prop: self.commit(p))
             editor.grid(row=row, column=1, sticky="ew", pady=1)
+            self._connect_row(editor)
             self._rows[prop] = (var, in_dialog)
             self._editors[prop] = editor
+        self._scroller.yview_moveto(0)
 
     def prop_with_focus(self, widget):
         """The property whose row has the keyboard focus (for F1), or None."""
@@ -240,13 +305,19 @@ class PropertiesPanel(ttk.Frame):
         for prop, value in self.app.props_for(self.current):
             if prop in self._rows:
                 self._rows[prop][0].set(_display(value))
+            if prop in self._swatches:
+                self._show_swatch(prop, value)
 
-    def _choose_file(self, prop):
-        """Choose a file for a property holding a path (a file from elsewhere is copied into the project)."""
+    def _show_swatch(self, prop, color):
+        self._swatches[prop]["background"] = color or self._swatch_usual
+
+    def _choose(self, prop):
+        """Choose a property's value in a dialog: a file (one from elsewhere is copied into
+        the project), a colour or a font."""
         if self.app is None or self.current is None:
             return
         self.commit(prop)
-        renamed = self.app.choose_file(self.current, prop)
+        renamed = self.app.choose(self.current, prop)
         if renamed is not None:
             self.current = renamed
 

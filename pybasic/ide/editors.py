@@ -13,10 +13,10 @@ import functools
 import keyword
 import shutil
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from pybasic import codegen, formfile, menus
-from pybasic.controls import REGISTRY, Event
+from pybasic import appearance, codegen, dialogs, formfile, menus
+from pybasic.controls import LOOK_CHOICES, REGISTRY, Event
 from pybasic.form import FORM, FORM_EVENTS, check_name
 from pybasic.ide import arrange, assist
 from pybasic.ide.codeview import CodeView
@@ -145,7 +145,8 @@ class FormEditor:
             return self._common_props()
         if obj == FORM:
             d = self.design
-            return [("name", d.name), ("text", d.text), ("width", d.width), ("height", d.height)]
+            return [("name", d.name), ("text", d.text), ("width", d.width), ("height", d.height),
+                    ("backcolor", d.backcolor), ("cursor", d.cursor)]
         spec = self.design.control(obj)
         if spec is None:
             return []
@@ -167,18 +168,44 @@ class FormEditor:
 
     def choices_for(self, obj, prop):
         """The allowed values of a property limited to fixed choices, or None."""
+        if obj == FORM:
+            return LOOK_CHOICES["cursor"] if prop == "cursor" else None
         if obj == MULTIPLE:
             spec = self._spec(self.selected)
             if isinstance(REGISTRY[spec["type"]].prop_defaults().get(prop), bool):
                 return ("True", "False")
             obj = self.selected
         spec = self.design.control(obj)
-        return REGISTRY[spec["type"]].prop_choices.get(prop) if spec else None
+        return REGISTRY[spec["type"]].choices(prop) if spec else None
 
     def file_types_for(self, obj, prop):
         """For a property holding a file's path, the files to offer ({label: patterns}), or None."""
         spec = self.design.control(self.selected if obj == MULTIPLE else obj)
         return REGISTRY[spec["type"]].file_props.get(prop) if spec else None
+
+    def chooser_for(self, obj, prop):
+        """How the Properties panel's "..." button helps choose a value: "file", "color",
+        "font", or None for no button."""
+        if prop in ("backcolor", "forecolor"):
+            return "color"
+        if prop == "font":
+            return "font"
+        return "file" if obj != FORM and self.file_types_for(obj, prop) else None
+
+    def choose(self, obj, prop):
+        """Choose a value with a dialog: a file, colour or font. Returns the object's name,
+        or None if nothing was chosen."""
+        kind = self.chooser_for(obj, prop)
+        if kind == "file":
+            return self.choose_file(obj, prop)
+        current = dict(self.props_for(obj)).get(prop, "")
+        if kind == "color":
+            chosen = colorchooser.askcolor(color=current or None, title=f"{obj}.{prop}", parent=self.app.root)[1]
+        elif kind == "font":
+            chosen = dialogs.FontChooser.ask(self.app.root, current, title=f"{obj}.{prop}")
+        else:
+            return None
+        return None if chosen is None else self.set_property(obj, prop, chosen)
 
     def choose_file(self, obj, prop):
         """Choose the file for a property like an Image's picture. Returns the object's name,
@@ -257,6 +284,8 @@ class FormEditor:
             if prop == "name":
                 obj = self._rename(obj, value)
             elif obj == FORM:
+                if prop == "backcolor":
+                    value = appearance.check_color(value)
                 setattr(self.design, prop, value)
                 self.surface.refresh_form()
             else:

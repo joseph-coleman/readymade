@@ -23,8 +23,8 @@ import sys
 import tkinter as tk
 from pathlib import Path
 
-from pybasic import events, formfile, forms, menus
-from pybasic.controls import Event, create
+from pybasic import appearance, events, formfile, forms, menus
+from pybasic.controls import Event, create, repaint_inside
 
 FORM = "Form"
 FORM_EVENTS = (
@@ -122,6 +122,9 @@ class Form:
         self.root.title(design.text)
         self.root.geometry(f"{design.width}x{design.height}")
         self._size = (design.width, design.height)
+        self._usual_background = self.root.cget("background")
+        self.backcolor = design.backcolor  # before the controls, which may show it
+        self.cursor = design.cursor
         self.controls = {}
         for spec in design.controls:
             check_name(spec["name"], self.controls)
@@ -186,6 +189,29 @@ class Form:
     def height(self, value):
         self._size = (self._size[0], int(value))
         self.root.geometry(f"{self._size[0]}x{self._size[1]}")
+
+    @property
+    def backcolor(self):
+        """The form's background colour, as "#rrggbb"; "" for the usual colour. Labels, check
+        boxes, option buttons, frames and pictures with no backcolor of their own show it too."""
+        return self._backcolor
+
+    @backcolor.setter
+    def backcolor(self, value):
+        self._backcolor = appearance.check_color(value)
+        self.root["background"] = self._backcolor or self._usual_background
+        repaint_inside(self.root)
+
+    @property
+    def cursor(self):
+        """The mouse pointer over the form: "default", "arrow", "hand", "text", "cross", "wait",
+        "move", "help", "resize_ew" or "resize_ns". Controls with their own cursor keep it."""
+        return self._cursor
+
+    @cursor.setter
+    def cursor(self, value):
+        self._cursor = appearance.check_choice("cursor", value, tuple(appearance.CURSORS))
+        self.root["cursor"] = appearance.CURSORS[self._cursor]
 
     def _parent_widget(self, spec):
         container = spec.get("container")

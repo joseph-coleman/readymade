@@ -88,7 +88,7 @@ def control(type_name, name=None):
 def form(name="Form1"):
     parts = [
         _doc(Form),
-        "Properties\n" + _members(Form, ["text", "width", "height"]),
+        "Properties\n" + _members(Form, ["text", "width", "height", "backcolor", "cursor"]),
         "Methods\n" + _members(Form, ["show", "hide", "close", "run"]),
         "Events (double-click the form in the designer to write Form_load)\n" + _events("Form", FORM_EVENTS),
     ]
@@ -135,7 +135,7 @@ def home():
         "",
         "In your code",
         "  from pybasic import msgbox, inputbox, open_file_dialog, save_file_dialog,",
-        "      folder_dialog, color_dialog, pause, in_thread, doevents, while_running",
+        "      folder_dialog, color_dialog, font_dialog, pause, in_thread, doevents, while_running",
         "  forms.Name is a form's shared instance: forms.Settings.show(modal=True)",
         "  app_path(\"data\", \"prices.csv\") is a file in the program's folder, even after",
         "  Make EXE (list files to bundle in pyproject.toml: [tool.pybasic] include = [\"data\"]).",
