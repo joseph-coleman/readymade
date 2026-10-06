@@ -146,7 +146,8 @@ class FormEditor:
         if obj == FORM:
             d = self.design
             return [("name", d.name), ("text", d.text), ("width", d.width), ("height", d.height),
-                    ("backcolor", d.backcolor), ("cursor", d.cursor)]
+                    ("backcolor", d.backcolor), ("cursor", d.cursor),
+                    ("default_button", d.default_button), ("cancel_button", d.cancel_button)]
         spec = self.design.control(obj)
         if spec is None:
             return []
@@ -169,6 +170,8 @@ class FormEditor:
     def choices_for(self, obj, prop):
         """The allowed values of a property limited to fixed choices, or None."""
         if obj == FORM:
+            if prop in ("default_button", "cancel_button"):
+                return ("", *(c["name"] for c in self.design.controls if c["type"] == "Button"))
             return LOOK_CHOICES["cursor"] if prop == "cursor" else None
         if obj == MULTIPLE:
             spec = self._spec(self.selected)
@@ -290,6 +293,9 @@ class FormEditor:
                 self.surface.refresh_form()
             else:
                 spec = self._spec(obj)
+                if prop == "tabindex":
+                    self._order_tabs(obj, value)  # the others make room
+                    value = spec["tabindex"]
                 spec[prop] = value
                 if prop == "multiline" and not value and "\n" in spec.get("text", ""):
                     spec["text"] = " ".join(spec["text"].splitlines())  # a single line can't hold line breaks
@@ -326,6 +332,9 @@ class FormEditor:
         check_name(new, [n for n in self.object_names() + menus.names(self.design.menu) if n != obj])
         spec = self._spec(obj)
         spec["name"] = new
+        for key in ("default_button", "cancel_button"):
+            if getattr(self.design, key) == obj:
+                setattr(self.design, key, new)
         for child in self.design.controls:
             if child.get("container") == obj:
                 child["container"] = new
@@ -364,6 +373,7 @@ class FormEditor:
         name = self._free_name(type_name, set(self.object_names() + menus.names(self.design.menu)))
         spec = REGISTRY[type_name].new_spec(name, left, top, width, height, container)
         self.design.controls.append(spec)
+        self._order_tabs(last=[spec])
         self.surface.add(spec)
         self.properties.refresh_objects()
         self.code.refresh_objects()
@@ -393,9 +403,43 @@ class FormEditor:
             if spec["name"] in doomed:
                 self.design.controls.remove(spec)
                 self.surface.remove(spec["name"])
+        for key in ("default_button", "cancel_button"):
+            if getattr(self.design, key) in doomed:
+                setattr(self.design, key, "")
+        self._order_tabs()
+        self.properties.update_values()  # so the panel doesn't put back a deleted button
         self.properties.refresh_objects()
         self.code.refresh_objects()
         self.select(FORM)
+        self.update_title()
+
+    # ----- tab order -----
+
+    def tab_stops(self):
+        """The specs of the controls Tab moves through, in order: by tabindex, then as designed."""
+        stops = [s for s in self.design.controls if "tabindex" in REGISTRY[s["type"]].prop_defaults()]
+        return sorted(stops, key=lambda s: s.get("tabindex", 0))  # a stable sort: ties stay in design order
+
+    def _order_tabs(self, name=None, index=0, last=()):
+        """Number the tab stops 0, 1, 2...: moving name to index, and the specs in last to the end."""
+        ordered = self.tab_stops()
+        late = [s for s in last if any(s is t for t in ordered)]
+        stops = [s for s in ordered if not any(s is t for t in late)] + late
+        if name is not None:
+            spec = self._spec(name)
+            stops.remove(spec)
+            stops.insert(max(0, min(int(index), len(stops))), spec)
+        for number, spec in enumerate(stops):
+            spec["tabindex"] = number
+            control = self.surface.controls.get(spec["name"])
+            if control is not None:
+                control.tabindex = number
+
+    @_undoable
+    def set_tab_index(self, name, index):
+        """Put a control at a place in the tab order (Format > Tab Order clicks do this)."""
+        self._order_tabs(name, index)
+        self.properties.update_values()
         self.update_title()
 
     @_undoable
@@ -505,8 +549,10 @@ class FormEditor:
             else:
                 new["container"] = renames[spec["container"]]
             self.design.controls.append(new)
-            self.surface.add(new)
             added.append(new)
+        self._order_tabs(last=added)
+        for new in added:
+            self.surface.add(new)
         self.properties.refresh_objects()
         self.code.refresh_objects()
         self.select_many([renames[s["name"]] for s in outermost])

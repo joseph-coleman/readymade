@@ -24,7 +24,7 @@ import tkinter as tk
 from pathlib import Path
 
 from pybasic import appearance, events, formfile, forms, menus
-from pybasic.controls import Event, create, repaint_inside
+from pybasic.controls import Button, Event, _TabStop, control_of, create, repaint_inside
 
 FORM = "Form"
 FORM_EVENTS = (
@@ -136,6 +136,14 @@ class Form:
             menubar = tk.Menu(self.root, tearoff=False)
             menus.build(menubar, design.menu, self._menu_entry)
             self.root["menu"] = menubar
+        self._default_button = self._cancel_button = None
+        self.default_button = design.default_button
+        self.cancel_button = design.cancel_button
+        self._design_order = list(self.controls)
+        for sequence, action in (("<Tab>", lambda e: self._tab(1)), ("<<NextControl>>", lambda e: self._tab(1)),
+                                 ("<Shift-Tab>", lambda e: self._tab(-1)), ("<<PrevWindow>>", lambda e: self._tab(-1)),
+                                 ("<Return>", self._enter), ("<KP_Enter>", self._enter), ("<Escape>", self._escape)):
+            self.root.bind(sequence, action)  # the form's own bindings see keys pressed in any of its controls
         self.loaded = True
         _loaded.add(self)
         self._connect_events()
@@ -147,6 +155,9 @@ class Form:
         self.root.deiconify()
         self.root.lift()
         self.root.focus_set()
+        order = self._tab_order()
+        if order and self.root.focus_get() in (None, self.root):
+            self._focus(order[0])  # as in VB, the first control in the tab order starts with the focus
         if modal:
             self.root.grab_set()
             self.root.wait_window()
@@ -212,6 +223,85 @@ class Form:
     def cursor(self, value):
         self._cursor = appearance.check_choice("cursor", value, tuple(appearance.CURSORS))
         self.root["cursor"] = appearance.CURSORS[self._cursor]
+
+    @property
+    def default_button(self):
+        """The Button that Enter presses, as if clicked, or None. (Enter in a multi-line text
+        box starts a new line instead, and Enter on a button presses that button.) Set it to
+        a Button or a Button's name."""
+        return self._default_button
+
+    @default_button.setter
+    def default_button(self, button):
+        self._default_button = self._button(button, "default_button")
+        for control in self.controls.values():
+            if isinstance(control, Button):  # the default button shows a heavier border
+                control._set(control.widget, "default", "active" if control is self._default_button else None)
+
+    @property
+    def cancel_button(self):
+        """The Button that Esc presses, as if clicked, or None. Set it to a Button or a Button's name."""
+        return self._cancel_button
+
+    @cancel_button.setter
+    def cancel_button(self, button):
+        self._cancel_button = self._button(button, "cancel_button")
+
+    def _button(self, button, prop):
+        if button is None or button == "":
+            return None
+        if isinstance(button, str):
+            button = self.controls.get(button)
+        if not isinstance(button, Button):
+            raise ValueError(f"{prop} must be one of the form's Buttons (or None)")
+        return button
+
+    # ----- the keyboard: Tab order, Enter and Esc -----
+
+    def _tab_order(self):
+        """The controls Tab moves through, in order: by tabindex, then as designed."""
+        stops = [c for c in self.controls.values() if isinstance(c, _TabStop)]
+        return sorted(stops, key=lambda c: (c.tabindex, self._design_order.index(c.name) if c.name in self._design_order else 0))
+
+    def _tab(self, step):
+        reachable = [c for c in self._tab_order() if c.enabled and c.visible and c.widget.winfo_viewable()]
+        if not reachable:
+            return None  # Tk's own Tab order
+        current = control_of(self._focus_get())
+        if current in reachable:
+            target = reachable[(reachable.index(current) + step) % len(reachable)]
+        else:
+            target = reachable[0 if step > 0 else -1]
+        self._focus(target)
+        return "break"
+
+    @staticmethod
+    def _focus(control):
+        widget = control._focus_widget()
+        widget.tk.call("tk::TabToWindow", widget)  # as Tab does: focus, and select a text box's text
+
+    def _focus_get(self):
+        try:
+            return self.root.focus_get()
+        except KeyError:  # a widget tkinter doesn't know, like a drop-down list's
+            return None
+
+    def _enter(self, e):
+        focus = self._focus_get()
+        if isinstance(focus, tk.Text):
+            return None  # a new line in a multi-line text box
+        focused = control_of(focus)
+        return self._press(focused if isinstance(focused, Button) else self._default_button)
+
+    def _escape(self, e):
+        return self._press(self._cancel_button)
+
+    @staticmethod
+    def _press(button):
+        if button is None or not (button.enabled and button.visible):
+            return None
+        button.widget.invoke()
+        return "break"
 
     def _parent_widget(self, spec):
         container = spec.get("container")

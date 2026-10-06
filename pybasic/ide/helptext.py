@@ -30,7 +30,7 @@ EVENTS = {
     "drag": "the mouse moves with its button held down; x and y say where",
     "gotfocus": "it gets the keyboard focus",
     "lostfocus": "it loses the keyboard focus",
-    "keypress": "a key is pressed while it has the focus; key is the character, or a name like \"Return\"",
+    "keypress": "a key is pressed while it has the focus; key is the character typed, or a name like \"Enter\", \"Esc\" or \"Ctrl+S\"",
     "change": "its contents change",
     "timer": "interval milliseconds have passed",
     "load": "the form is loaded, before it's first shown",
@@ -88,7 +88,7 @@ def control(type_name, name=None):
 def form(name="Form1"):
     parts = [
         _doc(Form),
-        "Properties\n" + _members(Form, ["text", "width", "height", "backcolor", "cursor"]),
+        "Properties\n" + _members(Form, ["text", "width", "height", "backcolor", "cursor", "default_button", "cancel_button"]),
         "Methods\n" + _members(Form, ["show", "hide", "close", "run"]),
         "Events (double-click the form in the designer to write Form_load)\n" + _events("Form", FORM_EVENTS),
     ]
@@ -122,6 +122,7 @@ def home():
         "  Arrows move the selection (Ctrl: 1 pixel); Shift+arrows resize it.",
         "  Ctrl+Z / Ctrl+Y undo and redo; Ctrl+X, C and V cut, copy and paste controls.",
         "  Tools > Menu Editor (Ctrl+E) designs the form's menus.",
+        "  Format > Tab Order: click the controls in the order Tab should visit them.",
         "",
         "Code",
         "  F12 or Ctrl+click goes to a definition; Ctrl+Space completes a name.",

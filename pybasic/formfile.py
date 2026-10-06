@@ -26,6 +26,8 @@ class FormDesign:
     height: int = 300
     backcolor: str = ""  # "" is the usual colour
     cursor: str = "default"
+    default_button: str = ""  # the Button that Enter presses
+    cancel_button: str = ""  # the Button that Esc presses
     controls: list[dict] = field(default_factory=list)
     menu: list[dict] = field(default_factory=list)  # see pybasic.menus
 
@@ -79,6 +81,9 @@ def dumps(design):
         data["backcolor"] = design.backcolor
     if design.cursor != "default":
         data["cursor"] = design.cursor
+    for key in ("default_button", "cancel_button"):
+        if getattr(design, key):
+            data[key] = getattr(design, key)
     data["controls"] = [_ordered(c) for c in design.controls]
     if design.menu:  # only forms with a menu mention it, so other forms' files don't change
         data["menu"] = [_ordered_menu_item(item) for item in design.menu]
@@ -117,6 +122,8 @@ def loads(text, source="<string>"):
         height=int(data.get("height", 300)),
         backcolor=data.get("backcolor", ""),
         cursor=data.get("cursor", "default"),
+        default_button=data.get("default_button", ""),
+        cancel_button=data.get("cancel_button", ""),
         controls=controls,
         menu=menu,
     )

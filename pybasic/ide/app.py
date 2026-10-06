@@ -314,14 +314,31 @@ class App:
                     ("Center in Form", center, 1), ("Order", order, 1))
         for label, submenu, _ in submenus:
             menu.add_cascade(label=label, menu=submenu)
+        menu.add_separator()
+        self._tab_order_mode = tk.BooleanVar(self.root, False)
+        menu.add_checkbutton(label="Tab Order", variable=self._tab_order_mode, command=self.toggle_tab_order)
 
         def update():
             count = len(self.form.selected_controls()) if self._designing() else 0
             for label, _, needs in submenus:
                 menu.entryconfigure(label, state=tk.NORMAL if count >= needs else tk.DISABLED)
+            menu.entryconfigure("Tab Order", state=tk.NORMAL if self._designing() else tk.DISABLED)
+            self._tab_order_mode.set(self._designing() and self.form.surface.tab_order_next is not None)
 
         menu.configure(postcommand=update)
         return menu
+
+    def toggle_tab_order(self):
+        """Format > Tab Order: click the form's controls in the order Tab should visit them
+        (Esc, or the menu again, to finish)."""
+        if not self._designing():
+            return
+        surface = self.form.surface
+        if surface.tab_order_next is None:
+            surface.start_tab_order()
+            self.immediate.write("(Tab Order: click the controls in the order Tab should visit them; Esc when done.)\n")
+        else:
+            surface.stop_tab_order()
 
     def _designing(self):
         """True while a form's Design tab is showing."""

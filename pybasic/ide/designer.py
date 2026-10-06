@@ -15,7 +15,7 @@ from __future__ import annotations
 import tkinter as tk
 
 from pybasic import menus
-from pybasic.controls import create, repaint_inside
+from pybasic.controls import Button, create, repaint_inside
 from pybasic.form import FORM
 
 GRID = 8
@@ -50,6 +50,8 @@ class DesignSurface(tk.Frame):
         self._band = None  # (container, x, y) while drawing a new control
         self._lasso = None  # (x, y, adding) while dragging a box to select controls
         self._form_drag = (0, 0, 0, 0)  # (x_root, y_root, width, height) while resizing the form
+        self.tab_order_next = None  # in Format > Tab Order: the number the next click gives
+        self._badges = []
 
         self.window = tk.Frame(self, relief=tk.RAISED, bd=2)
         self.window.place(x=16, y=16)
@@ -64,6 +66,7 @@ class DesignSurface(tk.Frame):
         self.canvas.bind("<ButtonRelease-1>", self._release)
         self.canvas.bind("<Double-Button-1>", lambda e: app.goto_handler(FORM, "load"))
         self.canvas.bind("<Delete>", lambda e: self.app.delete_selection())
+        self.canvas.bind("<Escape>", lambda e: self.stop_tab_order())
         # Arrows move the selected controls a grid step (Ctrl: 1 pixel); with Shift they resize them.
         for key, dx, dy in (("Left", -1, 0), ("Right", 1, 0), ("Up", 0, -1), ("Down", 0, 1)):
             for modifiers, step, resize in (("", GRID, False), ("Control-", 1, False), ("Shift-", GRID, True), ("Control-Shift-", 1, True)):
@@ -96,6 +99,7 @@ class DesignSurface(tk.Frame):
         for spec in self.app.design.controls:
             self.add(spec)
         self.show_selection()
+        self.show_tab_order()
 
     def refresh_form(self):
         design = self.app.design
@@ -103,7 +107,14 @@ class DesignSurface(tk.Frame):
         self.canvas.configure(width=design.width, height=design.height,
                               background=design.backcolor or self.window.cget("background"))
         repaint_inside(self.canvas)  # controls showing the form's colour
+        for control in self.controls.values():
+            self._mark_default(control)
         self._draw_grid(design.width, design.height)
+
+    def _mark_default(self, control):
+        """The form's default button shows a heavier border, as it will when the program runs."""
+        if isinstance(control, Button):
+            control._set(control.widget, "default", "active" if control.name == self.app.design.default_button else None)
 
     def refresh_menu(self):
         for child in self.menubar.winfo_children():
@@ -145,6 +156,7 @@ class DesignSurface(tk.Frame):
             widget.bind("<Double-Button-1>", lambda e, c=control: self._control_double(c))
         self.controls[control.name] = control
         _follow_size(spec, control)
+        self._mark_default(control)
         self._lift_handles()
 
     def refresh_control(self, name):
@@ -228,14 +240,57 @@ class DesignSurface(tk.Frame):
 
     # ----- mouse handling -----
 
+    # ----- Format > Tab Order: click the controls in the order Tab should take -----
+
+    def start_tab_order(self):
+        self.tab_order_next = 0
+        self.show_tab_order()
+
+    def stop_tab_order(self):
+        self.tab_order_next = None
+        self.show_tab_order()
+
+    def show_tab_order(self):
+        """Number each control Tab reaches; those clicked this time are green, the rest blue."""
+        for badge in self._badges:
+            badge.destroy()
+        self._badges = []
+        if self.tab_order_next is None:
+            return
+        self.canvas.update_idletasks()
+        for spec in self.app.tab_stops():
+            control = self.controls[spec["name"]]
+            x, y = self._on_canvas(control)
+            done = spec["tabindex"] < self.tab_order_next
+            badge = tk.Label(self.canvas, text=str(spec["tabindex"]), bg="#208020" if done else "#000080", fg="white",
+                             padx=3, pady=0, cursor="hand2")
+            badge.place(x=x, y=y)
+            badge.bind("<ButtonPress-1>", lambda e, c=control: self._tab_order_click(c))
+            self._badges.append(badge)
+
+    def _tab_order_click(self, control):
+        stops = [s["name"] for s in self.app.tab_stops()]
+        if control.name not in stops:
+            self.bell()
+            return "break"
+        self.app.set_tab_index(control.name, self.tab_order_next)
+        self.tab_order_next = (self.tab_order_next + 1) % len(stops)
+        self.show_tab_order()
+        return "break"
+
     def _canvas_press(self, e):
         self.canvas.focus_set()
+        if self.tab_order_next is not None:
+            return "break"
         if self.app.toolbox.tool:
             return self._start_band(e)
         self._lasso = (e.x, e.y, bool(e.state & _CONTROL_KEY))
 
     def _control_press(self, e, control):
         self.canvas.focus_set()
+        if self.tab_order_next is not None:
+            self._tab_order_click(control)
+            return "break"
         if self.app.toolbox.tool:
             return self._start_band(e)
         if e.state & _CONTROL_KEY:

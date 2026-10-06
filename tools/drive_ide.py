@@ -42,7 +42,7 @@ class Form1(Form):
         self.Label2.text = f"Hello, {name}!"
 
     def TextBox1_keypress(self, key):
-        if key == "Return":
+        if key == "Enter":
             self.Button1_click()
 
     def Button1_mousedown(self, x, y):
@@ -602,6 +602,34 @@ def drive(d):
     d.key("F5")
     d.check("the running program shows them", d.ask("(Label1.widget['background'], str(Label1.widget['anchor']), Label1.font)"),
             ("#ffe080", "e", family))
+    app.immediate_line("form.close()")
+    deadline = time.time() + 10
+    while app.process is not None and time.time() < deadline:
+        d.pump(0.05)
+
+    print("Format > Tab Order by clicking, then Tab, Shift+Tab and Enter in the running program")
+    app.toggle_tab_order()
+    surface = editor.surface
+    for name in ("Button2", "Button1"):
+        d.click(*d.at(surface.controls[name].widget, 30, 10))
+    d.check("tab order set by clicking", [s["name"] for s in editor.tab_stops()][:2], ["Button2", "Button1"])
+    d.check("badges numbered", len(surface._badges), len(editor.tab_stops()))
+    d.shot("tab-order")
+    d.key("Escape")
+    d.check("Esc ends Tab Order", (surface.tab_order_next, surface._badges), (None, []))
+    d.key("F5")
+    focus = "__import__('pybasic.controls').controls.control_of(form.root.focus_lastfor()).name"
+    d.check("the first in the tab order starts with the focus", d.ask(focus), "Button2")
+    x, y = d.ask("(Label1.widget.winfo_rootx() + 4, Label1.widget.winfo_rooty() + 4)")
+    d.click(x, y)  # the window gets the keyboard
+    d.key("Tab")
+    d.check("Tab goes to the next", d.ask(focus), "Button1")
+    d.key("shift+Tab")
+    d.check("Shift+Tab goes back", d.ask(focus), "Button2")
+    app.immediate_line("Label2.text = ''")
+    d.ask("Label2.text")  # wait until it's done, so it can't undo what Enter does
+    d.key("Return")
+    d.check("Enter presses the focused button", d.ask("Label2.text"), "Drawn and wired by xdotool")
     app.immediate_line("form.close()")
     deadline = time.time() + 10
     while app.process is not None and time.time() < deadline:

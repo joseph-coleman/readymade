@@ -18,7 +18,7 @@ from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
 
-from pybasic import appearance, pictures
+from pybasic import appearance, keys, pictures
 from pybasic import shapes as _shapes
 from pybasic.shapes import Shape
 
@@ -33,7 +33,7 @@ class Event:
 
 
 def _key(e):
-    return e.char if e.char and e.char.isprintable() else e.keysym
+    return keys.name(e.char, e.keysym, e.state)
 
 
 def _inside(e):
@@ -159,6 +159,7 @@ class Control:
             "height": height,
             "enabled": True,
             "visible": True,
+            **({"tabindex": 0} if issubclass(cls, _TabStop) else {}),
             **({"cursor": "default"} if issubclass(cls, _Cursor) else {}),
         }
 
@@ -314,6 +315,17 @@ class Control:
 _controls: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
+def control_of(widget):
+    """The control a Tk widget belongs to (say, the one with the keyboard focus), or None."""
+    while widget is not None:
+        ref = _controls.get(widget)
+        control = ref() if ref else None
+        if control is not None:
+            return control
+        widget = widget.master
+    return None
+
+
 def repaint_inside(widget):
     """Repaint the controls in a container widget (a form, or a Frame), after its colour changed."""
     for child in widget.winfo_children():
@@ -430,6 +442,27 @@ class _Cursor:
         self._apply_cursor()
 
 
+class _TabStop:
+    """A tabindex property, for controls the keyboard can reach."""
+
+    widget: tk.Widget
+    _tabindex: int
+
+    @property
+    def tabindex(self):
+        """Its place in the order Tab moves through the form's controls, counting from 0
+        (Shift+Tab goes backwards). The designer's Format > Tab Order sets them by clicking."""
+        return self._tabindex
+
+    @tabindex.setter
+    def tabindex(self, value):
+        self._tabindex = int(value)
+
+    def _focus_widget(self):
+        """The widget that takes the keyboard focus."""
+        return self.widget
+
+
 class _WidgetText:
     """A text property backed by the widget's own text option."""
 
@@ -463,7 +496,7 @@ SCROLLBARS = ("none", "horizontal", "vertical", "both")
 
 
 @register
-class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _Cursor, Control):
+class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Control):
     """A text field. With multiline True it's a multi-line text area, optionally with
     scrollbars. As in VB, both are set in the designer, and scrollbars only apply to
     multi-line boxes. `editor` is the Entry or Text the user types in.
@@ -539,12 +572,13 @@ class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _Cursor, Control):
     def _retag(self, _=None):
         self.editor.tag_add("pybasic-align", "1.0", "end")
 
+    def _focus_widget(self):
+        return self.editor
+
     @staticmethod
     def _tab_out(e):
-        # As in VB, Tab moves to the next control rather than inserting a tab.
-        target = e.widget.tk_focusNext()
-        if target is not None:
-            target.focus_set()
+        # As in VB, Tab moves to the next control rather than inserting a tab; the form does that.
+        e.widget.event_generate("<<NextControl>>")
         return "break"
 
     @property
@@ -662,7 +696,7 @@ class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, Contr
 
 
 @register
-class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, Control):
+class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, Control):
     """A push button. Its click event runs when it's clicked, or pressed with Space while it has the focus.
     (On macOS, buttons keep the system's own colours.)"""
 
@@ -684,7 +718,7 @@ class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _C
 
 
 @register
-class CheckBox(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, Control):
+class CheckBox(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, Control):
     """A box that can be ticked. value is True while it's ticked; click runs each time it changes."""
 
     type_name = "CheckBox"
@@ -718,7 +752,7 @@ _option_groups: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 @register
-class OptionButton(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, Control):
+class OptionButton(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, Control):
     """A radio button. Option buttons in the same container form one group, as in VB."""
 
     type_name = "OptionButton"
@@ -789,7 +823,7 @@ class _ListMixin:
 
 
 @register
-class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, Control):
+class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Control):
     """A drop-down list. With editable False the user can only pick from the list."""
 
     type_name = "ComboBox"
@@ -904,7 +938,7 @@ class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, Con
 
 
 @register
-class ListBox(_ListMixin, _BackColor, _ForeColor, _Font, _Cursor, Control):
+class ListBox(_ListMixin, _BackColor, _ForeColor, _Font, _TabStop, _Cursor, Control):
     """A list to choose from. click runs when the choice changes; list_index and text tell
     which item is chosen."""
 
