@@ -1,6 +1,6 @@
 import pytest
 
-from pybasic import codegen
+from readymade import codegen
 
 
 def add(source, name, params=()):

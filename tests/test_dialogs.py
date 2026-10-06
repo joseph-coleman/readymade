@@ -5,7 +5,7 @@ from tkinter import colorchooser, filedialog
 
 import pytest
 
-from pybasic import Form, color_dialog, folder_dialog, formfile, inputbox, msgbox, open_file_dialog, save_file_dialog
+from readymade import Form, color_dialog, folder_dialog, formfile, inputbox, msgbox, open_file_dialog, save_file_dialog
 
 pytestmark = pytest.mark.usefixtures("display")
 

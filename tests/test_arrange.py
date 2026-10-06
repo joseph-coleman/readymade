@@ -1,6 +1,6 @@
 import pytest
 
-from pybasic.ide import arrange
+from readymade.ide import arrange
 
 RECTS = {"a": (10, 10, 50, 20), "b": (30, 50, 100, 40), "ref": (20, 100, 80, 30)}
 

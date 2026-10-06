@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from pybasic import lint, usersettings
-from pybasic.project import Project, set_setting
+from readymade import lint, usersettings
+from readymade.project import Project, set_setting
 
 # What the real tools printed for one small file (recorded with pyflakes 4.0, ruff 0.16,
 # flake8 7.4, pylint 4.1 and mypy 2.4).
@@ -58,9 +58,9 @@ def project(tmp_path):
     (tmp_path / "fake_linter.py").write_text(FAKE_LINTER)
     script = str(tmp_path / "fake_linter.py").replace("\\\\", "/")
     project.pyproject.write_text(project.pyproject.read_text() + (
-        "\n[tool.pybasic.lint-tools.typing-check]\n"
+        "\n[tool.readymade.lint-tools.typing-check]\n"
         f'command = ["{{python}}", "{script}", "--stdin", "{{file}}"]\nstdin = true\n'
-        "\n[tool.pybasic.lint-tools.save-check]\n"
+        "\n[tool.readymade.lint-tools.save-check]\n"
         f'command = ["{{python}}", "{script}", "{{file}}"]\n'
     ))
     return project
@@ -72,7 +72,7 @@ def test_choosing_tools_for_the_project_and_for_me(project):
     assert lint.choices(project) == (["ruff", "typing-check"], ["mypy", "ruff", "nonexistent"])
     assert [t.name for t in lint.tools_for(project)] == ["ruff", "typing-check", "mypy"]  # unknown names left out
     assert 'lint = ["ruff", "typing-check"]' in project.pyproject.read_text()
-    assert not (project.folder / ".pybasic").exists()  # your own choices aren't kept in the project
+    assert not (project.folder / ".readymade").exists()  # your own choices aren't kept in the project
     assert lint.definitions(project)["typing-check"].stdin is True
     other = Project.create(project.folder.parent / "other")
     assert lint.choices(other) == ([], ["mypy", "ruff", "nonexistent"])  # they follow you to every project
@@ -100,9 +100,9 @@ def test_a_missing_tool_says_so():
 
 
 def test_lists_over_several_lines_are_replaced_whole():
-    text = '[tool.pybasic]\nlint = [\n  "ruff",  # fast\n  "mypy",\n]\ntheme = "x"\n'
-    assert set_setting(text, "lint", ["pyflakes"]) == '[tool.pybasic]\nlint = ["pyflakes"]\ntheme = "x"\n'
-    assert set_setting(text, "lint", None) == '[tool.pybasic]\ntheme = "x"\n'
+    text = '[tool.readymade]\nlint = [\n  "ruff",  # fast\n  "mypy",\n]\ntheme = "x"\n'
+    assert set_setting(text, "lint", ["pyflakes"]) == '[tool.readymade]\nlint = ["pyflakes"]\ntheme = "x"\n'
+    assert set_setting(text, "lint", None) == '[tool.readymade]\ntheme = "x"\n'
 
 
 def test_personal_tools_can_be_defined_in_your_settings(project):
@@ -112,13 +112,13 @@ def test_personal_tools_can_be_defined_in_your_settings(project):
 
 
 @pytest.mark.parametrize("platform, env, expected", [
-    ("win32", {"APPDATA": "C:/Users/me/AppData/Roaming"}, "C:/Users/me/AppData/Roaming/pybasic"),
-    ("linux", {"XDG_CONFIG_HOME": "/home/me/.cfg"}, "/home/me/.cfg/pybasic"),
-    ("linux", {}, str(Path.home() / ".config" / "pybasic")),
-    ("darwin", {}, str(Path.home() / "Library" / "Application Support" / "pybasic")),
+    ("win32", {"APPDATA": "C:/Users/me/AppData/Roaming"}, "C:/Users/me/AppData/Roaming/readymade"),
+    ("linux", {"XDG_CONFIG_HOME": "/home/me/.cfg"}, "/home/me/.cfg/readymade"),
+    ("linux", {}, str(Path.home() / ".config" / "readymade")),
+    ("darwin", {}, str(Path.home() / "Library" / "Application Support" / "readymade")),
 ])
 def test_settings_folder_for_each_system(monkeypatch, platform, env, expected):
-    for name in ("PYBASIC_CONFIG_DIR", "APPDATA", "XDG_CONFIG_HOME"):
+    for name in ("READYMADE_CONFIG_DIR", "APPDATA", "XDG_CONFIG_HOME"):
         monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)

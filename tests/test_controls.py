@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-from pybasic import Form, formfile
-from pybasic.controls import REGISTRY
+from readymade import Form, formfile
+from readymade.controls import REGISTRY
 
 pytestmark = pytest.mark.usefixtures("display")
 

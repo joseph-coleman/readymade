@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-from pybasic import Form, formfile
-from pybasic.menus import KEYS, names, normalize_shortcut, parse_text, shortcut_sequence
+from readymade import Form, formfile
+from readymade.menus import KEYS, names, normalize_shortcut, parse_text, shortcut_sequence
 
 MENU = [
     {"name": "mnuFile", "text": "&File", "items": [

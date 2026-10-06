@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from pybasic import Form, formfile
-from pybasic.controls import REGISTRY
-from pybasic.form import check_name
-from pybasic.project import Project
+from readymade import Form, formfile
+from readymade.controls import REGISTRY
+from readymade.form import check_name
+from readymade.project import Project
 
 ROOT = Path(__file__).parent.parent
 
@@ -93,12 +93,12 @@ def test_run_with_immediate_window(tmp_path):
     design.controls += [REGISTRY["TextBox"].new_spec("TextBox1", 8, 8), REGISTRY["Button"].new_spec("Button1", 8, 40)]
     formfile.save(design, project.folder / "Form1.form")
     (project.folder / "Form1.py").write_text(
-        "from pybasic import Form\n\n\nclass Form1(Form):\n"
+        "from readymade import Form\n\n\nclass Form1(Form):\n"
         "    def Button1_click(self):\n        self.text = f'Hello, {self.TextBox1.text}!'\n"
     )
     env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONUNBUFFERED="1")
     result = subprocess.run(
-        [sys.executable, "-m", "pybasic.run", "--immediate", "--startup", "Form1", str(project.folder)],
+        [sys.executable, "-m", "readymade.run", "--immediate", "--startup", "Form1", str(project.folder)],
         input="TextBox1.text = 'Ada'\n_ = Button1.widget.invoke()\nprint(form.text)\nform.close()\n",
         capture_output=True, text=True, env=env, timeout=20,
     )

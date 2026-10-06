@@ -5,7 +5,7 @@
 Needs Xvfb and xdotool. The IDE runs in this process so the script can ask Tk
 where widgets are, but every click, drag and keystroke goes through the X
 server, exercising the same event bindings a person would. Screenshots of each
-step are saved to output_dir (default /tmp/pybasic-ui). It starts from its own
+step are saved to output_dir (default /tmp/readymade-ui). It starts from its own
 Hello World form in a temporary folder, so it doesn't depend on (or touch)
 examples/hello.
 """
@@ -30,7 +30,7 @@ START_CONTROLS = [
     ("Button", "Button1", 208, 46, 96, 28, {"text": "Say Hello"}),
     ("Label", "Label2", 24, 232, 288, 24, {"text": ""}),
 ]
-START_CODE = """from pybasic import Form
+START_CODE = """from readymade import Form
 
 
 class Form1(Form):
@@ -55,9 +55,9 @@ if __name__ == "__main__":
 
 
 def write_start_form(folder):
-    from pybasic import formfile
-    from pybasic.controls import REGISTRY
-    from pybasic.project import Project
+    from readymade import formfile
+    from readymade.controls import REGISTRY
+    from readymade.project import Project
 
     design = formfile.FormDesign(name="Form1", text="Hello, World", width=448, height=320)
     for type_name, name, left, top, width, height, props in START_CONTROLS:
@@ -265,7 +265,7 @@ def drive(d):
     d.key("Home", "shift+End")
     d.key("ctrl+c")
     d.check("Ctrl+C in the code copies text, not controls",
-            (app.root.clipboard_get(), [c["name"] for c in app.clipboard]), ("from pybasic import Form", ["Button2"]))
+            (app.root.clipboard_get(), [c["name"] for c in app.clipboard]), ("from readymade import Form", ["Button2"]))
 
     print("Indent and dedent a block of code with Tab and Shift+Tab")
     before = editor.code.get_source()
@@ -297,7 +297,7 @@ def drive(d):
             "        return None\n    x = [\n        \n    ]")
     editor.code.replace_source(before)
 
-    from pybasic.ide import assist
+    from readymade.ide import assist
 
     if assist.AVAILABLE:
         print("Completion with real keys")
@@ -405,7 +405,7 @@ def drive(d):
     print("Build a File > Open menu in the Menu Editor")
     from tkinter import ttk
 
-    from pybasic.ide.menueditor import MenuEditor
+    from readymade.ide.menueditor import MenuEditor
 
     d.key("ctrl+e")
     menu_editor = next(w for w in app.root.winfo_children() if isinstance(w, MenuEditor))
@@ -520,7 +520,7 @@ def drive(d):
     import tkinter as tk
     from tkinter import font as tkfont
 
-    pictures = Path(tempfile.mkdtemp(prefix="pybasic-pictures-"))
+    pictures = Path(tempfile.mkdtemp(prefix="readymade-pictures-"))
     photo = tk.PhotoImage(master=d.root, width=32, height=32)
     photo.put("#3060c0", to=(0, 0, 32, 32))
     photo.write(str(pictures / "badge.png"), format="png")
@@ -618,7 +618,7 @@ def drive(d):
     d.key("Escape")
     d.check("Esc ends Tab Order", (surface.tab_order_next, surface._badges), (None, []))
     d.key("F5")
-    focus = "__import__('pybasic.controls').controls.control_of(form.root.focus_lastfor()).name"
+    focus = "__import__('readymade.controls').controls.control_of(form.root.focus_lastfor()).name"
     d.check("the first in the tab order starts with the focus", d.ask(focus), "Button2")
     x, y = d.ask("(Label1.widget.winfo_rootx() + 4, Label1.widget.winfo_rooty() + 4)")
     d.click(x, y)  # the window gets the keyboard
@@ -638,10 +638,10 @@ def drive(d):
 
 
 def main():
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/pybasic-ui")
+    out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/readymade-ui")
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
-    work = Path(tempfile.mkdtemp(prefix="pybasic-drive-"))
+    work = Path(tempfile.mkdtemp(prefix="readymade-drive-"))
     write_start_form(work)
 
     server = start_xvfb()
@@ -649,7 +649,7 @@ def main():
     try:
         import tkinter as tk
 
-        from pybasic.ide.app import App
+        from readymade.ide.app import App
 
         root = tk.Tk()
         root.geometry("1100x720+0+0")

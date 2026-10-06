@@ -4,9 +4,9 @@ import tkinter as tk
 
 import pytest
 
-from pybasic import Form, formfile, keys
-from pybasic.controls import REGISTRY
-from pybasic.form import FORM
+from readymade import Form, formfile, keys
+from readymade.controls import REGISTRY
+from readymade.form import FORM
 
 pytestmark = pytest.mark.usefixtures("display")
 
@@ -110,7 +110,7 @@ def press(form, sequence, **options):
 
 def focused(form):
     """The control with the focus: the one the form gives keys to when it has the keyboard."""
-    from pybasic.controls import control_of
+    from readymade.controls import control_of
 
     return control_of(form.root.focus_lastfor()).name
 
@@ -233,7 +233,7 @@ def test_form_files_only_mention_default_and_cancel_buttons_when_set():
 
 @pytest.fixture
 def app(tmp_path):
-    from pybasic.ide.app import App
+    from readymade.ide.app import App
 
     root = tk.Tk()
     app = App(root, tmp_path / "Keys")

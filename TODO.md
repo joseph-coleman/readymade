@@ -5,8 +5,8 @@ Ideas and gaps noted along the way, roughly by area.
 ## Runtime
 - **Menu item `visible`**: Tk can't hide a menu entry; supporting it means rebuilding the menu.
 - **Break mode**: pause a running program at an error, as VB did (needs a debugger).
-- **macOS shortcuts**: treat "Ctrl" as ⌘ (Command) and "Alt" as Option on macOS, the way Qt and Electron's CmdOrCtrl do, and show native ⌘O labels. Needs a Mac to check how Tk on macOS parses accelerator labels, and whether its native menus already fire the shortcut (which would make pybasic's own binding run handlers twice). The IDE's own shortcuts (Ctrl+S, Ctrl+Z, ...) should follow the same rule.
-- **Check keypress names on a Mac**: `pybasic/keys.py` already reports ⌘ as "Ctrl" (so ⌘S is "Ctrl+S"), the Control key as "MacCtrl", and Option as "Alt" unless it types a character. The state bits (Command 0x8, Option 0x10) and the modifier keys' own names (is ⌘ alone "Meta_L"?) come from Tk's documentation, not a real Mac. To check: a form with a TextBox whose keypress handler prints `key`; ⌘S, ⌃S, ⌥S, ⌥E then E, ⌘ alone and Shift+⌘Z should print `Ctrl+S`, `MacCtrl+S`, `ß`, `é`, `Ctrl`, `Ctrl+Shift+Z`.
+- **macOS shortcuts**: treat "Ctrl" as ⌘ (Command) and "Alt" as Option on macOS, the way Qt and Electron's CmdOrCtrl do, and show native ⌘O labels. Needs a Mac to check how Tk on macOS parses accelerator labels, and whether its native menus already fire the shortcut (which would make readymade's own binding run handlers twice). The IDE's own shortcuts (Ctrl+S, Ctrl+Z, ...) should follow the same rule.
+- **Check keypress names on a Mac**: `readymade/keys.py` already reports ⌘ as "Ctrl" (so ⌘S is "Ctrl+S"), the Control key as "MacCtrl", and Option as "Alt" unless it types a character. The state bits (Command 0x8, Option 0x10) and the modifier keys' own names (is ⌘ alone "Meta_L"?) come from Tk's documentation, not a real Mac. To check: a form with a TextBox whose keypress handler prints `key`; ⌘S, ⌃S, ⌥S, ⌥E then E, ⌘ alone and Shift+⌘Z should print `Ctrl+S`, `MacCtrl+S`, `ß`, `é`, `Ctrl`, `Ctrl+Shift+Z`.
 
 ## IDE
 - **Copy and paste**: optionally bring the controls' event handlers along (renamed to match), which VB never did. Also a selection box inside a Frame (today it only works on the form itself; Ctrl+click works anywhere).
@@ -17,8 +17,8 @@ Ideas and gaps noted along the way, roughly by area.
 - **Renaming a form**: also update references to it in other files (like `forms.OldName`).
 
 ## Code editor
-- **Settings**: indent width (4 spaces today, a constant in `pybasic/ide/codeview.py`), font, theme. Needs an IDE settings dialog.
-- **Themes**: a dark theme; the colours are all in `pybasic/ide/highlight.py`. Also mark a run-time error's line in the line numbers.
+- **Settings**: indent width (4 spaces today, a constant in `readymade/ide/codeview.py`), font, theme. Needs an IDE settings dialog.
+- **Themes**: a dark theme; the colours are all in `readymade/ide/highlight.py`. Also mark a run-time error's line in the line numbers.
 - **Folding** and an outline, from an error-tolerant parser (parso, MIT). The same parsing would let Enter see past the current line: today, after a call spread over several lines, the next line keeps the continuation indent instead of returning to the statement's level.
 - **A language server option (LSP)**: completion and definitions use Jedi today. An LSP client would let people choose Pyright (or basedpyright, which pip-installs with its own Node.js), python-lsp-server, jedi-language-server or Ruff's server, configured like linting, and would also bring hover info, signature help and rename. Pylance can't be used outside Microsoft's VS Code. The form-control declarations (assist.py) carry over, as the IDE chooses the text it sends.
 - **Completion follow-ups**: `forms.<name>` (forms are found by name at run time), signatures and docstrings beside the list, Back after Go to Definition (Alt+Left).
@@ -29,7 +29,7 @@ Ideas and gaps noted along the way, roughly by area.
 - These libraries would be IDE-only dependencies, like Pygments in the `ide` extra (`pip install -e ".[ide]"`), so programs never need them.
 
 ## Bigger features
-- **Make EXE options**: an icon, one-folder instead of one-file, version details. (Extra files are bundled: pictures the forms show, and `[tool.pybasic] include`; perhaps an Include list in the Project Explorer rather than editing pyproject.toml.) Perhaps a small dialog, with various build options. Options true everywhere (icon, name) belong in `pyproject.toml`'s `[tool.pybasic]`; anything tied to one machine (a signing certificate, an interpreter) in `.pybasic/local.json`, kept per machine and out of git.
+- **Make EXE options**: an icon, one-folder instead of one-file, version details. (Extra files are bundled: pictures the forms show, and `[tool.readymade] include`; perhaps an Include list in the Project Explorer rather than editing pyproject.toml.) Perhaps a small dialog, with various build options. Options true everywhere (icon, name) belong in `pyproject.toml`'s `[tool.readymade]`; anything tied to one machine (a signing certificate, an interpreter) in `.readymade/local.json`, kept per machine and out of git.
     - Longer term idea, executables need to be able to be signed. 
 - **More controls**: third-party controls from installed libraries appearing in the Toolbox.
 - **Image drawing follow-ups**: flood fill (Pillow's `ImageDraw.floodfill`); mouse coordinates in the picture's pixels when it's scaled (stretch, zoom) or centred; anti-aliased shapes (Pillow draws them jagged; drawing larger and shrinking is the usual trick); undo for paint programs (keep copies of the picture).
@@ -41,7 +41,7 @@ Ideas and gaps noted along the way, roughly by area.
 
 ## Biggest features
 - **Form Packing**: Tkinter supports more than just absolute positioning and sizing for widgets.  Supporting grid or packing schemes would really elevate this above what VB could ever do.
-  - The Format menu (align, same size, spacing, center, order) is for absolutely placed controls only; its pure geometry lives in `pybasic/ide/arrange.py`. Grid/pack containers would disable it for their controls or offer their own equivalents (sticky, anchor, padx/pady, weights). Selections already stay within one container, so the container can decide which tools apply.
+  - The Format menu (align, same size, spacing, center, order) is for absolutely placed controls only; its pure geometry lives in `readymade/ide/arrange.py`. Grid/pack containers would disable it for their controls or offer their own equivalents (sticky, anchor, padx/pady, weights). Selections already stay within one container, so the container can decide which tools apply.
 - **Backend Swappable**:  Being able to design for a PyQt6 or some other GUI backend instead of Tkinter for a project.  There are two optional paths to this: One is keeping Tkinter for the IDE and designing a project with a different GUI backend, or having the IDE match the target project GUI.  Is a GUI target potentially a plugin?  Either way, this looks like a separation of concerns type of refactor.
-  - Keep pybasic's own API free of Tk: shapes are pybasic objects, colours `#rrggbb`, angles in degrees, fonts `(family, size, style)`. Still Tk-specific: colour names Canvas shapes accept beyond `#rrggbb`, and `.widget` / `form.root` (fine as documented escape hatches). If Qt: PySide6 (LGPL) rather than PyQt6 (GPL), for programs made with Make EXE.
+  - Keep readymade's own API free of Tk: shapes are readymade objects, colours `#rrggbb`, angles in degrees, fonts `(family, size, style)`. Still Tk-specific: colour names Canvas shapes accept beyond `#rrggbb`, and `.widget` / `form.root` (fine as documented escape hatches). If Qt: PySide6 (LGPL) rather than PyQt6 (GPL), for programs made with Make EXE.
 - **Plugins**: A plugin architecture to extend features.  Allow other people to create plugins like VB or VS Code allows.

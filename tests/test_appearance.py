@@ -7,9 +7,9 @@ from tkinter import font as tkfont
 
 import pytest
 
-from pybasic import Form, appearance, dialogs, formfile
-from pybasic.controls import REGISTRY
-from pybasic.form import FORM
+from readymade import Form, appearance, dialogs, formfile
+from readymade.controls import REGISTRY
+from readymade.form import FORM
 
 pytestmark = pytest.mark.usefixtures("display")
 
@@ -172,13 +172,13 @@ def test_text_boxes(make_form):
     bar = next(w for w in multi.widget.winfo_children() if isinstance(w, tk.Scrollbar))
     assert bar["background"] != "#fffff0"  # scrollbars keep their own look
     multi.text = "one\ntwo"
-    assert str(multi.editor.tag_cget("pybasic-align", "justify")) == "center"
-    assert multi.editor.tag_ranges("pybasic-align")[0].string == "1.0"
+    assert str(multi.editor.tag_cget("readymade-align", "justify")) == "center"
+    assert multi.editor.tag_ranges("readymade-align")[0].string == "1.0"
     multi.editor.insert("1.0", "zero\n")  # typed at the very start: not tagged until the key is released
     multi.editor.focus_force()
     form.root.update()
     multi.editor.event_generate("<KeyRelease>", keysym="a")
-    assert "pybasic-align" in multi.editor.tag_names("1.0")
+    assert "readymade-align" in multi.editor.tag_names("1.0")
 
 
 def test_combo_and_list_boxes(make_form):
@@ -254,7 +254,7 @@ def test_old_designs_without_the_properties_still_load(make_form):
 
 @pytest.fixture
 def app(tmp_path):
-    from pybasic.ide.app import App
+    from readymade.ide.app import App
 
     root = tk.Tk()
     app = App(root, tmp_path / "Colours")
@@ -329,7 +329,7 @@ def test_several_controls_at_once(app):
     editor.add_control("Label", 16, 16)
     editor.add_control("Button", 16, 56)
     editor.select_many(["Label1", "Button1"])
-    from pybasic.ide.editors import MULTIPLE
+    from readymade.ide.editors import MULTIPLE
 
     assert "forecolor" in dict(editor.props_for(MULTIPLE))
     editor.set_property(MULTIPLE, "forecolor", "#00aa00")

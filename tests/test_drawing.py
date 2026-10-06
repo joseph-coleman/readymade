@@ -5,8 +5,8 @@ import tkinter as tk
 
 import pytest
 
-from pybasic import Form, formfile, pictures
-from pybasic.controls import REGISTRY
+from readymade import Form, formfile, pictures
+from readymade.controls import REGISTRY
 
 pytestmark = [
     pytest.mark.usefixtures("display"),

@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from pybasic import forms, formfile
-from pybasic.controls import REGISTRY
-from pybasic.project import Project, ProjectError, add_dependency, describe_python, find_pythons, requirement_name, set_setting
+from readymade import forms, formfile
+from readymade.controls import REGISTRY
+from readymade.project import Project, ProjectError, add_dependency, describe_python, find_pythons, requirement_name, set_setting
 
 ROOT = Path(__file__).parent.parent
 
@@ -66,11 +66,11 @@ def test_startup_falls_back_to_the_first_form(tmp_path):
 @pytest.mark.parametrize(
     "before, after",
     [
-        ('[project]\nname = "x"\n', '[project]\nname = "x"\n\n[tool.pybasic]\nstartup = "Main"\n'),
-        ('[tool.pybasic]\n\n[tool.other]\na = 1\n', '[tool.pybasic]\nstartup = "Main"\n\n[tool.other]\na = 1\n'),
-        ('[tool.pybasic]\nstartup = "Old"  # comment\ntheme = "x"\n', '[tool.pybasic]\nstartup = "Main"\ntheme = "x"\n'),
-        ('[tool.pybasic]\nstartup="Old"\n[[tool.pybasic.plugins]]\nname = "p"\n',
-         '[tool.pybasic]\nstartup = "Main"\n[[tool.pybasic.plugins]]\nname = "p"\n'),
+        ('[project]\nname = "x"\n', '[project]\nname = "x"\n\n[tool.readymade]\nstartup = "Main"\n'),
+        ('[tool.readymade]\n\n[tool.other]\na = 1\n', '[tool.readymade]\nstartup = "Main"\n\n[tool.other]\na = 1\n'),
+        ('[tool.readymade]\nstartup = "Old"  # comment\ntheme = "x"\n', '[tool.readymade]\nstartup = "Main"\ntheme = "x"\n'),
+        ('[tool.readymade]\nstartup="Old"\n[[tool.readymade.plugins]]\nname = "p"\n',
+         '[tool.readymade]\nstartup = "Main"\n[[tool.readymade.plugins]]\nname = "p"\n'),
     ],
 )
 def test_set_setting_edits_only_that_line(before, after):
@@ -79,13 +79,13 @@ def test_set_setting_edits_only_that_line(before, after):
 
 @needs_tomllib
 def test_removing_and_escaping_settings():
-    text = '[tool.pybasic]\nstartup = "Main"\npython = "x"\n\n[tool.other]\n'
-    assert set_setting(text, "python", None) == '[tool.pybasic]\nstartup = "Main"\n\n[tool.other]\n'
+    text = '[tool.readymade]\nstartup = "Main"\npython = "x"\n\n[tool.other]\n'
+    assert set_setting(text, "python", None) == '[tool.readymade]\nstartup = "Main"\n\n[tool.other]\n'
     assert set_setting('[project]\n', "python", None) == '[project]\n'
     windows = set_setting(text, "python", r"C:\envs\app\python.exe")
     assert 'python = "C:\\\\envs\\\\app\\\\python.exe"' in windows
     import tomllib
-    assert tomllib.loads(windows)["tool"]["pybasic"]["python"] == r"C:\envs\app\python.exe"
+    assert tomllib.loads(windows)["tool"]["readymade"]["python"] == r"C:\envs\app\python.exe"
 
 
 @needs_tomllib
@@ -115,24 +115,24 @@ def test_choosing_the_interpreter(tmp_path):
 @needs_tomllib
 def test_interpreter_choices_are_per_machine_and_kept_out_of_git(tmp_path, monkeypatch):
     project = Project.create(tmp_path / "p")
-    monkeypatch.setattr("pybasic.project._machine", lambda: "MYPC win32")
+    monkeypatch.setattr("readymade.project._machine", lambda: "MYPC win32")
     project.set_local_setting("python", "D:/miniforge3/envs/app/python.exe")  # as the IDE on Windows stores it
-    monkeypatch.setattr("pybasic.project._machine", lambda: "MYPC linux")  # WSL, same folder
+    monkeypatch.setattr("readymade.project._machine", lambda: "MYPC linux")  # WSL, same folder
     assert project.python() is None  # Windows' choice isn't used here
     project.set_python(tmp_path / "envs" / "app" / "bin" / "python")
-    machines = json.loads((project.folder / ".pybasic" / "local.json").read_text())["machines"]
+    machines = json.loads((project.folder / ".readymade" / "local.json").read_text())["machines"]
     assert machines == {
         "MYPC win32": {"python": "D:/miniforge3/envs/app/python.exe"},
         "MYPC linux": {"python": (tmp_path / "envs" / "app" / "bin" / "python").as_posix()},
     }
-    assert (project.folder / ".pybasic" / ".gitignore").read_text().splitlines()[-1] == "*"
+    assert (project.folder / ".readymade" / ".gitignore").read_text().splitlines()[-1] == "*"
     assert project.setting("python") is None  # nothing machine-specific in the shared pyproject.toml
 
 
 def test_a_broken_local_settings_file_is_reported(tmp_path):
     project = Project.create(tmp_path / "p")
-    (project.folder / ".pybasic").mkdir()
-    (project.folder / ".pybasic" / "local.json").write_text("{not json")
+    (project.folder / ".readymade").mkdir()
+    (project.folder / ".readymade" / "local.json").write_text("{not json")
     with pytest.raises(ProjectError, match="local.json"):
         project.python()
 
@@ -151,13 +151,13 @@ def make_two_form_project(folder):
         design.controls += [REGISTRY[t].new_spec(n, 8, 8 + 32 * i) for i, (t, n) in enumerate(controls)]
         formfile.save(design, project.folder / f"{name}.form")
     (project.folder / "Main.py").write_text(
-        "from pybasic import Form, forms\n\n\nclass Main(Form):\n"
+        "from readymade import Form, forms\n\n\nclass Main(Form):\n"
         "    def Ask_click(self):\n"
         "        forms.Dialog.show(modal=True)\n"
         "        self.Answer.text = f'result: {forms.Dialog.result}'\n"
     )
     (project.folder / "Dialog.py").write_text(
-        "from pybasic import Form\n\n\nclass Dialog(Form):\n"
+        "from readymade import Form\n\n\nclass Dialog(Form):\n"
         "    def Form_load(self):\n        self.result = None\n\n"
         "    def OK_click(self):\n        self.result = 'ok'\n        self.close()\n"
     )
@@ -169,7 +169,7 @@ def test_modal_dialog_and_ending_when_the_last_form_closes(tmp_path):
     project = make_two_form_project(tmp_path / "p")
     env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONUNBUFFERED="1")
     process = subprocess.Popen(
-        [sys.executable, "-m", "pybasic.run", "--immediate", "--startup", "Main", str(project.folder)],
+        [sys.executable, "-m", "readymade.run", "--immediate", "--startup", "Main", str(project.folder)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
     )
     output = queue.Queue()
@@ -240,9 +240,9 @@ def test_default_and_explicit_instances(tmp_path, monkeypatch):
     [
         ('[project]\nname = "x"\n', '[project]\ndependencies = ["rich"]\nname = "x"\n'),
         ('[project]\ndependencies = []\n', '[project]\ndependencies = [\n    "rich",\n]\n'),
-        ('[project]\ndependencies = [\n  "Rich==13",  # pinned, ] in a comment\n  "requests[socks]>=2",\n]\n\n[tool.pybasic]\n',
-         '[project]\ndependencies = [\n    "requests[socks]>=2",\n    "rich",\n]\n\n[tool.pybasic]\n'),
-        ('[tool.pybasic]\n', '[tool.pybasic]\n\n[project]\ndependencies = ["rich"]\n'),
+        ('[project]\ndependencies = [\n  "Rich==13",  # pinned, ] in a comment\n  "requests[socks]>=2",\n]\n\n[tool.readymade]\n',
+         '[project]\ndependencies = [\n    "requests[socks]>=2",\n    "rich",\n]\n\n[tool.readymade]\n'),
+        ('[tool.readymade]\n', '[tool.readymade]\n\n[project]\ndependencies = ["rich"]\n'),
     ],
 )
 @needs_tomllib

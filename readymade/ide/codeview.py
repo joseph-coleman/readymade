@@ -1,0 +1,694 @@
+"""The code window: Object and Event dropdowns above a Python editor.
+
+Picking an object and event jumps to its handler, creating an empty one if
+it doesn't exist yet, the way VB's code window did. Events that already have
+a handler are marked with a check.
+"""
+
+from __future__ import annotations
+
+import re
+import tkinter as tk
+from tkinter import font as tkfont
+from tkinter import ttk
+
+from readymade import codegen
+from readymade.ide import highlight
+from readymade.ide.panels import MONO
+
+INDENT = codegen.INDENT  # four spaces; Tab never inserts a tab character
+_ERROR_COLOR = "#fff59d"
+_GUTTER, _NUMBER, _NUMBER_CURRENT = "#f0f0f0", "#999999", "#333333"
+_PROBLEM, _PROBLEM_BG = "#e51400", "#fdecea"
+_PAIRS = {"(": ")", "[": "]", "{": "}"}
+_QUOTES = ("'", '"')
+_CLOSE_BEFORE = set(")]}:;,.")  # a pair closes itself only before one of these, a space or the line's end
+_STRING_PREFIXES = {"", "r", "b", "f", "u", "rb", "br", "fr", "rf"}  # quotes after these still pair up
+_AUTO = "auto_closed"  # tags closers the editor added
+_ENDS_BLOCK = re.compile(r"(return|pass|break|continue|raise)\b")  # statements after which a block is done
+
+
+def _in_string(text):
+    """Whether the end of text is inside a string (on this line)."""
+    quote, i = None, 0
+    while i < len(text):
+        if quote:
+            if text[i] == "\\":
+                i += 2
+                continue
+            if text.startswith(quote, i):
+                i += len(quote)
+                quote = None
+                continue
+        elif text[i] in "\"'":
+            quote = text[i : i + 3] if text[i : i + 3] in ('"""', "'''") else text[i]
+            i += len(quote)
+            continue
+        i += 1
+    return quote is not None
+
+
+class CompletionList:
+    """The list of completions under the cursor. Typing narrows it; Up/Down choose;
+    Enter or Tab accepts; Escape, clicking elsewhere or leaving the window closes it."""
+
+    def __init__(self, code):
+        self.code = code
+        self.window = None
+        self.items = []
+        self.shown = []
+        self.start = None  # where the name being completed begins
+
+    def is_open(self):
+        return self.window is not None
+
+    def open(self, items, start):
+        self.items = items
+        self.start = start
+        if self.window is None:
+            self.window = tk.Toplevel(self.code)
+            self.window.overrideredirect(True)
+            self.listbox = tk.Listbox(self.window, font=MONO, activestyle="none", exportselection=False,
+                                      height=8, width=44, bg="white", highlightthickness=1)
+            self.listbox.pack(fill=tk.BOTH, expand=True)
+            self.listbox.bind("<Double-Button-1>", lambda e: self.accept())
+        self.refresh()
+
+    def refresh(self):
+        """Narrow the list to what's been typed, or close it if that's no longer a name."""
+        if self.window is None:
+            return
+        text = self.code.text
+        if text.compare("insert", "<", self.start) or text.index("insert").split(".")[0] != self.start.split(".")[0]:
+            return self.close()
+        typed = text.get(self.start, "insert")
+        if typed and not typed.isidentifier():
+            return self.close()
+        self.shown = sorted((c for c in self.items if c.name.lower().startswith(typed.lower())),
+                            key=lambda c: (c.name.startswith("_"), not c.name.startswith(typed)))
+        if not self.shown or (len(self.shown) == 1 and self.shown[0].name == typed):
+            return self.close()
+        chosen = self.listbox.curselection()
+        was = self.listbox.get(chosen[0]).split()[0] if chosen else None  # keep the choice if it's still there
+        names = [c.name for c in self.shown]
+        self.listbox.delete(0, tk.END)
+        for c in self.shown:
+            self.listbox.insert(tk.END, f"{c.name:<32}{c.kind}")
+        self.listbox.configure(height=min(8, len(self.shown)))
+        index = names.index(was) if was in names else 0
+        self.listbox.selection_set(index)
+        self.listbox.see(index)
+        place = text.bbox(self.start) or text.bbox("insert")
+        if place:
+            x, y, _, height = place
+            self.window.geometry(f"+{text.winfo_rootx() + x}+{text.winfo_rooty() + y + height}")
+            self.window.lift()
+
+    def move(self, step):
+        current = self.listbox.curselection()
+        index = max(0, min(len(self.shown) - 1, (current[0] if current else 0) + step))
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(index)
+        self.listbox.see(index)
+
+    def accept(self):
+        """Put the chosen name in place of what's been typed. False if the list wasn't open."""
+        if self.window is None:
+            return False
+        current = self.listbox.curselection()
+        if current:
+            name, text = self.shown[current[0]].name, self.code.text
+
+            def put():
+                text.delete(self.start, "insert")
+                text.insert(self.start, name)
+
+            self.code._one_step(put)
+        self.close()
+        return True
+
+    def close(self):
+        """Close the list. True if it was open."""
+        if self.window is None:
+            return False
+        self.window.destroy()
+        self.window = None
+        return True
+
+
+def _scan(line):
+    """(the line without its comment, the columns of brackets still open at its end).
+    Strings are skipped, so brackets, quotes and # inside them don't count."""
+    open_brackets, quote, i = [], None, 0
+    while i < len(line):
+        c = line[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if line.startswith(quote, i):
+                i += len(quote)
+                quote = None
+                continue
+        elif c == "#":
+            return line[:i], open_brackets
+        elif c in "\"'":
+            quote = line[i : i + 3] if line[i : i + 3] in ('"""', "'''") else c
+            i += len(quote)
+            continue
+        elif c in "([{":
+            open_brackets.append(i)
+        elif c in ")]}" and open_brackets:
+            open_brackets.pop()
+        i += 1
+    return line, open_brackets  # VB marked the current line in yellow
+_IMPLEMENTED = "  ✓"
+
+
+class CodeView(ttk.Frame):
+    """app is the editor this code belongs to. Modules have no objects, so no dropdowns."""
+
+    def __init__(self, master, app, objects=True):
+        super().__init__(master)
+        self.app = app
+        self._highlight_job = None
+        self._numbers_job = None
+        self.on_change = None  # called soon after typing stops (the IDE checks the code then)
+        self._change_job = None
+        self._problems = {}  # tool name -> [lint.Problem]
+        self._problem_tags = {}  # Text tag -> the Problem it underlines
+
+        bar = ttk.Frame(self, padding=(0, 2))
+        if objects:
+            bar.pack(fill=tk.X)
+        self.objects = ttk.Combobox(bar, state="readonly", width=24)
+        self.objects.pack(side=tk.LEFT)
+        self.objects.bind("<<ComboboxSelected>>", lambda e: self._refresh_events())
+        self.events = ttk.Combobox(bar, state="readonly", width=24, postcommand=self._refresh_events)
+        self.events.pack(side=tk.LEFT, padx=(4, 0))
+        self.events.bind("<<ComboboxSelected>>", self._event_chosen)
+
+        # Shown above the code while a run-time error is being pointed out.
+        self.error_bar = tk.Label(self, bg=_ERROR_COLOR, anchor="w", padx=6, pady=2)
+        body = ttk.Frame(self)
+        self._body = body
+        body.pack(fill=tk.BOTH, expand=True)
+        self.text = tk.Text(body, font=MONO, undo=True, wrap="none")
+        yscroll = ttk.Scrollbar(body, command=self.text.yview)
+        xscroll = ttk.Scrollbar(body, orient=tk.HORIZONTAL, command=self.text.xview)
+        # Scrolling also moves the line numbers.
+        self.text.configure(yscrollcommand=lambda *a: (yscroll.set(*a), self._show_numbers()), xscrollcommand=xscroll.set)
+        yscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        xscroll.pack(side=tk.BOTTOM, fill=tk.X)
+        self.gutter = tk.Canvas(body, width=1, highlightthickness=0, bd=0, bg=_GUTTER)
+        self.gutter.pack(side=tk.LEFT, fill=tk.Y)
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        for tag, color in highlight.COLORS.items():
+            self.text.tag_configure(tag, foreground=color)
+        self.text.tag_configure("error", background=_ERROR_COLOR)
+        # Messages for problems on the cursor's line, under the code.
+        self.problem_bar = tk.Label(self, anchor="w", padx=6, pady=1, bg=_PROBLEM_BG, fg=_PROBLEM)
+        try:
+            self.text.tag_configure("problem", underline=True, underlinefg=_PROBLEM)
+            self._underline = {"underline": True, "underlinefg": _PROBLEM}
+        except tk.TclError:  # a Tk before 8.6.6 can't colour underlines
+            self._underline = {"underline": True}
+        self.text.tag_raise("sel")
+
+        # Let the window's shortcuts (Ctrl+O, F5, ...) run before Text's own key bindings.
+        self.text.bindtags((str(self.text), str(self.winfo_toplevel()), "Text", "all"))
+        self.text.bind("<<Modified>>", self._on_modified)
+        self.text.bind("<Return>", self._newline)
+        # Indentation, as in other editors: always spaces, one undo step each.
+        self.text.bind("<Tab>", self._tab)
+        for sequence in ("<Shift-Tab>", "<ISO_Left_Tab>"):  # Shift+Tab arrives as ISO_Left_Tab on X11
+            try:
+                self.text.bind(sequence, self._dedent)
+            except tk.TclError:  # a keysym this platform's Tk doesn't know
+                pass
+        self.text.bind("<BackSpace>", self._backspace)
+        self.text.bind("<Control-slash>", self.toggle_comment)  # (Text's own Ctrl+/ selects everything)
+        # Brackets and quotes close themselves.
+        for keysym, opener in (("parenleft", "("), ("bracketleft", "["), ("braceleft", "{")):
+            self.text.bind(f"<KeyPress-{keysym}>", lambda e, o=opener: self._open(o))
+        for keysym, closer in (("parenright", ")"), ("bracketright", "]"), ("braceright", "}")):
+            self.text.bind(f"<KeyPress-{keysym}>", lambda e, c=closer: self._step_over(c))
+        for keysym, quote in (("quotedbl", '"'), ("apostrophe", "'")):
+            self.text.bind(f"<KeyPress-{keysym}>", lambda e, q=quote: self._quote(q))
+        for sequence in ("<ButtonRelease-1>", "<Prior>", "<Next>"):  # the cursor went elsewhere
+            self.text.bind(sequence, lambda e: self.text.tag_remove(_AUTO, "1.0", tk.END), add="+")
+        # Completion (the IDE answers on_complete) and Go to Definition (on_goto).
+        self.on_complete = None  # on_complete(code, manual) asks for completions at the cursor
+        self.on_goto = None  # on_goto(code, index) goes to the definition of the name there
+        self.completions = CompletionList(self)
+        self.text.bind("<Up>", lambda e: self._up_down(-1))
+        self.text.bind("<Down>", lambda e: self._up_down(1))
+        self.text.bind("<Escape>", lambda e: "break" if self.completions.close() else None)
+        self.text.bind("<Control-space>", lambda e: self._ask_completions(manual=True))
+        self.text.bind("<KeyRelease>", self._key_released, add="+")
+        self.text.bind("<FocusOut>", lambda e: self.completions.close(), add="+")
+        self.text.bind("<ButtonPress-1>", lambda e: self.completions.close(), add="+")
+        self.text.bind("<Control-Button-1>", self._control_click)
+        for sequence in ("<Configure>", "<KeyRelease>", "<ButtonRelease-1>"):  # resized, or the cursor moved
+            self.text.bind(sequence, lambda e: self._show_numbers(), add="+")
+
+    # ----- source -----
+
+    def get_source(self):
+        return self.text.get("1.0", "end-1c")
+
+    def set_source(self, source):
+        """Load new source, clearing undo history."""
+        self.text.delete("1.0", tk.END)
+        self.text.insert("1.0", source)
+        self.text.edit_reset()
+        self.text.mark_set("insert", "1.0")
+        self.highlight()
+
+    def replace_source(self, source):
+        """Replace the source as one undoable step, keeping the scroll position."""
+        if source == self.get_source():
+            return
+        top = self.text.yview()[0]
+
+        def replace():
+            self.text.delete("1.0", tk.END)
+            self.text.insert("1.0", source)
+
+        # One step: on its own, Tk starts a new undo step when deleting turns into inserting.
+        self._one_step(replace)
+        self.text.yview_moveto(top)
+
+    def replace_keeping_place(self, source):
+        """Replace all the code (one undo step), keeping the cursor's line and column, e.g. after formatting."""
+        place = self.text.index("insert")
+        self.replace_source(source)
+        self.text.mark_set("insert", place)  # Tk keeps it within the new text
+        self.text.see("insert")
+
+    def apply_edit(self, edit):
+        self.text.edit_separator()
+        self.text.delete(f"{edit.start + 1}.0", f"{edit.end + 1}.0")
+        self.text.insert(f"{edit.start + 1}.0", edit.text)
+        self.text.edit_separator()
+
+    # ----- navigation -----
+
+    def refresh_objects(self):
+        self.objects["values"] = self.app.code_objects()
+
+    def show_method(self, obj, event, def_line):
+        """Put the cursor in the method body. A placeholder `pass` is selected so typing replaces it."""
+        self.objects.set(obj)
+        self._refresh_events()
+        self.events.set(event)
+        body = def_line + 1
+        line = self.text.get(f"{body}.0", f"{body}.end")
+        indent = len(line) - len(line.lstrip())
+        self.text.tag_remove("sel", "1.0", tk.END)
+        self.text.mark_set("insert", f"{body}.{indent}")
+        if line.strip() == "pass":
+            self.text.tag_add("sel", "insert", "insert lineend")
+        self.text.see("insert")
+        self.text.focus_set()
+
+    def _refresh_events(self):
+        obj = self.objects.get()
+        defined = codegen.defined_methods(self.get_source())
+        self.events["values"] = [
+            e.name + (_IMPLEMENTED if f"{obj}_{e.name}" in defined else "") for e in self.app.events_for(obj)
+        ]
+
+    def _event_chosen(self, _):
+        event = self.events.get().removesuffix(_IMPLEMENTED)
+        self.app.goto_handler(self.objects.get(), event)
+
+    # ----- editing -----
+
+    def _insert(self, text):
+        if self.text.tag_ranges("sel"):
+            self.text.delete("sel.first", "sel.last")
+        self.text.insert("insert", text)
+        self.text.see("insert")
+        return "break"
+
+    def _selected_lines(self):
+        """The first and last line numbers of the selection, or None. A selection that ends
+        at the very start of a line doesn't include that line."""
+        if not self.text.tag_ranges("sel"):
+            return None
+        first = int(self.text.index("sel.first").split(".")[0])
+        last_line, last_column = map(int, self.text.index("sel.last").split("."))
+        return first, (last_line - 1 if last_column == 0 and last_line > first else last_line)
+
+    def _one_step(self, change):
+        """Make a change of several edits undo in one step."""
+        self.text.configure(autoseparators=False)
+        self.text.edit_separator()
+        try:
+            change()
+        finally:
+            self.text.edit_separator()
+            self.text.configure(autoseparators=True)
+
+    def _tab(self, _):
+        if self.completions.accept():
+            return "break"
+        lines = self._selected_lines()
+        if lines and (lines[0] != lines[1] or self._whole_line_selected(lines[0])):
+            first, last = lines
+
+            def indent():
+                for n in range(first, last + 1):
+                    if self.text.get(f"{n}.0", f"{n}.end").strip():  # blank lines stay empty
+                        self.text.insert(f"{n}.0", INDENT)
+
+            self._one_step(indent)
+            self._select_lines(first, last)
+            return "break"
+        start = "sel.first" if self.text.tag_ranges("sel") else "insert"  # where the spaces will begin
+        column = int(self.text.index(start).split(".")[1])
+        return self._insert(" " * (len(INDENT) - column % len(INDENT)))  # to the next tab stop
+
+    def _dedent(self, _):
+        lines = self._selected_lines()
+        first, last = lines if lines else (int(self.text.index("insert").split(".")[0]),) * 2
+
+        def remove():
+            for n in range(first, last + 1):
+                line = self.text.get(f"{n}.0", f"{n}.end")
+                spaces = len(line) - len(line.lstrip(" "))
+                width = 1 if line.startswith("\t") else min(spaces, len(INDENT))
+                if width:
+                    self.text.delete(f"{n}.0", f"{n}.{width}")
+
+        self._one_step(remove)
+        if lines:
+            self._select_lines(first, last)
+        return "break"
+
+    def _backspace(self, _):
+        """Backspace between a pair the editor just made, like (|), deletes both. In a line's
+        leading spaces, it goes back to the previous tab stop."""
+        if self.text.tag_ranges("sel"):
+            return None
+        before, after = self.text.get("insert -1c"), self.text.get("insert")
+        closer = _PAIRS.get(before) or (before if before in _QUOTES else None)
+        if closer == after and _AUTO in self.text.tag_names("insert"):
+            self.text.delete("insert -1c", "insert +1c")
+            return "break"
+        before = self.text.get("insert linestart", "insert")
+        if not before or before.strip(" "):
+            return None  # not in the indentation: the usual Backspace
+        width = len(before) % len(INDENT) or len(INDENT)
+        self.text.delete(f"insert -{width}c", "insert")
+        return "break"
+
+    # ----- brackets and quotes -----
+
+    def _open(self, opener):
+        if self.text.tag_ranges("sel"):
+            return self._wrap(opener, _PAIRS[opener])
+        if not self._closing_fits():
+            return None  # e.g. before a word: just the opener
+        return self._insert_pair(opener, _PAIRS[opener])
+
+    def _step_over(self, closer):
+        """Typing a closer the editor added steps over it rather than adding another."""
+        if not self.text.tag_ranges("sel") and self.text.get("insert") == closer and _AUTO in self.text.tag_names("insert"):
+            self.text.tag_remove(_AUTO, "insert")
+            self.text.mark_set("insert", "insert +1c")
+            return "break"
+        return None
+
+    def _quote(self, quote):
+        if self.text.tag_ranges("sel"):
+            return self._wrap(quote, quote)
+        if self._step_over(quote):
+            return "break"
+        before = self.text.get("insert linestart", "insert")
+        if before.endswith(quote * 2) and not before.endswith(quote * 3) and self._closing_fits():
+            return self._insert_pair(quote, quote * 3)  # the third quote of a docstring: """|"""
+        word = re.search(r"\w*$", before).group()
+        if word.lower() not in _STRING_PREFIXES or not self._closing_fits():
+            return None  # e.g. the apostrophe in don't
+        return self._insert_pair(quote, quote)
+
+    def _closing_fits(self):
+        after = self.text.get("insert")
+        return after.isspace() or after in _CLOSE_BEFORE
+
+    def _insert_pair(self, opener, closer):
+        self.text.insert("insert", opener + closer)
+        self.text.tag_add(_AUTO, f"insert -{len(closer)}c", "insert")  # so it can be stepped over or deleted with the opener
+        self.text.mark_set("insert", f"insert -{len(closer)}c")
+        self.text.see("insert")
+        return "break"
+
+    def _wrap(self, opener, closer):
+        """Put the selection inside the pair, keeping it selected."""
+        def wrap():
+            # Text inserted at either edge of the selection isn't selected, so it stays on the text.
+            self.text.insert("sel.first", opener)
+            self.text.insert("sel.last", closer)
+
+        self._one_step(wrap)
+        self.text.mark_set("insert", "sel.last")
+        return "break"
+
+    # ----- completion and Go to Definition -----
+
+    def word_start(self):
+        """Where the name being typed at the cursor begins (the cursor itself after a ".")."""
+        before = self.text.get("insert linestart", "insert")
+        typed = re.search(r"[A-Za-z_]\w*$", before)
+        return self.text.index(f"insert -{len(typed.group())}c") if typed else self.text.index("insert")
+
+    def _ask_completions(self, manual=False):
+        if self.on_complete and str(self.text.cget("state")) != "disabled":
+            self.on_complete(self, manual)
+        return "break"
+
+    def _key_released(self, e):
+        if self.completions.is_open():
+            self.completions.refresh()
+        elif e.keysym == "period" or (e.char and (e.char.isalnum() or e.char == "_") and self._typed_enough()):
+            self._ask_completions()
+
+    def _typed_enough(self):
+        """Offer completions once three letters of a name are typed (not in a comment or string)."""
+        before = self.text.get("insert linestart", "insert")
+        code, _ = _scan(before)
+        typed = re.search(r"[A-Za-z_]\w*$", before)
+        return len(code) == len(before) and typed is not None and len(typed.group()) == 3 and not _in_string(before)
+
+    def _up_down(self, step):
+        if self.completions.is_open():
+            self.completions.move(step)
+            return "break"
+        self.text.tag_remove(_AUTO, "1.0", tk.END)  # the cursor went elsewhere
+        return None
+
+    def _control_click(self, e):
+        if self.on_goto:
+            self.on_goto(self, self.text.index(f"@{e.x},{e.y}"))
+        return "break"
+
+    def show_location(self, line, column, length=0):
+        """Put the cursor at a line and column, selecting a name there."""
+        self.text.tag_remove("sel", "1.0", tk.END)
+        self.text.mark_set("insert", f"{line}.{column}")
+        if length:
+            self.text.tag_add("sel", "insert", f"insert +{length}c")
+        self.text.see("insert")
+        self.text.focus_set()
+
+    def toggle_comment(self, _=None):
+        """Comment the selected lines (or the current one) out, or back in if they all are.
+        New # marks line up at the block's shallowest indentation; blank lines are left alone."""
+        lines = self._selected_lines()
+        first, last = lines if lines else (int(self.text.index("insert").split(".")[0]),) * 2
+        code = {n: line for n in range(first, last + 1) if (line := self.text.get(f"{n}.0", f"{n}.end")).strip()}
+        if not code:
+            return "break"
+        indent = {n: len(line) - len(line.lstrip()) for n, line in code.items()}
+        commented = all(line.lstrip().startswith("#") for line in code.values())
+
+        def change():
+            for n, line in code.items():
+                if commented:
+                    at = indent[n]
+                    self.text.delete(f"{n}.{at}", f"{n}.{at + (2 if line[at:at + 2] == '# ' else 1)}")
+                else:
+                    self.text.insert(f"{n}.{min(indent.values())}", "# ")
+
+        self._one_step(change)
+        if lines:
+            self._select_lines(first, last)
+        return "break"
+
+    def _changed(self):
+        self._change_job = None
+        if self.on_change:
+            self.on_change()
+
+    # ----- problems found by lint tools -----
+
+    def set_problems(self, tool, problems):
+        """Show a lint tool's latest problems (replacing its earlier ones)."""
+        self._problems[tool] = list(problems)
+        self._mark_problems()
+
+    def keep_problems_of(self, tools):
+        """Forget the problems of tools no longer in use."""
+        if set(self._problems) - set(tools):
+            self._problems = {t: p for t, p in self._problems.items() if t in tools}
+            self._mark_problems()
+
+    def problems(self):
+        return [problem for found in self._problems.values() for problem in found]
+
+    def _mark_problems(self):
+        """Underline each problem's word. Tags move with the text, so marks stay put while editing."""
+        for tag in self._problem_tags:
+            self.text.tag_delete(tag)
+        self._problem_tags = {}
+        lines = int(self.text.index("end-1c").split(".")[0])
+        for i, problem in enumerate(self.problems()):
+            if problem.line > lines:
+                continue
+            start = self.text.index(f"{problem.line}.{problem.column}")
+            end = self.text.index(f"{start} wordend") if self.text.get(start).isalnum() or self.text.get(start) == "_" else f"{start} +1c"
+            tag = f"problem{i}"
+            self.text.tag_add(tag, start, end)
+            self.text.tag_configure(tag, **self._underline)
+            self._problem_tags[tag] = problem
+        self.text.tag_raise("sel")
+        self._show_numbers()
+
+    def _problem_lines(self):
+        return {tag: int(self.text.index(f"{tag}.first").split(".")[0])
+                for tag in self._problem_tags if self.text.tag_ranges(tag)}
+
+    def _show_problems_here(self, current):
+        here = [f"{self._problem_tags[tag].tool}: {self._problem_tags[tag].message}"
+                for tag, line in self._problem_lines().items() if line == current]
+        if here:
+            self.problem_bar.configure(text="   \u2022   ".join(here))
+            self.problem_bar.pack(side=tk.BOTTOM, fill=tk.X, before=self._body)
+        else:
+            self.problem_bar.pack_forget()
+
+    # ----- line numbers -----
+
+    def _show_numbers(self):
+        """Redraw the line numbers once things settle (many events can ask for it at once)."""
+        if self._numbers_job is None:
+            self._numbers_job = self.after_idle(self._draw_numbers)
+
+    def _draw_numbers(self):
+        self._numbers_job = None
+        self.gutter.delete("all")
+        lines = int(self.text.index("end-1c").split(".")[0])
+        width = tkfont.nametofont(MONO).measure("0" * max(2, len(str(lines)))) + 18  # room for a problem mark
+        if int(self.gutter.cget("width")) != width:
+            self.gutter.configure(width=width)
+        current = int(self.text.index("insert").split(".")[0])
+        problem_lines = set(self._problem_lines().values())
+        self._show_problems_here(current)
+        index = self.text.index("@0,0")  # the first line in view
+        while (place := self.text.dlineinfo(index)) is not None:
+            n = int(index.split(".")[0])
+            self.gutter.create_text(width - 6, place[1], anchor="ne", text=str(n), font=MONO,
+                                    fill=_NUMBER_CURRENT if n == current else _NUMBER)
+            if n in problem_lines:
+                middle = place[1] + place[3] // 2
+                self.gutter.create_oval(3, middle - 3, 9, middle + 3, fill=_PROBLEM, outline="", tags="problem")
+            following = self.text.index(f"{index} +1line")
+            if following == index:
+                break  # the last line
+            index = following
+
+    def _whole_line_selected(self, n):
+        return self.text.index("sel.first") == f"{n}.0" and self.text.compare("sel.last", ">=", f"{n}.0 lineend")
+
+    def _select_lines(self, first, last):
+        self.text.tag_remove("sel", "1.0", tk.END)
+        self.text.tag_add("sel", f"{first}.0", f"{last + 1}.0")
+        self.text.mark_set("insert", f"{last + 1}.0")
+
+    def _newline(self, _):
+        """Enter, with the next line indented to suit what's before the cursor (one undo step)."""
+        if self.completions.accept():
+            return "break"
+        if self.text.tag_ranges("sel"):
+            self.text.delete("sel.first", "sel.last")
+        before = self.text.get("insert linestart", "insert")
+        after = self.text.get("insert", "insert lineend")
+        base = before[: len(before) - len(before.lstrip())]
+        code, open_brackets = _scan(before)
+        code = code.rstrip()
+        between_pair = before[-1:] in _PAIRS and after[:1] == _PAIRS[before[-1]]
+        if between_pair:
+            indent = base  # the closer's line; the cursor goes on an indented line above it
+        elif open_brackets:
+            column = open_brackets[-1]
+            # A bracket ending the line: one level in. Code after it: line up just after the bracket.
+            indent = base + INDENT if column == len(code) - 1 else " " * (column + 1)
+        elif code.endswith(":"):
+            indent = base + INDENT
+        elif _ENDS_BLOCK.match(code.lstrip()):
+            indent = base[: max(0, len(base) - len(INDENT))]  # nothing more can follow in this block
+        else:
+            indent = base
+
+        def change():
+            spaces_after = len(after) - len(after.lstrip(" "))
+            if spaces_after:
+                self.text.delete("insert", f"insert +{spaces_after}c")  # the rest of the line starts at the indent
+            if not before.strip():
+                self.text.delete("insert linestart", "insert")  # a line of only spaces is left empty
+            if between_pair:
+                self.text.insert("insert", "\n" + indent + INDENT + "\n" + indent)
+                self.text.mark_set("insert", f"insert -{len(indent) + 1}c")
+            else:
+                self.text.insert("insert", "\n" + indent)
+
+        self._one_step(change)
+        self.text.see("insert")
+        return "break"
+
+    def show_error(self, line, message):
+        """Highlight the line where a run-time error happened, with its message above the code."""
+        self.clear_error()
+        self.text.tag_add("error", f"{line}.0", f"{line}.0 lineend +1c")
+        self.text.mark_set("insert", f"{line}.0")
+        self.text.see(f"{line}.0")
+        self.error_bar.configure(text=f"Line {line}: {message}")
+        self.error_bar.pack(fill=tk.X, before=self._body)
+
+    def clear_error(self):
+        self.text.tag_remove("error", "1.0", tk.END)
+        self.error_bar.pack_forget()
+
+    def _on_modified(self, _):
+        if not self.text.edit_modified():
+            return
+        self.text.edit_modified(False)
+        self.clear_error()  # once the code changes, the error may no longer be there
+        self._show_numbers()
+        if self.on_change:
+            if self._change_job:
+                self.after_cancel(self._change_job)
+            self._change_job = self.after(800, self._changed)
+        if self._highlight_job:
+            self.after_cancel(self._highlight_job)
+        self._highlight_job = self.after(200, self.highlight)
+        self.app.update_title()
+
+    def highlight(self):
+        self._highlight_job = None
+        for tag in highlight.COLORS:
+            self.text.tag_remove(tag, "1.0", tk.END)
+        for tag, start, end in highlight.spans(self.get_source()):
+            self.text.tag_add(tag, start, end)

@@ -4,8 +4,8 @@ import tkinter as tk
 
 import pytest
 
-from pybasic import Form, formfile
-from pybasic.controls import REGISTRY
+from readymade import Form, formfile
+from readymade.controls import REGISTRY
 
 pytestmark = pytest.mark.usefixtures("display")
 
@@ -205,7 +205,7 @@ def test_mouse_events_say_where_and_which_shape(make_form):
 
 
 def test_new_handler_gets_the_events_parameters():
-    from pybasic import codegen
+    from readymade import codegen
 
     module = codegen.new_module("Form1")
     source = codegen.add_method(module, "Form1", "Canvas1_click", ("x", "y", "shape")).apply(module)
@@ -215,7 +215,7 @@ def test_new_handler_gets_the_events_parameters():
 def test_designing_a_canvas(tmp_path, monkeypatch):
     from tkinter import messagebox
 
-    from pybasic.ide.app import App
+    from readymade.ide.app import App
 
     root = tk.Tk()
     app = App(root, tmp_path / "Drawing")

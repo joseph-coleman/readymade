@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from pybasic.ide import highlight
+from readymade.ide import highlight
 
 SAMPLE = '''@property
 def area(self, n=3):

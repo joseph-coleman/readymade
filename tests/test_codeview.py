@@ -5,7 +5,7 @@ import types
 
 import pytest
 
-from pybasic.ide.codeview import CodeView
+from readymade.ide.codeview import CodeView
 
 pytestmark = pytest.mark.usefixtures("display")
 

@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from pybasic import Form, codegen, doevents, formfile, in_thread, pause, while_running
-from pybasic.controls import REGISTRY
-from pybasic.events import Handler, policy_for
-from pybasic.form import app_root
+from readymade import Form, codegen, doevents, formfile, in_thread, pause, while_running
+from readymade.controls import REGISTRY
+from readymade.events import Handler, policy_for
+from readymade.form import app_root
 
 pytestmark = pytest.mark.usefixtures("display")
 ROOT = Path(__file__).parent.parent
@@ -215,14 +215,14 @@ def test_in_thread(tmp_path, forms_made):
 def test_the_program_ends_when_its_last_form_closes_even_mid_thread(tmp_path):
     formfile.save(formfile.FormDesign(name="Form1"), tmp_path / "Form1.form")
     (tmp_path / "Form1.py").write_text(
-        "import time\nfrom pybasic import Form, in_thread\n\n\nclass Form1(Form):\n"
+        "import time\nfrom readymade import Form, in_thread\n\n\nclass Form1(Form):\n"
         "    async def Form_load(self):\n"
         "        self.root.after(200, self.close)\n"
         "        await in_thread(time.sleep, 30)\n"
     )
     env = dict(os.environ, PYTHONPATH=str(ROOT))
     start = time.time()
-    result = subprocess.run([sys.executable, "-m", "pybasic.run", "--startup", "Form1", str(tmp_path)],
+    result = subprocess.run([sys.executable, "-m", "readymade.run", "--startup", "Form1", str(tmp_path)],
                             capture_output=True, text=True, env=env, timeout=20)
     assert result.returncode == 0, result.stderr
     assert time.time() - start < 10 and "Traceback" not in result.stderr
@@ -239,7 +239,7 @@ def test_garbage_is_collected_on_the_gui_thread_while_a_window_runs():
     import gc
     import tkinter as tk
 
-    from pybasic.events import collect_garbage_on
+    from readymade.events import collect_garbage_on
 
     root = tk.Tk()
     collect_garbage_on(root, every=10)

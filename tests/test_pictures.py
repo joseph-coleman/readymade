@@ -10,11 +10,11 @@ from tkinter import filedialog
 
 import pytest
 
-from pybasic import Form, app_path, formfile, package, pictures
-from pybasic import form as form_module
-from pybasic.controls import REGISTRY
-from pybasic.ide.editors import bring_in
-from pybasic.project import Project
+from readymade import Form, app_path, formfile, package, pictures
+from readymade import form as form_module
+from readymade.controls import REGISTRY
+from readymade.ide.editors import bring_in
+from readymade.project import Project
 
 pytestmark = pytest.mark.usefixtures("display")
 
@@ -197,12 +197,12 @@ def test_app_path(tmp_path, monkeypatch):
 def test_running_a_project_sets_app_path(tmp_path):
     project = Project.create(tmp_path / "Shop")
     (project.folder / "Form1.py").write_text(
-        "from pybasic import Form, app_path\n\n\nclass Form1(Form):\n"
+        "from readymade import Form, app_path\n\n\nclass Form1(Form):\n"
         "    def Form_load(self):\n        print('APP', app_path())\n        self.close()\n",
         encoding="utf-8")
     root = Path(__file__).parent.parent
     env = dict(os.environ, PYTHONPATH=str(root))
-    done = subprocess.run([sys.executable, "-m", "pybasic.run", str(project.folder)], cwd=tmp_path,
+    done = subprocess.run([sys.executable, "-m", "readymade.run", str(project.folder)], cwd=tmp_path,
                           env=env, capture_output=True, text=True, timeout=30, check=False)
     assert f"APP {project.folder}" in done.stdout, done.stderr
 
@@ -234,7 +234,7 @@ def test_make_exe_bundles_pictures_and_included_files(tmp_path):
     ]
     assert missing == ["Main.Gone.picture: images/gone.png", "include: nothing/*.x"]
     launcher = package.write_launcher(project, "Main")
-    args = package.pyinstaller_args(project, launcher, "/opt/pybasic")
+    args = package.pyinstaller_args(project, launcher, "/opt/readymade")
     assert f"{folder / 'images' / 'logo.png'}{os.pathsep}images" in args
 
 
@@ -252,7 +252,7 @@ def test_bring_in_copies_outside_files_into_images(tmp_path):
 
 
 def test_choosing_a_picture_in_the_designer(tmp_path, monkeypatch):
-    from pybasic.ide.app import App
+    from readymade.ide.app import App
 
     picture = write_png(tmp_path / "Pictures" / "cat.png", 16, 16)
     root = tk.Tk()

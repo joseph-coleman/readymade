@@ -8,16 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from pybasic import formfile
-from pybasic.form import FORM
-from pybasic.ide.editors import MULTIPLE
+from readymade import formfile
+from readymade.form import FORM
+from readymade.ide.editors import MULTIPLE
 
 pytestmark = pytest.mark.usefixtures("display")
 
 
 @pytest.fixture
 def app(tmp_path):
-    from pybasic.ide.app import App
+    from readymade.ide.app import App
 
     root = tk.Tk()
     app = App(root, tmp_path / "Hello")  # a new project
@@ -101,7 +101,7 @@ def test_run_and_talk_to_the_program(app):
 
 
 def test_relative_path_is_stored_absolute(tmp_path, monkeypatch):
-    from pybasic.ide.app import App
+    from readymade.ide.app import App
 
     monkeypatch.chdir(tmp_path)
     root = tk.Tk()
@@ -376,7 +376,7 @@ def write_code(app, name, code):
 def test_run_time_error_is_shown_at_its_line(app):
     app.form.add_control("Button", 8, 8)
     app.save()
-    write_code(app, "Form1", "from pybasic import Form\n\n\nclass Form1(Form):\n"
+    write_code(app, "Form1", "from readymade import Form\n\n\nclass Form1(Form):\n"
                "    def Button1_click(self):\n        total = 0\n        self.text = str(1 / total)\n")
     app.open_form("Form1", "design")
     app.run()
@@ -401,7 +401,7 @@ def test_run_time_error_is_shown_at_its_line(app):
 def test_startup_errors_in_modules_open_the_module(app):
     app.project.add_module("helpers")
     write_code(app, "helpers", "def greeting():\n    return GREETING\n")
-    write_code(app, "Form1", "from pybasic import Form\nimport helpers\n\n\nclass Form1(Form):\n"
+    write_code(app, "Form1", "from readymade import Form\nimport helpers\n\n\nclass Form1(Form):\n"
                "    def Form_load(self):\n        self.text = helpers.greeting()\n")
     app.run()
     wait_for_exit(app)
@@ -804,7 +804,7 @@ def test_make_exe_installs_pyinstaller_then_builds(app, tmp_path):
     assert "pyinstaller" in calls[1]
     assert "--- Installing pyinstaller ---" in output and "INFO: Build complete!" in output
     assert f"--- Done: {app.project.folder / 'dist' / 'hello'} ---" in output
-    assert (app.project.folder / "build" / "pybasic" / "_pybasic_launcher.py").exists()
+    assert (app.project.folder / "build" / "readymade" / "_readymade_launcher.py").exists()
     assert app.project.dependencies == []  # a build tool, not something the program needs
 
 
@@ -847,9 +847,9 @@ def add_fake_linters(app, tmp_path):
     script = str(tmp_path / "fake_linter.py").replace("\\\\", "/")
     pyproject = app.project.pyproject
     pyproject.write_text(pyproject.read_text() + (
-        "\n[tool.pybasic.lint-tools.typing-check]\n"
+        "\n[tool.readymade.lint-tools.typing-check]\n"
         f'command = ["{{python}}", "{script}", "--stdin", "{{file}}"]\nstdin = true\n'
-        "\n[tool.pybasic.lint-tools.save-check]\n"
+        "\n[tool.readymade.lint-tools.save-check]\n"
         f'command = ["{{python}}", "{script}", "{{file}}"]\n'
     ))
 
@@ -863,7 +863,7 @@ def wait_for(app, condition, seconds=15):
 
 
 def test_problems_show_while_typing_and_after_saving(app, tmp_path):
-    from pybasic import lint
+    from readymade import lint
 
     add_fake_linters(app, tmp_path)
     lint.set_choices(app.project, ["typing-check"], ["save-check"])
@@ -892,7 +892,7 @@ def test_problems_show_while_typing_and_after_saving(app, tmp_path):
 
 
 def test_a_missing_tool_is_reported_once(app):
-    from pybasic import lint
+    from readymade import lint
 
     lint.set_choices(app.project, ["mypy"], [])  # not installed for the tests
     app.linter.check_all()
@@ -904,8 +904,8 @@ def test_a_missing_tool_is_reported_once(app):
 
 
 def test_the_linting_dialog(app, tmp_path):
-    from pybasic import lint
-    from pybasic.ide.tooldialog import linting_dialog
+    from readymade import lint
+    from readymade.ide.tooldialog import linting_dialog
 
     add_fake_linters(app, tmp_path)
     dialog = linting_dialog(app)
@@ -933,11 +933,11 @@ def add_fake_formatter(app, tmp_path):
     script = str(tmp_path / "fake_formatter.py").replace("\\\\", "/")
     pyproject = app.project.pyproject
     pyproject.write_text(pyproject.read_text() + (
-        f'\n[tool.pybasic.format-tools.spacer]\ncommand = ["{{python}}", "{script}"]\n'))
+        f'\n[tool.readymade.format-tools.spacer]\ncommand = ["{{python}}", "{script}"]\n'))
 
 
 def test_format_document(app, tmp_path):
-    from pybasic import formatting
+    from readymade import formatting
 
     add_fake_formatter(app, tmp_path)
     form = app.form
@@ -963,7 +963,7 @@ def test_format_document(app, tmp_path):
 
 
 def test_the_projects_formatter_wins_and_format_on_save(app, tmp_path):
-    from pybasic import formatting
+    from readymade import formatting
 
     add_fake_formatter(app, tmp_path)
     formatting.set_choices(app.project, ["spacer"], ["black"])
@@ -984,8 +984,8 @@ def test_the_projects_formatter_wins_and_format_on_save(app, tmp_path):
 
 
 def test_the_formatting_dialog(app):
-    from pybasic import formatting
-    from pybasic.ide.tooldialog import formatting_dialog
+    from readymade import formatting
+    from readymade.ide.tooldialog import formatting_dialog
 
     dialog = formatting_dialog(app)
     assert list(dialog.tools)[:5] == ["isort", "autopep8", "yapf", "black", "ruff"]  # the order they run in
@@ -1002,7 +1002,7 @@ def test_format_document_has_its_shortcut(app):
     assert app.root.bind("<Alt-KeyPress-F>")
 
 
-needs_jedi = pytest.mark.skipif(not __import__("pybasic.ide.assist", fromlist=["AVAILABLE"]).AVAILABLE,
+needs_jedi = pytest.mark.skipif(not __import__("readymade.ide.assist", fromlist=["AVAILABLE"]).AVAILABLE,
                                 reason="needs Jedi (pip install -e '.[ide]')")
 
 
@@ -1019,7 +1019,7 @@ def form_with_code(app, code):
 def test_completion_list_while_typing(app):
     from test_codeview import type_text
 
-    form = form_with_code(app, "from pybasic import Form\n\n\nclass Form1(Form):\n    def Button1_click(self):\n        \n")
+    form = form_with_code(app, "from readymade import Form\n\n\nclass Form1(Form):\n    def Button1_click(self):\n        \n")
     code = form.code
     code.text.mark_set("insert", "6.8")
     type_text(code, "self.")
@@ -1046,7 +1046,7 @@ def test_completion_list_while_typing(app):
 
 @needs_jedi
 def test_go_to_definition(app):
-    form = form_with_code(app, "from pybasic import Form\n\n\nclass Form1(Form):\n"
+    form = form_with_code(app, "from readymade import Form\n\n\nclass Form1(Form):\n"
                                "    def Button1_click(self):\n        self.Label1.text = self.greeting()\n\n"
                                "    def greeting(self):\n        return 'hi'\n")
     app.go_to_definition(form, "6.14")  # self.Label1
@@ -1056,7 +1056,7 @@ def test_go_to_definition(app):
     assert form.frame.select() == str(form.code)
     assert form.code.text.index("insert") == "8.8" and form.code.text.get("sel.first", "sel.last") == "greeting"
 
-    app.go_to_definition(form, "1.21")  # Form, in pybasic itself: read-only
+    app.go_to_definition(form, f"1.{len('from readymade import ') + 1}")  # Form, in readymade itself: read-only
     viewer = app._current_editor()
     assert viewer.title() == "form.py (read-only)" and str(viewer.code.text.cget("state")) == "disabled"
     assert viewer.code.text.get("insert linestart", "insert lineend").startswith("class Form")
@@ -1074,7 +1074,7 @@ def test_programs_and_tools_run_without_colour(app, monkeypatch):
     env = app.environment()
     assert "FORCE_COLOR" not in env and env["PYTHON_COLORS"] == "0" and env["NO_COLOR"] == "1"
     app.form.add_control("Label", 8, 8)
-    write_code(app, "Form1", "from pybasic import Form\n\n\nclass Form1(Form):\n"
+    write_code(app, "Form1", "from readymade import Form\n\n\nclass Form1(Form):\n"
                "    def Form_load(self):\n        print('\\x1b[31mred\\x1b[0m')\n        self.close()\n")
     app.run()
     output = wait_for_exit(app)
@@ -1084,8 +1084,8 @@ def test_programs_and_tools_run_without_colour(app, monkeypatch):
 def test_every_designer_property_and_event_has_help():
     import inspect
 
-    from pybasic.controls import REGISTRY
-    from pybasic.ide import helptext
+    from readymade.controls import REGISTRY
+    from readymade.ide import helptext
 
     for type_name, cls in REGISTRY.items():
         assert inspect.getdoc(cls), type_name
@@ -1122,7 +1122,7 @@ def test_f1_in_the_designer_and_properties(app):
 
 
 def test_running_shows_the_immediate_window_again(app):
-    app.show_topic(__import__("pybasic.ide.helptext", fromlist=["home"]).home())
+    app.show_topic(__import__("readymade.ide.helptext", fromlist=["home"]).home())
     assert app.bottom.select() == str(app.help)
     app.run()
     assert app.bottom.select() == str(app.immediate)
@@ -1132,7 +1132,7 @@ def test_running_shows_the_immediate_window_again(app):
 
 @needs_jedi
 def test_f1_in_code(app):
-    form = form_with_code(app, "from pybasic import Form, msgbox\n\n\nclass Form1(Form):\n"
+    form = form_with_code(app, "from readymade import Form, msgbox\n\n\nclass Form1(Form):\n"
                                "    def Button1_click(self):\n        self.Label1.text = 'x'\n        msgbox('hi')\n")
     form.code.text.mark_set("insert", "6.14")  # self.Label1
     form.code.text.focus_force()
@@ -1141,4 +1141,4 @@ def test_f1_in_code(app):
     assert app.help.title.cget("text") == "Label1" and "Label1_click(self)" in app.help.text.get("1.0", "end")
     form.code.text.mark_set("insert", "7.10")  # msgbox
     app.show_help()
-    assert app.help.title.cget("text") == "pybasic.dialogs.msgbox"
+    assert app.help.title.cget("text") == "readymade.dialogs.msgbox"

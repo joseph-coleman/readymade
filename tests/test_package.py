@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from pybasic import package
-from pybasic.project import Project
+from readymade import package
+from readymade.project import Project
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def test_launcher_imports_everything_and_shows_the_startup_form(project):
     assert source.endswith("forms.Main.show()\nmain_loop()\n")
     compile(source, "launcher", "exec")
     launcher = package.write_launcher(project, "Main")
-    assert launcher == project.folder / "build" / "pybasic" / package.LAUNCHER
+    assert launcher == project.folder / "build" / "readymade" / package.LAUNCHER
     assert launcher.read_text() == source
 
 
@@ -35,18 +35,18 @@ def test_launcher_imports_everything_and_shows_the_startup_form(project):
 ])
 def test_pyinstaller_arguments(project, platform, kind, name):
     launcher = package.write_launcher(project, "Main")
-    args = package.pyinstaller_args(project, launcher, "/opt/pybasic", platform=platform)
+    args = package.pyinstaller_args(project, launcher, "/opt/readymade", platform=platform)
     assert args[:4] == ["-m", "PyInstaller", "--noconfirm", "--windowed"] and kind in args
     assert args[args.index("--name") + 1] == "inventory"
     assert args[args.index("--distpath") + 1] == str(project.folder / "dist")
-    assert [args[i + 1] for i, a in enumerate(args) if a == "--paths"] == [str(project.folder), "/opt/pybasic"]
+    assert [args[i + 1] for i, a in enumerate(args) if a == "--paths"] == [str(project.folder), "/opt/readymade"]
     data = [args[i + 1] for i, a in enumerate(args) if a == "--add-data"]
     assert data == [f"{project.folder / f}{os.pathsep}." for f in ("Main.form", "Settings.form")]
     assert args[-1] == str(launcher)
     assert package.exe_path(project, platform=platform) == project.folder / "dist" / name
 
 
-@pytest.mark.skipif(not os.environ.get("PYBASIC_SLOW_TESTS"), reason="set PYBASIC_SLOW_TESTS=1: needs the network and a minute")
+@pytest.mark.skipif(not os.environ.get("READYMADE_SLOW_TESTS"), reason="set READYMADE_SLOW_TESTS=1: needs the network and a minute")
 @pytest.mark.usefixtures("display")
 def test_a_real_build_runs(tmp_path):
     root = Path(__file__).parent.parent

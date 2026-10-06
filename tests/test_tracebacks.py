@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pybasic.ide.tracebacks import TracebackWatcher
+from readymade.ide.tracebacks import TracebackWatcher
 
 
 def watch(folder, output):
