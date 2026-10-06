@@ -516,6 +516,64 @@ def drive(d):
         d.pump(0.05)
     d.check("program ended", app.process, None)
 
+    print("Draw an Image and choose its picture from outside the project")
+    import tkinter as tk
+
+    pictures = Path(tempfile.mkdtemp(prefix="pybasic-pictures-"))
+    photo = tk.PhotoImage(master=d.root, width=32, height=32)
+    photo.put("#3060c0", to=(0, 0, 32, 32))
+    photo.write(str(pictures / "badge.png"), format="png")
+    editor.show_design()
+    d.pump()
+    d.click(*d.at(tool["Image"]))
+    x0, y0 = d.at(canvas, 264, 200)
+    d.drag(x0, y0, x0 + 64, y0 + 64)
+    d.check("Image drawn", editor.selected, "Image1")
+    # The file dialog waits for its answer inside the click, so type that answer from another process.
+    typist = subprocess.Popen(["sh", "-c", f"sleep 2; xdotool type --delay 20 '{pictures / 'badge.png'}'; xdotool key Return"])
+    d.click(*d.at(d.prop_editor("picture").winfo_children()[1]))  # the "..." button
+    typist.wait(timeout=20)
+    d.pump(0.3)
+    d.check("picture copied into the project", editor.design.control("Image1")["picture"], "images/badge.png")
+    d.check("copy exists", (editor.path.parent / "images" / "badge.png").exists(), True)
+    d.check("picture shown", editor.surface.controls["Image1"]._photo is not None, True)
+    spec = editor.design.control("Image1")
+    d.check("autosized to the picture", (spec["width"], spec["height"]), (32, 32))
+    d.shot("image")
+    shutil.rmtree(pictures, ignore_errors=True)
+
+    print("Draw a Canvas, give it click and drag handlers, and use them in the running program")
+    d.click(*d.at(tool["Canvas"]))
+    x0, y0 = d.at(canvas, 16, 240)
+    d.drag(x0, y0, x0 + 224, y0 + 64)
+    d.check("Canvas drawn", editor.selected, "Canvas1")
+    d.click(*d.at(editor.surface.controls["Canvas1"].widget), repeat=2)
+    d.check("click handler has x, y, shape", "def Canvas1_click(self, x, y, shape):" in editor.code.get_source(), True)
+    d.type('self.Canvas1.circle(x, y, 8, fill="#3060c0") if shape is None else setattr(shape, "fill", "#e04040")')
+    editor.goto_handler("Canvas1", "drag")
+    d.type("self.Canvas1.point(x, y)")
+    editor.goto_handler("Image1", "drag")
+    d.type('self.Image1.circle(x, y, 2, fill="#ff0000", color="")')
+    d.key("F5")
+    x, y = d.ask("(Canvas1.widget.winfo_rootx(), Canvas1.widget.winfo_rooty())")
+    d.click(x + 30, y + 30)
+    d.check("click on the background draws a circle", d.ask("[(s.kind, s.x, s.y, s.fill) for s in Canvas1.shapes()]"),
+            [("circle", 30, 30, "#3060c0")])
+    d.click(x + 32, y + 28)
+    d.check("click on the circle recolours it", d.ask("Canvas1.shapes()[0].fill"), "#e04040")
+    d.drag(x + 100, y + 20, x + 180, y + 50, steps=10)
+    d.check("drag draws points", d.ask("sum(s.kind == 'point' for s in Canvas1.shapes()) >= 5"), True)
+    x, y = d.ask("(Image1.widget.winfo_rootx(), Image1.widget.winfo_rooty())")
+    d.drag(x + 4, y + 16, x + 28, y + 16, steps=12)
+    d.check("drag paints the Image's pixels", d.ask("[Image1.pixel(px, 16) for px in (2, 16, 28)]"),
+            ["#3060c0", "#ff0000", "#ff0000"])
+    d.shot("canvas-running")
+    app.immediate_line("form.close()")
+    deadline = time.time() + 10
+    while app.process is not None and time.time() < deadline:
+        d.pump(0.05)
+    d.check("program ended", app.process, None)
+
 
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/pybasic-ui")

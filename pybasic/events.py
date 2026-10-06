@@ -42,7 +42,8 @@ import traceback
 
 POLICIES = ("ignore", "latest", "queue", "overlap")
 _DEFAULTS = {"change": "latest", "resize": "latest", "timer": "latest",
-             "keypress": "queue", "mousedown": "queue", "mouseup": "queue"}
+             "keypress": "queue", "mousedown": "queue", "mouseup": "queue",
+             "mousemove": "latest", "drag": "latest"}
 _SLICE = 0.008  # seconds of async work at a time before the window gets a turn
 _WAITING = 10  # ms between checks while async handlers are only waiting
 

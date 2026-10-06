@@ -11,7 +11,9 @@ import contextlib
 import copy
 import functools
 import keyword
-from tkinter import messagebox, ttk
+import shutil
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
 from pybasic import codegen, formfile, menus
 from pybasic.controls import REGISTRY, Event
@@ -31,6 +33,29 @@ def _undoable(method):
         with self._change():
             return method(self, *args, **kwargs)
     return wrapper
+
+
+def bring_in(folder, path, into="images"):
+    """The path, relative to folder, to use for a chosen file. A file from outside the folder
+    is copied into its images folder first, so the program (and Make EXE) can always find
+    it; a different file of the same name gets a numbered name instead of replacing it."""
+    folder = Path(folder).resolve()
+    path = Path(path).resolve()
+    if path.is_relative_to(folder):
+        return path.relative_to(folder).as_posix()
+    target = folder / into / path.name
+    number = 1
+    while target.exists() and not _same_file_contents(target, path):
+        number += 1
+        target = target.with_name(f"{path.stem}-{number}{path.suffix}")
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+    return target.relative_to(folder).as_posix()
+
+
+def _same_file_contents(a, b):
+    return a.stat().st_size == b.stat().st_size and a.read_bytes() == b.read_bytes()
 
 
 class FormEditor:
@@ -150,6 +175,26 @@ class FormEditor:
         spec = self.design.control(obj)
         return REGISTRY[spec["type"]].prop_choices.get(prop) if spec else None
 
+    def file_types_for(self, obj, prop):
+        """For a property holding a file's path, the files to offer ({label: patterns}), or None."""
+        spec = self.design.control(self.selected if obj == MULTIPLE else obj)
+        return REGISTRY[spec["type"]].file_props.get(prop) if spec else None
+
+    def choose_file(self, obj, prop):
+        """Choose the file for a property like an Image's picture. Returns the object's name,
+        or None if nothing was chosen."""
+        types = self.file_types_for(obj, prop) or {"All files": "*"}
+        chosen = filedialog.askopenfilename(parent=self.app.root, title=f"{obj}.{prop}",
+                                            initialdir=self.path.parent, filetypes=list(types.items()))
+        if not chosen:
+            return None
+        try:
+            path = bring_in(self.path.parent, Path(chosen))
+        except OSError as e:
+            messagebox.showerror("Choose a file", f"Couldn't copy {chosen}: {e}", parent=self.app.root)
+            return None
+        return self.set_property(obj, prop, path)
+
     def _spec(self, name) -> dict:
         spec = self.design.control(name)
         if spec is None:
@@ -219,7 +264,12 @@ class FormEditor:
                 spec[prop] = value
                 if prop == "multiline" and not value and "\n" in spec.get("text", ""):
                     spec["text"] = " ".join(spec["text"].splitlines())  # a single line can't hold line breaks
-                self.surface.refresh_control(obj)
+                try:
+                    self.surface.refresh_control(obj)
+                except ValueError:  # the control refused it (like a backcolor that isn't a colour)
+                    spec[prop] = current
+                    self.surface.refresh_control(obj)
+                    raise
                 if prop in REGISTRY[spec["type"]].recreate_props:
                     # Rebuild the rows (the text row changes editor) without committing their old values.
                     self.properties.clear()

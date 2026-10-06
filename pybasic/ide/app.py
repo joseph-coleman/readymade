@@ -910,6 +910,8 @@ class App:
             launcher = package.write_launcher(project, startup)
             target = package.exe_path(project)
             self.immediate.write(f"--- Making {target.name} with PyInstaller. This takes a minute or so. ---\n")
+            for entry in package.bundled_files(project)[1]:
+                self.immediate.write(f"(Not found, so not included: {entry})\n")
 
             def built(code):
                 if code == 0:

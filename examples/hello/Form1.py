@@ -34,6 +34,16 @@ class Form1(Form):
     def mnuColorPicker_click(self):
         color_picked = color_dialog("red", title="Pick a color")
         print(color_picked)
+
+    def Image1_click(self):
+        self.Image1.width = 800
+        self.Image1.height = 400
+
+    def Form_resize(self):
+        self.Image1.width = self.width
+        self.Image1.height = self.height - self.Image1.top if self.height - self.Image1.top > 1 else 1 
+        
+    
         # pass
         # import sys
         # print(sys.version)

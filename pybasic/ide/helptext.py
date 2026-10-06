@@ -26,6 +26,8 @@ EVENTS = {
     "dblclick": "it's double-clicked",
     "mousedown": "a mouse button is pressed over it; x and y say where",
     "mouseup": "the mouse button is released; x and y say where",
+    "mousemove": "the mouse moves over it; x and y say where",
+    "drag": "the mouse moves with its button held down; x and y say where",
     "gotfocus": "it gets the keyboard focus",
     "lostfocus": "it loses the keyboard focus",
     "keypress": "a key is pressed while it has the focus; key is the character, or a name like \"Return\"",
@@ -135,4 +137,6 @@ def home():
         "  from pybasic import msgbox, inputbox, open_file_dialog, save_file_dialog,",
         "      folder_dialog, color_dialog, pause, in_thread, doevents, while_running",
         "  forms.Name is a form's shared instance: forms.Settings.show(modal=True)",
+        "  app_path(\"data\", \"prices.csv\") is a file in the program's folder, even after",
+        "  Make EXE (list files to bundle in pyproject.toml: [tool.pybasic] include = [\"data\"]).",
     ]))

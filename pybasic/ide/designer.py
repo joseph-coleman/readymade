@@ -134,13 +134,15 @@ class DesignSurface(tk.Frame):
 
     def add(self, spec):
         container = self.controls.get(spec.get("container"))
-        control = create(self.canvas if container is None else container.inner, spec, design=True)
+        control = create(self.canvas if container is None else container.inner, spec, design=True,
+                         folder=self.app.path.parent)  # the project's folder, for pictures
         for widget in control.design_widgets():
             widget.bind("<ButtonPress-1>", lambda e, c=control: self._control_press(e, c))
             widget.bind("<B1-Motion>", self._motion)
             widget.bind("<ButtonRelease-1>", self._release)
             widget.bind("<Double-Button-1>", lambda e, c=control: self._control_double(c))
         self.controls[control.name] = control
+        _follow_size(spec, control)
         self._lift_handles()
 
     def refresh_control(self, name):
@@ -152,6 +154,7 @@ class DesignSurface(tk.Frame):
         else:
             for prop, default in defaults.items():
                 setattr(control, prop, spec.get(prop, default))
+            _follow_size(spec, control)
         self.show_selection()
 
     def _recreate(self, spec):
@@ -418,3 +421,11 @@ class DesignSurface(tk.Frame):
 
     def _form_handle_release(self, _):
         self.app.set_form_size(int(self.canvas.cget("width")), int(self.canvas.cget("height")))
+
+
+def _follow_size(spec, control):
+    """A control that sizes itself (an autosized Image) decides its size; the design follows."""
+    if not control.resizable:
+        for prop in ("width", "height"):
+            if prop in spec:
+                spec[prop] = getattr(control, prop)

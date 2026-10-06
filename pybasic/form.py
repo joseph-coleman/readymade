@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import inspect
 import keyword
+import sys
 import tkinter as tk
 from pathlib import Path
 
@@ -35,6 +36,28 @@ FORM_EVENTS = (
 )
 
 _app: tk.Tk | None = None  # the hidden root window all forms belong to
+_folder: Path | None = None  # set by pybasic.run; otherwise worked out in app_path()
+
+
+def app_path(*parts):
+    """The program's folder, or a file in it: app_path("data", "prices.csv"). Like VB's
+    App.Path, it works however the program runs: from the IDE, as `python Form1.py`, or
+    made into a program with Make EXE (which bundles files listed in [tool.pybasic]
+    include). In a one-file program the bundled files are temporary copies: read them,
+    but save your own files elsewhere, like the user's documents folder."""
+    if _folder is not None:
+        base = _folder
+    elif getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    else:
+        base = Path(sys.argv[0]).resolve().parent if sys.argv and sys.argv[0] else Path.cwd()
+    return base.joinpath(*parts)
+
+
+def set_app_path(folder):
+    """Make app_path() the given folder (pybasic.run uses the project's folder)."""
+    global _folder
+    _folder = Path(folder)
 _loaded: set[Form] = set()
 
 
@@ -102,7 +125,7 @@ class Form:
         self.controls = {}
         for spec in design.controls:
             check_name(spec["name"], self.controls)
-            control = create(self._parent_widget(spec), spec)
+            control = create(self._parent_widget(spec), spec, folder=self.path.parent)
             self.controls[control.name] = control
             setattr(self, control.name, control)
         self.menus = {}

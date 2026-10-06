@@ -185,7 +185,14 @@ class PropertiesPanel(ttk.Frame):
             var = tk.StringVar(value=_display(value))
             in_dialog = isinstance(value, list) or (prop == "text" and multiline)
             choices = ("True", "False") if isinstance(value, bool) else self.app.choices_for(obj, prop)
-            if choices:
+            if self.app.file_types_for(obj, prop):
+                editor = ttk.Frame(self.grid_frame)
+                entry = ttk.Entry(editor, textvariable=var, width=8)
+                entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                entry.bind("<Return>", lambda e, p=prop: self.commit(p))
+                entry.bind("<FocusOut>", lambda e, p=prop: self.commit(p))
+                ttk.Button(editor, text="\u2026", width=2, command=lambda p=prop: self._choose_file(p)).pack(side=tk.LEFT)
+            elif choices:
                 editor = ttk.Combobox(self.grid_frame, textvariable=var, values=choices, state="readonly", width=16)
                 editor.bind("<<ComboboxSelected>>", lambda e, p=prop: self.commit(p))
             elif in_dialog:
@@ -233,6 +240,15 @@ class PropertiesPanel(ttk.Frame):
         for prop, value in self.app.props_for(self.current):
             if prop in self._rows:
                 self._rows[prop][0].set(_display(value))
+
+    def _choose_file(self, prop):
+        """Choose a file for a property holding a path (a file from elsewhere is copied into the project)."""
+        if self.app is None or self.current is None:
+            return
+        self.commit(prop)
+        renamed = self.app.choose_file(self.current, prop)
+        if renamed is not None:
+            self.current = renamed
 
     def _edit_lines(self, prop):
         """Edit a list (one item per line, like VB's List property) or multi-line text."""

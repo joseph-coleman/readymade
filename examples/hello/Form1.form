@@ -52,8 +52,8 @@
     {
       "type": "Label",
       "name": "Label3",
-      "left": 240,
-      "top": 248,
+      "left": 456,
+      "top": 200,
       "width": 128,
       "height": 16,
       "enabled": true,
@@ -63,16 +63,16 @@
     {
       "type": "Timer",
       "name": "Timer1",
-      "left": 104,
-      "top": 240,
+      "left": 368,
+      "top": 48,
       "enabled": true,
       "interval": 1000
     },
     {
       "type": "Button",
       "name": "Button2",
-      "left": 240,
-      "top": 272,
+      "left": 592,
+      "top": 296,
       "width": 136,
       "height": 24,
       "enabled": true,
@@ -167,12 +167,25 @@
     {
       "type": "Button",
       "name": "Button3",
-      "left": 480,
-      "top": 240,
+      "left": 576,
+      "top": 232,
       "width": 144,
       "height": 48,
       "enabled": true,
       "text": "Button3",
+      "visible": true
+    },
+    {
+      "type": "Image",
+      "name": "Image1",
+      "left": 8,
+      "top": 240,
+      "width": 144,
+      "height": 200,
+      "border": false,
+      "enabled": true,
+      "picture": "images/mars_venus_20210712.PNG",
+      "sizing": "zoom",
       "visible": true
     }
   ],

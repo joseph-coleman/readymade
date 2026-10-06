@@ -19,7 +19,7 @@ import tkinter as tk
 from pathlib import Path
 
 from pybasic import forms
-from pybasic.form import app_root, main_loop
+from pybasic.form import app_root, main_loop, set_app_path
 from pybasic.project import Project
 
 
@@ -60,6 +60,7 @@ def main(argv=None):
     if startup is None:
         raise SystemExit(f"{project.folder} has no forms to run")
     sys.path.insert(0, str(project.folder))
+    set_app_path(project.folder)
     form = getattr(forms, startup)
     if args.immediate:
         attach_immediate(form)
