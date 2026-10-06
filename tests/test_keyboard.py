@@ -42,15 +42,36 @@ SHIFT, CTRL, ALT, NUMLOCK = 0x1, 0x4, 0x8, 0x10  # X11's state bits
     ("", "Control_R", CTRL, "Ctrl"),
     ("", "Caps_Lock", 0, "CapsLock"),
 ])
-def test_key_names(char, keysym, state, expected, monkeypatch):
-    monkeypatch.setattr(keys, "_ALT", ALT)
-    monkeypatch.setattr(keys, "_COMMAND", 0)
-    assert keys.name(char, keysym, state) == expected
+def test_key_names(char, keysym, state, expected):
+    assert keys.name(char, keysym, state, platform="linux") == expected
 
 
-def test_altgr_on_windows_types_characters(monkeypatch):
-    monkeypatch.setattr(keys, "_ALT", 0x20000)
-    assert keys.name("@", "q", CTRL | 0x20000) == "@"  # AltGr is Ctrl+Alt on Windows
+def test_altgr_on_windows_types_characters():
+    win_ctrl, win_alt = 0x4, 0x20000
+    assert keys.name("@", "q", win_ctrl | win_alt, platform="win32") == "@"  # AltGr is Ctrl+Alt on Windows
+    assert keys.name("\x13", "s", win_ctrl, platform="win32") == "Ctrl+S"
+    assert keys.name("s", "s", win_alt, platform="win32") == "Alt+S"
+
+
+MAC_CONTROL, COMMAND, OPTION = 0x4, 0x8, 0x10  # Tk's state bits on macOS
+
+
+@pytest.mark.parametrize("char, keysym, state, expected", [
+    ("s", "s", COMMAND, "Ctrl+S"),  # Cmd+S: the same save shortcut as Ctrl+S elsewhere
+    ("z", "Z", COMMAND | SHIFT, "Ctrl+Shift+Z"),
+    ("\x13", "s", MAC_CONTROL, "MacCtrl+S"),  # the Mac's own Control key
+    ("ß", "ssharp", OPTION, "ß"),  # Option types characters
+    ("é", "eacute", OPTION, "é"),
+    ("", "Left", OPTION, "Alt+Left"),  # but with a named key it's Alt
+    ("", "F4", COMMAND | OPTION, "Ctrl+Alt+F4"),
+    ("s", "s", COMMAND | OPTION, "Ctrl+Alt+S"),
+    ("\r", "Return", 0, "Enter"),
+    ("", "Meta_L", COMMAND, "Ctrl"),  # Command on its own
+    ("", "Control_L", MAC_CONTROL, "MacCtrl"),
+    ("", "Option_L", OPTION, "Alt"),
+])
+def test_mac_key_names(char, keysym, state, expected):
+    assert keys.name(char, keysym, state, platform="darwin") == expected
 
 
 # ----- forms -----

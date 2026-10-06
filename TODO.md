@@ -5,7 +5,8 @@ Ideas and gaps noted along the way, roughly by area.
 ## Runtime
 - **Menu item `visible`**: Tk can't hide a menu entry; supporting it means rebuilding the menu.
 - **Break mode**: pause a running program at an error, as VB did (needs a debugger).
-- **macOS shortcuts**: treat "Ctrl" as ⌘ (Command) and "Alt" as Option on macOS, the way Qt and Electron's CmdOrCtrl do, and show native ⌘O labels. Needs a Mac to check how Tk on macOS parses accelerator labels, and whether its native menus already fire the shortcut (which would make pybasic's own binding run handlers twice).
+- **macOS shortcuts**: treat "Ctrl" as ⌘ (Command) and "Alt" as Option on macOS, the way Qt and Electron's CmdOrCtrl do, and show native ⌘O labels. Needs a Mac to check how Tk on macOS parses accelerator labels, and whether its native menus already fire the shortcut (which would make pybasic's own binding run handlers twice). The IDE's own shortcuts (Ctrl+S, Ctrl+Z, ...) should follow the same rule.
+- **Check keypress names on a Mac**: `pybasic/keys.py` already reports ⌘ as "Ctrl" (so ⌘S is "Ctrl+S"), the Control key as "MacCtrl", and Option as "Alt" unless it types a character. The state bits (Command 0x8, Option 0x10) and the modifier keys' own names (is ⌘ alone "Meta_L"?) come from Tk's documentation, not a real Mac. To check: a form with a TextBox whose keypress handler prints `key`; ⌘S, ⌃S, ⌥S, ⌥E then E, ⌘ alone and Shift+⌘Z should print `Ctrl+S`, `MacCtrl+S`, `ß`, `é`, `Ctrl`, `Ctrl+Shift+Z`.
 
 ## IDE
 - **Copy and paste**: optionally bring the controls' event handlers along (renamed to match), which VB never did. Also a selection box inside a Frame (today it only works on the form itself; Ctrl+click works anywhere).
