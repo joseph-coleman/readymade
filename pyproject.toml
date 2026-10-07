@@ -1,6 +1,6 @@
 [project]
 name = "readymade"
-version = "0.0.1"
+dynamic = ["version"]  # from the git tag: v0.0.2 makes 0.0.2 (see [tool.hatch.version])
 description = "Visual Basic-style forms for Python: draw a form, double-click to write its code, press F5"
 readme = "README.md"
 license = "MIT"
@@ -37,8 +37,11 @@ readymade = "readymade.ide.app:main"
 dev = ["pytest"]
 
 [build-system]
-requires = ["hatchling>=1.27"]  # for the license fields above
+requires = ["hatchling>=1.27", "hatch-vcs"]  # 1.27: for the license fields above
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"  # the version is the latest tag; between tags, a development version like 0.0.2.dev3+g1a2b3c
 
 [tool.hatch.build.targets.sdist]
 exclude = ["examples"]  # they hold pictures that aren't for publishing, and each machine's interpreter choice
