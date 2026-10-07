@@ -55,7 +55,7 @@ class MenuEditor(tk.Toplevel):
         shortcut.grid(row=2, column=1, sticky="w", pady=2)
         self.modifier_vars = {m: tk.BooleanVar() for m in menus.MODIFIERS}
         for modifier, var in self.modifier_vars.items():
-            box = ttk.Checkbutton(shortcut, text=modifier, variable=var)
+            box = ttk.Checkbutton(shortcut, text=menus.modifier_label(modifier), variable=var)
             box.pack(side=tk.LEFT)
             self.fields.append(box)
         self.key_var = tk.StringVar()

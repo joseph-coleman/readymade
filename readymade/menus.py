@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import string
+import sys
 import tkinter as tk
 
 SEPARATOR = "-"
@@ -77,9 +78,31 @@ def _check(modifiers, key):
         raise ValueError(f"Shift changes which key {key} is, so {join_shortcut(modifiers, key)} can't work as a shortcut")
 
 
-def shortcut_sequence(shortcut):
-    """The Tk event sequence for a shortcut: "Ctrl+Shift+S" -> "<Control-KeyPress-S>".
-    Raises ValueError if it isn't a shortcut, or can't work as one."""
+# Shortcuts are written the same everywhere ("Ctrl+S"), and mean each system's usual keys:
+# on a Mac, as in Qt and Electron, Ctrl is the Command key (⌘) and Alt is Option (⌥).
+# (The Mac's Control key is for completion, ⌃Space, and Control+click is a right click.)
+
+
+def _on_mac(platform):
+    return platform == "darwin"
+
+
+def tk_modifier(modifier, platform=sys.platform):
+    """Tk's name for a shortcut modifier on this system: "Ctrl" is "Control", or "Command" on a Mac."""
+    if _on_mac(platform):
+        return {"Ctrl": "Command", "Alt": "Option", "Shift": "Shift"}[modifier]
+    return {"Ctrl": "Control", "Alt": "Alt", "Shift": "Shift"}[modifier]
+
+
+def primary_mask(platform=sys.platform):
+    """The bit of a Tk event's state for "Ctrl" (Command on a Mac), as in Ctrl+click."""
+    return 0x8 if _on_mac(platform) else 0x4
+
+
+def shortcut_sequence(shortcut, platform=sys.platform):
+    """The Tk event sequence for a shortcut: "Ctrl+Shift+S" -> "<Control-KeyPress-S>"
+    ("<Command-KeyPress-S>" on a Mac). Raises ValueError if it isn't a shortcut, or can't
+    work as one."""
     modifiers, key = split_shortcut(shortcut)
     _check(modifiers, key)
     if key.isalpha() and len(key) == 1:
@@ -87,8 +110,65 @@ def shortcut_sequence(shortcut):
         modifiers = modifiers - {"Shift"}
     else:
         keysym = _NAMED.get(key) or _PUNCTUATION.get(key) or key
-    names = [tk_name for m, tk_name in (("Ctrl", "Control"), ("Alt", "Alt"), ("Shift", "Shift")) if m in modifiers]
+    names = [tk_modifier(m, platform) for m in MODIFIERS if m in modifiers]
     return "<" + "-".join([*names, "KeyPress", keysym]) + ">"  # KeyPress, or "<Control-1>" would mean mouse button 1
+
+
+# macOS's codes for the keys of a US keyboard (kVK_ANSI_*), which Tk puts in the top byte of a
+# key event's keycode on a Mac. Option changes the character a key types (Option+F is "ƒ"),
+# so a Mac shortcut with Alt is found by its key's position instead.
+_MAC_KEYCODES = {
+    "A": 0, "S": 1, "D": 2, "F": 3, "H": 4, "G": 5, "Z": 6, "X": 7, "C": 8, "V": 9, "B": 11, "Q": 12,
+    "W": 13, "E": 14, "R": 15, "Y": 16, "T": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23,
+    "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29, "]": 30, "O": 31, "U": 32, "[": 33, "I": 34,
+    "P": 35, "L": 37, "J": 38, "'": 39, "K": 40, ";": 41, "\\": 42, ",": 43, "/": 44, "N": 45, "M": 46,
+    ".": 47, "`": 50,
+}
+_MAC_MASKS = {"Shift": 0x1, "Ctrl": 0x8, "Alt": 0x10}  # Command is Ctrl; the Mac's Control key isn't used
+
+
+def bind_shortcut(widget, shortcut, callback, platform=sys.platform):
+    """Run callback(event) when shortcut is pressed in widget (for a window: anywhere in it).
+    Raises ValueError if it isn't a shortcut, or can't work as one."""
+    modifiers, key = split_shortcut(shortcut)
+    _check(modifiers, key)
+    if not (_on_mac(platform) and "Alt" in modifiers and key in _MAC_KEYCODES):
+        widget.bind(shortcut_sequence(shortcut, platform), callback, add="+")
+        return
+    wanted = sum(_MAC_MASKS[m] for m in modifiers)
+
+    def check(e):
+        if e.keycode >> 24 == _MAC_KEYCODES[key] and e.state & sum(_MAC_MASKS.values()) == wanted:
+            return callback(e)
+        return None
+
+    widget.bind("<Option-KeyPress>", check, add="+")
+
+
+def accelerator(shortcut, platform=sys.platform):
+    """The text a menu item shows for its shortcut: "Ctrl+S", or on a Mac "Command-S", which
+    Tk draws as ⌘S (and Option, Shift as ⌥, ⇧)."""
+    modifiers, key = split_shortcut(shortcut)
+    if not _on_mac(platform):
+        return join_shortcut(modifiers, key)
+    names = [tk_modifier(m, platform) for m in ("Alt", "Shift", "Ctrl") if m in modifiers]  # ⌥⇧⌘, the Mac's order
+    return "-".join([*names, _NAMED.get(key, key)])
+
+
+def modifier_label(modifier, platform=sys.platform):
+    """How the Menu Editor names a modifier: "Ctrl", or on a Mac "Ctrl (⌘)", "Alt (⌥)"."""
+    if not _on_mac(platform):
+        return modifier
+    return {"Ctrl": "Ctrl (\u2318)", "Alt": "Alt (\u2325)"}.get(modifier, modifier)
+
+
+def display(shortcut, platform=sys.platform):
+    """A shortcut as people read it on this system: "Ctrl+Shift+Z", or on a Mac "⇧⌘Z"."""
+    modifiers, key = split_shortcut(shortcut)
+    if not _on_mac(platform):
+        return join_shortcut(modifiers, key)
+    symbols = "".join(symbol for m, symbol in (("Alt", "\u2325"), ("Shift", "\u21e7"), ("Ctrl", "\u2318")) if m in modifiers)
+    return symbols + key
 
 
 def parse_text(text):
@@ -149,6 +229,13 @@ def defer_commands(menu):
                 menu.entryconfigure(index, command=later(menu, lambda c=command: menu.tk.eval(c)))
 
 
+def _accelerator_or_blank(shortcut):
+    try:
+        return accelerator(shortcut) if shortcut else ""
+    except ValueError:
+        return shortcut  # not a shortcut: shown as written (the Menu Editor doesn't allow these)
+
+
 def build(menu, items, on_entry):
     """Add items to a tk.Menu. Commands are check buttons, so any item can show a
     check mark. on_entry(item, menu, index, variable) is called for each named item
@@ -162,7 +249,7 @@ def build(menu, items, on_entry):
             continue
         label, underline = parse_text(item.get("text", ""))
         options = {
-            "label": label, "underline": underline, "accelerator": item.get("shortcut", ""),
+            "label": label, "underline": underline, "accelerator": _accelerator_or_blank(item.get("shortcut", "")),
             "state": tk.NORMAL if item.get("enabled", True) else tk.DISABLED,
         }
         if item.get("items"):

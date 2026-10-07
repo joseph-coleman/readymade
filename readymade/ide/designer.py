@@ -21,7 +21,7 @@ from readymade.form import FORM
 GRID = 8
 HANDLE = 6
 SURROUND = "#808080"
-_CONTROL_KEY = 0x0004  # the Control modifier in a Tk event's state
+_CONTROL_KEY = menus.primary_mask()  # Ctrl (⌘ on a Mac) in a Tk event's state, for Ctrl+click
 
 # Selection handles: (x fraction, y fraction) of the control -> cursor.
 _HANDLES = {
@@ -69,7 +69,8 @@ class DesignSurface(tk.Frame):
         self.canvas.bind("<Escape>", lambda e: self.stop_tab_order())
         # Arrows move the selected controls a grid step (Ctrl: 1 pixel); with Shift they resize them.
         for key, dx, dy in (("Left", -1, 0), ("Right", 1, 0), ("Up", 0, -1), ("Down", 0, 1)):
-            for modifiers, step, resize in (("", GRID, False), ("Control-", 1, False), ("Shift-", GRID, True), ("Control-Shift-", 1, True)):
+            ctrl = menus.tk_modifier("Ctrl") + "-"  # ⌘ on a Mac, where Control+arrows switch desktops
+            for modifiers, step, resize in (("", GRID, False), (ctrl, 1, False), ("Shift-", GRID, True), (ctrl + "Shift-", 1, True)):
                 self.canvas.bind(f"<{modifiers}{key}>", lambda e, x=dx * step, y=dy * step, r=resize: self._arrow(x, y, r))
 
         self.form_handle = tk.Frame(self, bg="black", width=HANDLE, height=HANDLE, cursor="bottom_right_corner")

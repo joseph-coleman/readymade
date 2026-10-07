@@ -5,8 +5,10 @@ see assist.py."""
 from __future__ import annotations
 
 import inspect
+import sys
 from dataclasses import dataclass
 
+from readymade import menus
 from readymade.controls import REGISTRY
 from readymade.form import FORM_EVENTS, Form
 from readymade.menus import MenuItem
@@ -111,23 +113,33 @@ def prop(type_name, name):
     return Topic(name, f"property of {type_name}", text)
 
 
-def home():
+def home(platform=sys.platform):
+    """The overview, with shortcuts as this system writes them (⌘ on a Mac)."""
+    mac = platform == "darwin"
+
+    def keys(shortcut):
+        return menus.display(shortcut, platform)
+
+    click = "\u2318-click" if mac else "Ctrl+click"
+    ctrl = "\u2318" if mac else "Ctrl"
+    redo = "Ctrl+Shift+Z" if mac else "Ctrl+Y"
+    complete = "\u2303Space" if mac else "Ctrl+Space"  # the Control key on a Mac too
     return Topic("readymade", "Visual Basic style forms for Python", "\n".join([
         "Press F1 for help on whatever you're working on: a name in the code, the control",
         "selected in the designer, or a property in the Properties panel.",
         "",
         "Designing",
         "  Draw controls from the Toolbox; double-click one to write its event handler.",
-        "  Ctrl+click and drag a box to select several; the Format menu aligns and sizes them.",
-        "  Arrows move the selection (Ctrl: 1 pixel); Shift+arrows resize it.",
-        "  Ctrl+Z / Ctrl+Y undo and redo; Ctrl+X, C and V cut, copy and paste controls.",
-        "  Tools > Menu Editor (Ctrl+E) designs the form's menus.",
+        f"  {click.capitalize()} and drag a box to select several; the Format menu aligns and sizes them.",
+        f"  Arrows move the selection ({ctrl}: 1 pixel); Shift+arrows resize it.",
+        f"  {keys('Ctrl+Z')} / {keys(redo)} undo and redo; {keys('Ctrl+X')}, C and V cut, copy and paste controls.",
+        f"  Tools > Menu Editor ({keys('Ctrl+E')}) designs the form's menus.",
         "  Format > Tab Order: click the controls in the order Tab should visit them.",
         "",
         "Code",
-        "  F12 or Ctrl+click goes to a definition; Ctrl+Space completes a name.",
-        "  Tab and Shift+Tab indent and outdent; Ctrl+/ comments lines out and in.",
-        "  Shift+Alt+F formats the code (choose a formatter in Project > Formatting).",
+        f"  F12 or {click} goes to a definition; {complete} completes a name.",
+        f"  Tab and Shift+Tab indent and outdent; {keys('Ctrl+/')} comments lines out and in.",
+        f"  {keys('Shift+Alt+F')} formats the code (choose a formatter in Project > Formatting).",
         "",
         "Running",
         "  F5 runs the program. The Immediate window runs Python inside it while it runs;",

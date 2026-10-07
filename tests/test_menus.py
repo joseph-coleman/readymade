@@ -232,3 +232,71 @@ def test_project_explorer_opens_its_menu_on_a_right_click(tmp_path, monkeypatch)
     finally:
         app.stop()
         root.destroy()
+
+
+# ----- shortcuts on each system: on a Mac, Ctrl is ⌘ and Alt is Option -----
+
+@pytest.mark.parametrize("shortcut, linux, mac", [
+    ("Ctrl+S", "<Control-KeyPress-s>", "<Command-KeyPress-s>"),
+    ("Ctrl+Shift+Z", "<Control-KeyPress-Z>", "<Command-KeyPress-Z>"),
+    ("Ctrl+/", "<Control-KeyPress-slash>", "<Command-KeyPress-slash>"),
+    ("Shift+F7", "<Shift-KeyPress-F7>", "<Shift-KeyPress-F7>"),
+    ("F5", "<KeyPress-F5>", "<KeyPress-F5>"),
+])
+def test_shortcut_sequences(shortcut, linux, mac):
+    assert shortcut_sequence(shortcut, platform="linux") == shortcut_sequence(shortcut, platform="win32") == linux
+    assert shortcut_sequence(shortcut, platform="darwin") == mac
+
+
+@pytest.mark.parametrize("shortcut, linux, mac_label, mac_text", [
+    # Tk on a Mac draws "Command-S" as ⌘S, "Shift-Command-Z" as ⇧⌘Z (checked on a real Mac).
+    ("Ctrl+S", "Ctrl+S", "Command-S", "⌘S"),
+    ("Ctrl+Shift+Z", "Ctrl+Shift+Z", "Shift-Command-Z", "⇧⌘Z"),
+    ("Shift+Alt+F", "Alt+Shift+F", "Option-Shift-F", "⌥⇧F"),
+    ("Ctrl+/", "Ctrl+/", "Command-/", "⌘/"),
+    ("F5", "F5", "F5", "F5"),
+])
+def test_how_shortcuts_are_shown(shortcut, linux, mac_label, mac_text):
+    assert menus.accelerator(shortcut, platform="linux") == linux
+    assert menus.accelerator(shortcut, platform="darwin") == mac_label
+    assert menus.display(shortcut, platform="darwin") == mac_text
+    assert menus.display(shortcut, platform="win32") == linux
+
+
+def test_modifier_names_and_masks():
+    assert menus.tk_modifier("Ctrl", "darwin") == "Command" and menus.tk_modifier("Ctrl", "linux") == "Control"
+    assert menus.tk_modifier("Alt", "darwin") == "Option" and menus.tk_modifier("Alt", "win32") == "Alt"
+    assert menus.primary_mask("darwin") == 0x8 and menus.primary_mask("linux") == 0x4
+    assert menus.modifier_label("Ctrl", "darwin") == "Ctrl (⌘)" and menus.modifier_label("Ctrl", "linux") == "Ctrl"
+
+
+@pytest.mark.usefixtures("display")
+def test_bind_shortcut():
+    root = tk.Tk()
+    try:
+        fired = []
+        entry = tk.Entry(root)
+        entry.pack()
+        root.update()
+        menus.bind_shortcut(root, "Ctrl+S", lambda e: fired.append("save"), platform="linux")
+        # On a Mac, Option+Shift+F types "Ï", so Alt shortcuts go by the key's position (F is 3).
+        menus.bind_shortcut(root, "Shift+Alt+F", lambda e: fired.append("format"), platform="darwin")
+        entry.focus_force()
+        root.update()
+        entry.event_generate("<Control-KeyPress-s>")
+        entry.event_generate("<KeyPress>", keysym="Idiaeresis", keycode=(3 << 24) | 0xCF, state=0x11)
+        entry.event_generate("<KeyPress>", keysym="ssharp", keycode=(1 << 24) | 0xDF, state=0x11)  # another key
+        entry.event_generate("<KeyPress>", keysym="Idiaeresis", keycode=(3 << 24) | 0xCF, state=0x19)  # with ⌘ too
+        root.update()
+        assert fired == ["save", "format"]
+    finally:
+        root.destroy()
+
+
+def test_help_overview_on_a_mac():
+    from readymade.ide import helptext
+
+    mac, linux = helptext.home("darwin").text, helptext.home("linux").text
+    assert "⌘-click goes to a definition" in mac and "⌃Space completes a name" in mac
+    assert "⌘Z / ⇧⌘Z undo and redo" in mac and "⌥⇧F formats the code" in mac
+    assert "Ctrl+click goes to a definition" in linux and "Ctrl+Z / Ctrl+Y undo and redo" in linux

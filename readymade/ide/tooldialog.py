@@ -11,7 +11,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from readymade import formatting, lint
+from readymade import formatting, lint, menus
 
 
 class ToolDialog(tk.Toplevel):
@@ -121,7 +121,7 @@ def formatting_dialog(app):
 
     return ToolDialog(
         app, "Formatting",
-        "Choose the tools that tidy your code (Edit > Format Document, Shift+Alt+F). Formatting changes "
+        f"Choose the tools that tidy your code (Edit > Format Document, {menus.display('Shift+Alt+F')}). Formatting changes "
         "the code itself, so everyone on a project should use the same tools: \"For the project\" "
         "(pyproject.toml) is used when it's set, and \"My default\" for projects that haven't chosen. "
         "When several are chosen they run in the order listed. Their own settings (like [tool.black]) apply.",

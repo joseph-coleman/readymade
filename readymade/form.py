@@ -354,7 +354,7 @@ class Form:
         setattr(self, entry.name, entry)
         if item.get("shortcut"):
             # The shortcut works anywhere in the form, and only while the item is enabled.
-            self.root.bind(menus.shortcut_sequence(item["shortcut"]), lambda e: (menu.invoke(index), "break")[1])
+            menus.bind_shortcut(self.root, item["shortcut"], lambda e: (menu.invoke(index), "break")[1])
         if variable is None:
             return None  # a submenu
         func = getattr(self, f"{entry.name}_click", None)

@@ -89,48 +89,50 @@ class App:
         outer.add(top, weight=1)
         outer.add(self.bottom, weight=0)
 
-        for sequence, command in (
-            ("<Control-n>", self.new_project),
-            ("<Control-o>", self.open_project),
-            ("<Control-s>", self.save),
-            ("<Control-w>", self.close_document),
-            ("<Control-e>", self.menu_editor),
-            ("<F5>", self.run),
-            ("<F7>", lambda: self.form and self.form.show_code()),
-            ("<Shift-F7>", lambda: self.form and self.form.show_design()),
+        # Shortcuts are written as on Windows and Linux; on a Mac, Ctrl is ⌘ and Alt is Option (see menus).
+        for shortcut, command in (
+            ("Ctrl+N", self.new_project),
+            ("Ctrl+O", self.open_project),
+            ("Ctrl+S", self.save),
+            ("Ctrl+W", self.close_document),
+            ("Ctrl+E", self.menu_editor),
+            ("F5", self.run),
+            ("F7", lambda: self.form and self.form.show_code()),
+            ("Shift+F7", lambda: self.form and self.form.show_design()),
+            ("Shift+Alt+F", self.format_document),
+            ("F12", self.go_to_definition),
+            ("F1", self.show_help),
         ):
-            root.bind(sequence, lambda e, c=command: (c(), "break")[1])
-        root.bind(menus.shortcut_sequence("Alt+Shift+F"), lambda e: (self.format_document(), "break")[1])
-        root.bind("<F12>", lambda e: (self.go_to_definition(), "break")[1])
-        root.bind("<F1>", lambda e: (self.show_help(), "break")[1])
-        for sequence, redo in (("<Control-z>", False), ("<Control-y>", True), ("<Control-Z>", True)):
-            root.bind(sequence, lambda e, r=redo: self._undo_key(r))
-        for sequence, action in (("<Control-x>", "cut"), ("<Control-c>", "copy"), ("<Control-v>", "paste")):
-            root.bind(sequence, lambda e, a=action: self._clipboard_key(a))
+            menus.bind_shortcut(root, shortcut, lambda e, c=command: (c(), "break")[1])
+        for shortcut, redo in (("Ctrl+Z", False), ("Ctrl+Y", True), ("Ctrl+Shift+Z", True)):
+            menus.bind_shortcut(root, shortcut, lambda e, r=redo: self._undo_key(r))
+        for shortcut, action in (("Ctrl+X", "cut"), ("Ctrl+C", "copy"), ("Ctrl+V", "paste")):
+            menus.bind_shortcut(root, shortcut, lambda e, a=action: self._clipboard_key(a))
         root.protocol("WM_DELETE_WINDOW", self.exit)
 
     def _build_menu(self):
         menubar = tk.Menu(self.root)
         file = tk.Menu(menubar, tearoff=False)
-        file.add_command(label="New Project...", accelerator="Ctrl+N", command=self.new_project)
-        file.add_command(label="Open Project...", accelerator="Ctrl+O", command=self.open_project)
-        file.add_command(label="Save All", accelerator="Ctrl+S", command=self.save)
-        file.add_command(label="Close", accelerator="Ctrl+W", command=self.close_document)
+        file.add_command(label="New Project...", accelerator=menus.accelerator("Ctrl+N"), command=self.new_project)
+        file.add_command(label="Open Project...", accelerator=menus.accelerator("Ctrl+O"), command=self.open_project)
+        file.add_command(label="Save All", accelerator=menus.accelerator("Ctrl+S"), command=self.save)
+        file.add_command(label="Close", accelerator=menus.accelerator("Ctrl+W"), command=self.close_document)
         file.add_separator()
         file.add_command(label="Make EXE...", command=self.make_exe)
         file.add_separator()
         file.add_command(label="Exit", command=self.exit)
         edit = tk.Menu(menubar, tearoff=False, postcommand=lambda: self._update_edit_menu(edit))
-        edit.add_command(label="Undo", accelerator="Ctrl+Z", command=self.undo)
-        edit.add_command(label="Redo", accelerator="Ctrl+Y", command=lambda: self.undo(redo=True))
+        edit.add_command(label="Undo", accelerator=menus.accelerator("Ctrl+Z"), command=self.undo)
+        redo = "Ctrl+Shift+Z" if sys.platform == "darwin" else "Ctrl+Y"  # each system's usual (both work)
+        edit.add_command(label="Redo", accelerator=menus.accelerator(redo), command=lambda: self.undo(redo=True))
         edit.add_separator()
         for label, action, key in (("Cut", "cut", "Ctrl+X"), ("Copy", "copy", "Ctrl+C"),
                                    ("Paste", "paste", "Ctrl+V"), ("Delete", "delete", "Del")):
-            edit.add_command(label=label, accelerator=key, command=lambda a=action: self.edit(a))
+            edit.add_command(label=label, accelerator=menus.accelerator(key), command=lambda a=action: self.edit(a))
         edit.add_separator()
-        edit.add_command(label="Toggle Comment", accelerator="Ctrl+/", command=self.toggle_comment)
-        edit.add_command(label="Format Document", accelerator="Shift+Alt+F", command=self.format_document)
-        edit.add_command(label="Go to Definition", accelerator="F12", command=self.go_to_definition)
+        edit.add_command(label="Toggle Comment", accelerator=menus.accelerator("Ctrl+/"), command=self.toggle_comment)
+        edit.add_command(label="Format Document", accelerator=menus.accelerator("Shift+Alt+F"), command=self.format_document)
+        edit.add_command(label="Go to Definition", accelerator=menus.accelerator("F12"), command=self.go_to_definition)
         format_menu = self._build_format_menu(menubar)
         project = tk.Menu(menubar, tearoff=False)
         project.add_command(label="Add Form...", command=self.add_form)
@@ -149,12 +151,12 @@ class App:
         project.add_command(label="Program Icon...", command=self.choose_icon)
         project.add_command(label="Remove Program Icon", command=lambda: self.set_icon(None))
         view = tk.Menu(menubar, tearoff=False)
-        view.add_command(label="Code", accelerator="F7", command=lambda: self.form and self.form.show_code())
-        view.add_command(label="Object", accelerator="Shift+F7", command=lambda: self.form and self.form.show_design())
+        view.add_command(label="Code", accelerator=menus.accelerator("F7"), command=lambda: self.form and self.form.show_code())
+        view.add_command(label="Object", accelerator=menus.accelerator("Shift+F7"), command=lambda: self.form and self.form.show_design())
         tools = tk.Menu(menubar, tearoff=False)
-        tools.add_command(label="Menu Editor...", accelerator="Ctrl+E", command=self.menu_editor)
+        tools.add_command(label="Menu Editor...", accelerator=menus.accelerator("Ctrl+E"), command=self.menu_editor)
         run = tk.Menu(menubar, tearoff=False)
-        run.add_command(label="Start", accelerator="F5", command=self.run)
+        run.add_command(label="Start", accelerator=menus.accelerator("F5"), command=self.run)
         run.add_command(label="End", command=self.stop)
         menubar.add_cascade(label="File", menu=file)
         menubar.add_cascade(label="Edit", menu=edit)
@@ -164,7 +166,7 @@ class App:
         menubar.add_cascade(label="Tools", menu=tools)
         menubar.add_cascade(label="Run", menu=run)
         help_menu = tk.Menu(menubar, tearoff=False)
-        help_menu.add_command(label="Help on This", accelerator="F1", command=self.show_help)
+        help_menu.add_command(label="Help on This", accelerator=menus.accelerator("F1"), command=self.show_help)
         help_menu.add_command(label="readymade Overview", command=lambda: self.show_topic(helptext.home()))
         menubar.add_cascade(label="Help", menu=help_menu)
         menus.defer_commands(menubar)  # or dialogs opened from it freeze on macOS

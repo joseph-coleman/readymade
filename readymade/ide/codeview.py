@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
-from readymade import codegen
+from readymade import codegen, menus
 from readymade.ide import highlight
 from readymade.ide.panels import MONO
 
@@ -227,7 +227,7 @@ class CodeView(ttk.Frame):
             except tk.TclError:  # a keysym this platform's Tk doesn't know
                 pass
         self.text.bind("<BackSpace>", self._backspace)
-        self.text.bind("<Control-slash>", self.toggle_comment)  # (Text's own Ctrl+/ selects everything)
+        menus.bind_shortcut(self.text, "Ctrl+/", self.toggle_comment)  # (Text's own Ctrl+/ selects everything)
         # Brackets and quotes close themselves.
         for keysym, opener in (("parenleft", "("), ("bracketleft", "["), ("braceleft", "{")):
             self.text.bind(f"<KeyPress-{keysym}>", lambda e, o=opener: self._open(o))
@@ -244,11 +244,12 @@ class CodeView(ttk.Frame):
         self.text.bind("<Up>", lambda e: self._up_down(-1))
         self.text.bind("<Down>", lambda e: self._up_down(1))
         self.text.bind("<Escape>", lambda e: "break" if self.completions.close() else None)
+        # The physical Control key everywhere: on a Mac ⌘Space is Spotlight (VS Code uses ⌃Space too).
         self.text.bind("<Control-space>", lambda e: self._ask_completions(manual=True))
         self.text.bind("<KeyRelease>", self._key_released, add="+")
         self.text.bind("<FocusOut>", lambda e: self.completions.close(), add="+")
         self.text.bind("<ButtonPress-1>", lambda e: self.completions.close(), add="+")
-        self.text.bind("<Control-Button-1>", self._control_click)
+        self.text.bind(f"<{menus.tk_modifier('Ctrl')}-Button-1>", self._control_click)  # ⌘-click on a Mac
         for sequence in ("<Configure>", "<KeyRelease>", "<ButtonRelease-1>"):  # resized, or the cursor moved
             self.text.bind(sequence, lambda e: self._show_numbers(), add="+")
 
