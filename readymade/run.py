@@ -19,7 +19,7 @@ import tkinter as tk
 from pathlib import Path
 
 from readymade import forms
-from readymade.form import app_root, main_loop, set_app_path
+from readymade.form import app_root, main_loop, set_app_icon, set_app_path
 from readymade.project import Project
 
 
@@ -61,6 +61,9 @@ def main(argv=None):
         raise SystemExit(f"{project.folder} has no forms to run")
     sys.path.insert(0, str(project.folder))
     set_app_path(project.folder)
+    icon = project.setting("icon")
+    if icon:
+        set_app_icon(project.folder / icon)
     form = getattr(forms, startup)
     if args.immediate:
         attach_immediate(form)

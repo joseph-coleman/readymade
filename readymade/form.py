@@ -23,7 +23,7 @@ import sys
 import tkinter as tk
 from pathlib import Path
 
-from readymade import appearance, events, formfile, forms, menus
+from readymade import appearance, events, formfile, forms, menus, pictures
 from readymade.controls import Button, Event, _TabStop, control_of, create, repaint_inside
 
 FORM = "Form"
@@ -59,6 +59,38 @@ def set_app_path(folder):
     global _folder
     _folder = Path(folder)
 _loaded: set[Form] = set()
+
+
+_icon = None  # the program's window icon (Tk forgets images nothing refers to)
+
+
+def set_app_icon(path):
+    """Use a picture as the icon of every window of the program, in its title bar and the
+    taskbar: a PNG or GIF (with Pillow, also .ico and other formats). The IDE, `python
+    Form1.py` and Make EXE do this with the project's icon (Project > Program Icon)."""
+    global _icon
+    try:
+        photo, _ = pictures.load(path, master=app_root())
+    except (OSError, tk.TclError) as e:
+        print(f"Can't use {path} as the program's icon ({e})", file=sys.stderr)
+        return False
+    app_root().iconphoto(True, photo)  # True: every window, including those not made yet
+    _icon = photo
+    return True
+
+
+def _project_icon(folder):
+    """The project icon of the project in folder, as a full path, or None."""
+    folder = Path(folder)
+    if not (folder / "pyproject.toml").exists():
+        return None
+    from readymade.project import Project, ProjectError
+
+    try:
+        icon = Project(folder).setting("icon")
+    except ProjectError:  # e.g. Python 3.10, which can't read pyproject.toml
+        return None
+    return folder / icon if icon else None
 
 
 def app_root():
@@ -105,6 +137,9 @@ class Form:
     @classmethod
     def run(cls, path=None):
         """Start a program with this form, e.g. from `python Form1.py`."""
+        icon = _project_icon(Path(path).parent if path else Path(inspect.getfile(cls)).parent)
+        if icon:
+            set_app_icon(icon)
         form = cls(path)
         forms.register(cls.__name__, form)
         form.show()

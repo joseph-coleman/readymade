@@ -656,6 +656,29 @@ def drive(d):
     d.check("its tab closed", any(e.name == "Settings" for e in app.editors), False)
     d.check("gone from the Explorer", tree.exists("form:Settings"), False)
 
+    print("A tooltip and maxlength in the running program")
+    editor.set_property("Button1", "tooltip", "Says hello")
+    editor.set_property("TextBox1", "maxlength", "5")
+    editor.set_property("TextBox1", "text", "")
+    d.key("F5")
+    x, y = d.ask("(Button1.widget.winfo_rootx() + 10, Button1.widget.winfo_rooty() + 10)")
+    d.xdo("mousemove", x - 60, y)
+    d.pump(0.2)
+    d.xdo("mousemove", x, y)  # rest the mouse on Button1
+    d.pump(1.2)
+    tip = "(lambda t: t.window.winfo_children()[0].cget('text') if t.window else None)(__import__('readymade.controls').controls._tip)"
+    d.check("the tooltip shows", d.ask(tip), "Says hello")
+    d.shot("tooltip")
+    x, y = d.ask("(TextBox1.widget.winfo_rootx() + 20, TextBox1.widget.winfo_rooty() + 10)")
+    d.click(x, y)
+    d.check("moving away hides it", d.ask(tip), None)
+    d.type("abcdefgh")
+    d.check("maxlength stops typing", d.ask("TextBox1.text"), "abcde")
+    app.immediate_line("form.close()")
+    deadline = time.time() + 10
+    while app.process is not None and time.time() < deadline:
+        d.pump(0.05)
+
 
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/readymade-ui")

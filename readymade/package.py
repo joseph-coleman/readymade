@@ -41,15 +41,25 @@ def exe_path(project, platform=sys.platform):
 
 def launcher_source(project, startup):
     names = [*project.forms(), *project.modules()]
+    icon = project.setting("icon")
     return (
         "# Made by readymade's Make EXE: starts the program. Changes here are overwritten.\n"
         f"import {', '.join(names)}  # noqa: F401  (so PyInstaller bundles every form and module)\n"
         "from readymade import forms\n"
-        "from readymade.form import main_loop\n"
+        "from readymade.form import app_path, main_loop, set_app_icon\n"
         "\n"
-        f"forms.{startup}.show()\n"
+        + (f"set_app_icon(app_path({icon!r}))\n" if icon else "")
+        + f"forms.{startup}.show()\n"
         "main_loop()\n"
     )
+
+
+def icon_needs_pillow(project, platform=sys.platform):
+    """Whether PyInstaller needs Pillow to turn the project's icon into the system's own format
+    (.ico on Windows, .icns on macOS; Linux programs have no icon of their own)."""
+    icon = project.setting("icon")
+    native = {"win32": ".ico", "darwin": ".icns"}.get(platform)
+    return bool(icon and native and Path(icon).suffix.lower() != native)
 
 
 def write_launcher(project, startup):
@@ -88,6 +98,10 @@ def bundled_files(project):
                 if spec.get(prop):
                     path = project.folder / spec[prop]
                     add(path) if path.is_file() else missing.append(f"{form}.{spec['name']}.{prop}: {spec[prop]}")
+    icon = project.setting("icon")
+    if icon:  # for the windows' icon (the program file's own is built in)
+        path = project.folder / icon
+        add(path) if path.is_file() else missing.append(f"icon: {icon}")
     include = project.setting("include") or []
     for entry in [include] if isinstance(include, str) else include:
         if any(c in entry for c in "*?["):
@@ -115,5 +129,8 @@ def pyinstaller_args(project, launcher, readymade_root, platform=sys.platform):
     for path, place in bundled_files(project)[0]:
         # Paths are absolute, as the spec lives in build/.
         args += ["--add-data", f"{path}{os.pathsep}{place}"]
+    icon = project.setting("icon")
+    if icon and platform in ("win32", "darwin") and (project.folder / icon).is_file():
+        args += ["--icon", str(project.folder / icon)]  # the program file's own icon
     args.append(str(launcher))
     return args

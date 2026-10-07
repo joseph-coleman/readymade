@@ -90,7 +90,7 @@ def test_which_controls_have_which_properties():
     assert REGISTRY["Canvas"].prop_defaults()["backcolor"] == "#ffffff"
     defaults = list(REGISTRY["Label"].prop_defaults())
     assert defaults[:6] == ["text", "backcolor", "forecolor", "font", "alignment", "valignment"]
-    assert defaults[-1] == "cursor"
+    assert defaults[-3:] == ["cursor", "tooltip", "tag"]
     assert REGISTRY["Label"].choices("valignment") == ("top", "middle", "bottom")
     assert REGISTRY["ListBox"].choices("alignment") is None
 

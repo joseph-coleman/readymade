@@ -24,7 +24,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from readymade import events, formatting, menus, package
 from readymade.formfile import FormFileError
 from readymade.ide import assist
-from readymade.ide.editors import FormEditor, ModuleEditor, ViewerEditor
+from readymade.ide.editors import FormEditor, ModuleEditor, ViewerEditor, bring_in
 from readymade.ide.linting import Linter
 from readymade.ide.menueditor import MenuEditor
 from readymade.ide import helptext
@@ -145,6 +145,9 @@ class App:
         project.add_command(label="Linting...", command=lambda: self.project and linting_dialog(self))
         project.add_command(label="Formatting...", command=lambda: self.project and formatting_dialog(self))
         project.add_command(label="Use Default Python", command=lambda: self.set_python(None))
+        project.add_separator()
+        project.add_command(label="Program Icon...", command=self.choose_icon)
+        project.add_command(label="Remove Program Icon", command=lambda: self.set_icon(None))
         view = tk.Menu(menubar, tearoff=False)
         view.add_command(label="Code", accelerator="F7", command=lambda: self.form and self.form.show_code())
         view.add_command(label="Object", accelerator="Shift+F7", command=lambda: self.form and self.form.show_design())
@@ -939,10 +942,12 @@ class App:
             self._start([str(python), *package.pyinstaller_args(project, launcher, _PACKAGE_ROOT)], on_exit=built)
 
         def with_pyinstaller():
-            # Quietly check whether the environment has PyInstaller; install it if not.
-            check = "import importlib.util, sys; sys.exit(importlib.util.find_spec('PyInstaller') is None)"
+            # Quietly check whether the environment has PyInstaller (and Pillow, if the icon
+            # needs converting to the system's own format); install them if not.
+            needs = {"PyInstaller": "pyinstaller", **({"PIL": "pillow"} if package.icon_needs_pillow(project) else {})}
+            check = f"import importlib.util, sys; sys.exit(any(importlib.util.find_spec(m) is None for m in {list(needs)!r}))"
             self._start([str(project.python()), "-c", check], on_exit=lambda code: build() if code == 0 else self._pip_install(
-                ["pyinstaller"], build, failed="pip couldn't install PyInstaller, so the program wasn't made."))
+                list(needs.values()), build, failed="pip couldn't install what Make EXE needs, so the program wasn't made."))
 
         python = project.python()
         if python is not None:
@@ -971,6 +976,34 @@ class App:
             [str(python), "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off", *requirements],
             on_exit=lambda code: on_success() if code == 0 else self.immediate.write(f"--- {failed} ---\n"),
         )
+
+    ICON_TYPES = {"Icons and pictures": "*.png *.gif *.ico *.icns", "All files": "*"}
+
+    def choose_icon(self):
+        """Project > Program Icon: choose the picture the program's windows, and the program
+        Make EXE makes, show as their icon. One from outside the project is copied into images/."""
+        if self.project is None:
+            return
+        chosen = filedialog.askopenfilename(parent=self.root, title="Program Icon", initialdir=self.project.folder,
+                                            filetypes=list(self.ICON_TYPES.items()))
+        if chosen:
+            try:
+                self.set_icon(bring_in(self.project.folder, Path(chosen)))
+            except OSError as e:
+                messagebox.showerror("Program Icon", f"Couldn't copy {chosen}: {e}", parent=self.root)
+
+    def set_icon(self, path):
+        """Set (or with None, remove) the project's icon: a path relative to the project folder."""
+        if self.project is None:
+            return
+        self.project.set_setting("icon", path)
+        if path is None:
+            self.immediate.write("--- The program no longer has an icon of its own. ---\n")
+            return
+        self.immediate.write(f"--- The program's icon is now {path}. ---\n")
+        if Path(path).suffix.lower() not in (".png", ".gif"):
+            self.immediate.write("(A .png works everywhere; other formats need the Pillow library in the project "
+                                 "for the windows' icon.)\n")
 
     def remove_from_project(self, kind, name):
         """Delete a form's or module's files ("form", "module"), or take a library out of the

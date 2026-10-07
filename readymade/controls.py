@@ -161,6 +161,8 @@ class Control:
             "visible": True,
             **({"tabindex": 0} if issubclass(cls, _TabStop) else {}),
             **({"cursor": "default"} if issubclass(cls, _Cursor) else {}),
+            **({"tooltip": ""} if issubclass(cls, _Tooltip) else {}),
+            "tag": "",
         }
 
     @classmethod
@@ -203,6 +205,15 @@ class Control:
     top = _geometry("top", "Distance from the top edge of its container (the form or a Frame), in pixels.")
     width = _geometry("width", "Width, in pixels.")
     height = _geometry("height", "Height, in pixels.")
+
+    @property
+    def tag(self):
+        """Anything you'd like to keep with it, as text, like VB's Tag: readymade doesn't use it."""
+        return self._tag
+
+    @tag.setter
+    def tag(self, value):
+        self._tag = str(value)
 
     @property
     def visible(self):
@@ -309,6 +320,58 @@ class Control:
             return  # the designer keeps its own cursor
         for widget in self.design_widgets():
             self._set(widget, "cursor", appearance.CURSORS[self._cursor] or None)
+
+    def _connect_tooltip(self):
+        if self.design or getattr(self, "_tooltip_connected", False):
+            return  # the designer shows no tooltips
+        self._tooltip_connected = True
+        for widget in self.design_widgets():
+            widget.bind("<Enter>", lambda e: _tip.wait(self, e.x_root, e.y_root), add="+")
+            for sequence in ("<Leave>", "<ButtonPress>", "<KeyPress>"):
+                widget.bind(sequence, lambda e: _tip.hide(), add="+")
+
+
+class _Tip:
+    """The small box a tooltip shows in. There's one at a time, so one serves every control."""
+
+    DELAY = 600  # milliseconds the mouse rests over a control before its tooltip shows
+
+    def __init__(self):
+        self.window = None
+        self.job = None  # (widget, after id) while waiting to show
+
+    def wait(self, control, x, y):
+        self.hide()
+        if control._tooltip:
+            self.job = (control.widget, control.widget.after(self.DELAY, lambda: self.show(control, x, y)))
+
+    def show(self, control, x, y):
+        self.job = None
+        if not control._tooltip or not control.widget.winfo_viewable():
+            return
+        window = self.window = tk.Toplevel(control.widget)
+        window.wm_overrideredirect(True)  # no title bar or border from the window manager
+        tk.Label(window, text=control._tooltip, background="#ffffe0", foreground="#000000", relief="solid", bd=1,
+                 padx=4, pady=2, justify="left", wraplength=320).pack()
+        window.wm_geometry(f"+{x + 12}+{y + 18}")
+
+    def hide(self):
+        if self.job:
+            widget, job = self.job
+            self.job = None
+            try:
+                widget.after_cancel(job)
+            except tk.TclError:
+                pass
+        if self.window is not None:
+            try:
+                self.window.destroy()
+            except tk.TclError:
+                pass
+            self.window = None
+
+
+_tip = _Tip()
 
 
 # Each control's Tk widget -> the control, so a container can repaint what's inside it.
@@ -463,6 +526,23 @@ class _TabStop:
         return self.widget
 
 
+class _Tooltip:
+    """A tooltip property."""
+
+    _tooltip: str
+
+    @property
+    def tooltip(self):
+        """Text shown in a small box when the mouse rests over it while the program runs; "" for none."""
+        return self._tooltip
+
+    @tooltip.setter
+    def tooltip(self, value):
+        self._tooltip = str(value or "")
+        if self._tooltip:
+            self._connect_tooltip()
+
+
 class _WidgetText:
     """A text property backed by the widget's own text option."""
 
@@ -479,7 +559,7 @@ class _WidgetText:
 
 
 @register
-class Label(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, Control):
+class Label(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, _Tooltip, Control):
     """Text on a form, such as a caption or a result. It can't be typed in, but it can be clicked."""
 
     type_name = "Label"
@@ -496,10 +576,11 @@ SCROLLBARS = ("none", "horizontal", "vertical", "both")
 
 
 @register
-class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Control):
+class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, _Tooltip, Control):
     """A text field. With multiline True it's a multi-line text area, optionally with
     scrollbars. As in VB, both are set in the designer, and scrollbars only apply to
-    multi-line boxes. `editor` is the Entry or Text the user types in.
+    multi-line boxes. readonly, password and maxlength limit what the user can do;
+    code can always set text. `editor` is the Entry or Text the user types in.
     """
 
     type_name = "TextBox"
@@ -508,7 +589,8 @@ class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Contro
     recreate_props = ("multiline", "scrollbars")
     prop_choices = {"scrollbars": SCROLLBARS}
     events = (Event("change"), Event("keypress", ("key",)), *_FOCUS_EVENTS, Event("click"), Event("dblclick"))
-    extra_props = {"text": "", "multiline": False, "scrollbars": "none"}
+    extra_props = {"text": "", "multiline": False, "scrollbars": "none", "readonly": False, "password": False,
+                   "maxlength": 0}
 
     def __init__(self, parent, spec, design=False, folder=None):
         self._multiline = bool(spec.get("multiline", False))
@@ -518,9 +600,13 @@ class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Contro
         super().__init__(parent, spec, design, folder)
 
     def create_widget(self, parent):
+        self._readonly = self._password = False
+        self._maxlength = 0
         if not self._multiline:
             self._var = tk.StringVar(parent)
             self.editor = tk.Entry(parent, textvariable=self._var)
+            # Tk checks each edit the user makes (not code's) with this before making it.
+            self.editor.configure(validate="key", validatecommand=(self.editor.register(self._fits), "%P"))
             self._parts = [self.editor]
             return self.editor
         horizontal = self._scrollbars in ("horizontal", "both")
@@ -531,6 +617,8 @@ class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Contro
         self.editor = tk.Text(frame, width=1, height=1, font="TkTextFont", wrap="none" if horizontal else "word", undo=True)
         self.editor.grid(row=0, column=0, sticky="nsew")
         self.editor.bind("<Tab>", self._tab_out)
+        self.editor.bind("<KeyPress>", self._limit_typing, add="+")  # maxlength (a Text can't validate)
+        self.editor.bind("<<Paste>>", self._limit_paste, add="+")
         # A Text has no alignment of its own, only its tags', so keep all of its text tagged.
         self.editor.tag_configure("readymade-align", justify="left")
         for sequence in ("<KeyRelease>", "<ButtonRelease-2>"):
@@ -559,6 +647,10 @@ class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Contro
     def _painted(self):
         return [w for w in self._parts if not isinstance(w, tk.Scrollbar)]
 
+    def _paint(self):
+        super()._paint()
+        if self._ready and not self._multiline:
+            self.editor["readonlybackground"] = self.editor["background"]  # read-only looks the same, as in VB
     def _font_widgets(self):
         return [self.editor]
 
@@ -624,7 +716,78 @@ class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Contro
     @enabled.setter
     def enabled(self, value):
         self._enabled = bool(value)
-        self.editor["state"] = tk.NORMAL if self._enabled else tk.DISABLED
+        self._update_state()
+
+    @property
+    def readonly(self):
+        """Whether the user can't change the text, as with VB's Locked. They can still select
+        it (and in a single-line box, copy it). Code can still set text."""
+        return self._readonly
+
+    @readonly.setter
+    def readonly(self, value):
+        self._readonly = bool(value)
+        self._update_state()
+
+    @property
+    def password(self):
+        """Whether the text shows as dots, for passwords. Single-line boxes only."""
+        return self._password
+
+    @password.setter
+    def password(self, value):
+        self._password = bool(value)
+        if not self._multiline:
+            self.editor["show"] = "\u2022" if self._password else ""
+
+    @property
+    def maxlength(self):
+        """The most characters the user can type or paste in; 0 for no limit. Code can still set longer text."""
+        return self._maxlength
+
+    @maxlength.setter
+    def maxlength(self, value):
+        value = int(value)
+        if value < 0:
+            raise ValueError("maxlength can't be negative (0 means no limit)")
+        self._maxlength = value
+
+    def _update_state(self):
+        if not getattr(self, "_enabled", True):
+            state = tk.DISABLED
+        elif self._readonly:
+            state = tk.DISABLED if self._multiline else "readonly"  # a Text has no read-only state
+        else:
+            state = tk.NORMAL
+        self.editor["state"] = state
+
+    def _fits(self, proposed):
+        return not self._maxlength or len(proposed) <= self._maxlength
+
+    def _limit_typing(self, e):
+        """Stop typing into a full multi-line box (unless it replaces a selection)."""
+        typing = (e.char and e.char.isprintable()) or e.keysym in ("Return", "KP_Enter")
+        if self._maxlength and typing and not self.editor.tag_ranges("sel") and len(self.text) >= self._maxlength:
+            return "break"
+        return None
+
+    def _limit_paste(self, e):
+        """Paste only as much as fits into a multi-line box."""
+        if not self._maxlength:
+            return None
+        try:
+            pasted = self.editor.clipboard_get()
+        except tk.TclError:
+            return "break"  # nothing to paste
+        selected = self.editor.tag_ranges("sel")
+        replaced = len(self.editor.get(*selected)) if selected else 0
+        room = max(0, self._maxlength - len(self.text) + replaced)
+        if len(pasted) <= room:
+            return None  # it all fits: paste as usual
+        if selected:
+            self.editor.delete(*selected)
+        self.editor.insert("insert", pasted[:room])
+        return "break"
 
     def bind_event(self, event, handler):
         if event != "change":
@@ -650,7 +813,7 @@ class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Contro
 
 
 @register
-class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, Control):
+class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, _Tooltip, Control):
     """A captioned box that groups controls. Controls drawn inside it belong to it: they're
     positioned relative to it and move with it, and its OptionButtons form their own group."""
 
@@ -696,7 +859,7 @@ class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, Contr
 
 
 @register
-class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, Control):
+class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, _Tooltip, Control):
     """A push button. Its click event runs when it's clicked, or pressed with Space while it has the focus.
     (On macOS, buttons keep the system's own colors.)"""
 
@@ -718,7 +881,7 @@ class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _T
 
 
 @register
-class CheckBox(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, Control):
+class CheckBox(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, _Tooltip, Control):
     """A box that can be ticked. value is True while it's ticked; click runs each time it changes."""
 
     type_name = "CheckBox"
@@ -752,7 +915,7 @@ _option_groups: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 @register
-class OptionButton(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, Control):
+class OptionButton(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, _Tooltip, Control):
     """A radio button. Option buttons in the same container form one group, as in VB."""
 
     type_name = "OptionButton"
@@ -823,7 +986,7 @@ class _ListMixin:
 
 
 @register
-class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Control):
+class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, _Tooltip, Control):
     """A drop-down list. With editable False the user can only pick from the list."""
 
     type_name = "ComboBox"
@@ -938,7 +1101,7 @@ class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _TabStop, _C
 
 
 @register
-class ListBox(_ListMixin, _BackColor, _ForeColor, _Font, _TabStop, _Cursor, Control):
+class ListBox(_ListMixin, _BackColor, _ForeColor, _Font, _TabStop, _Cursor, _Tooltip, Control):
     """A list to choose from. click runs when the choice changes; list_index and text tell
     which item is chosen."""
 
@@ -994,7 +1157,7 @@ _TEXT_ANCHORS = {"nw": "la", "n": "ma", "ne": "ra", "w": "lm", "center": "mm", "
 
 
 @register
-class Image(_BackColor, _Cursor, Control):
+class Image(_BackColor, _Cursor, _Tooltip, Control):
     """A picture from a file: PNG or GIF, and with Pillow installed also JPEG and others.
     picture is the file's path, relative to the program's folder (see app_path); sizing
     chooses how picture and control fit each other. In code, picture can also be set to
@@ -1262,7 +1425,7 @@ def _pixel_style(color, fill, thickness):
 
 
 @register
-class Canvas(_BackColor, _Cursor, Control):
+class Canvas(_BackColor, _Cursor, _Tooltip, Control):
     """A drawing surface. Its drawing methods (line, rectangle, oval, circle, arc, polygon,
     text, picture, point) each return a Shape, which stays until it's deleted: move it,
     recolor it, hide it, check what it overlaps. Mouse events say where the mouse is and
@@ -1447,7 +1610,7 @@ class Timer(Control):
 
     @classmethod
     def prop_defaults(cls):
-        return {"interval": 1000, "left": 0, "top": 0, "enabled": True}
+        return {"interval": 1000, "left": 0, "top": 0, "enabled": True, "tag": ""}
 
     width = property(lambda self: self.default_size[0])
     height = property(lambda self: self.default_size[1])
