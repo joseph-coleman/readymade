@@ -59,7 +59,8 @@ class ProjectExplorer(ttk.Frame):
         self.tree.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
         self.tree.bind("<Double-Button-1>", lambda e: self._open("design"))
         self.tree.bind("<Return>", lambda e: self._open("design"))
-        self.tree.bind("<Button-3>", self._popup)
+        for sequence in menus.context_clicks(self.tree):
+            self.tree.bind(sequence, self._popup)
         self.tree.bind("<Delete>", lambda e: self._remove())
         self.menu = tk.Menu(self, tearoff=False)
         self.menu.add_command(label="View Object", command=lambda: self._open("design"))

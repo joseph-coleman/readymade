@@ -117,6 +117,15 @@ def names(items):
     return [item["name"] for item in walk(items) if item.get("name")]
 
 
+def context_clicks(widget):
+    """The mouse clicks that open a right-click (context) menu: the right button, and on a
+    Mac also Control+click. Tk 8.6 calls a Mac's right button 2 (Tk 9 calls it 3, as
+    everywhere else); elsewhere 2 is the middle button, which pastes on Linux."""
+    if widget.tk.call("tk", "windowingsystem") == "aqua":
+        return ("<Button-2>", "<Button-3>", "<Control-Button-1>")
+    return ("<Button-3>",)
+
+
 def later(widget, command):
     """command, run once the menu that chose it has closed rather than while it's still
     open. On macOS, a dialog (or anything else with its own wait loop) started from

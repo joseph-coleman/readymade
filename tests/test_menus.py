@@ -193,3 +193,42 @@ def test_every_ide_menu_command_is_deferred(tmp_path, monkeypatch):
     finally:
         app.stop()
         root.destroy()
+
+
+def test_context_clicks():
+    class FakeTk:
+        def __init__(self, system):
+            self.system = system
+
+        def call(self, *args):
+            assert args == ("tk", "windowingsystem")
+            return self.system
+
+    class Widget:
+        def __init__(self, system):
+            self.tk = FakeTk(system)
+
+    # On a Mac, Tk 8.6 calls the right button 2 (Tk 9: 3), and Control+click is a right click too.
+    assert menus.context_clicks(Widget("aqua")) == ("<Button-2>", "<Button-3>", "<Control-Button-1>")
+    # Elsewhere button 2 is the middle button.
+    assert menus.context_clicks(Widget("x11")) == menus.context_clicks(Widget("win32")) == ("<Button-3>",)
+
+
+@pytest.mark.usefixtures("display")
+def test_project_explorer_opens_its_menu_on_a_right_click(tmp_path, monkeypatch):
+    from readymade.ide.app import App
+
+    root = tk.Tk()
+    app = App(root, tmp_path / "Shop")
+    try:
+        tree = app.explorer.tree
+        assert tree.bind("<Button-3>") and not tree.bind("<Button-2>")  # this isn't a Mac
+        shown = []
+        monkeypatch.setattr(tk.Menu, "tk_popup", lambda menu, x, y, entry="": shown.append(menu))
+        root.update()
+        x, y, w, h = tree.bbox("form:Form1")
+        tree.event_generate("<Button-3>", x=x + 5, y=y + h // 2)
+        assert shown == [app.explorer.menu] and tree.focus() == "form:Form1"
+    finally:
+        app.stop()
+        root.destroy()
