@@ -20,7 +20,7 @@ def test_colors():
     assert appearance.check_color("#FF8000") == "#ff8000"
     assert appearance.check_color("") == appearance.check_color(None) == ""
     for bad in ("red", "#f80", "ff8000", "#ff80001"):
-        with pytest.raises(ValueError, match="isn't a colour"):
+        with pytest.raises(ValueError, match="isn't a color"):
             appearance.check_color(bad)
     assert appearance.lighter("#000000", 0.5) == "#80808" + "0"
 
@@ -117,7 +117,7 @@ def test_label(make_form):
         label.backcolor = "blue"
 
 
-def test_labels_show_their_containers_colour(make_form):
+def test_labels_show_their_containers_color(make_form):
     form = make_form(
         ("Label", "Label1", None, {}),
         ("Frame", "Frame1", None, {}),
@@ -127,12 +127,12 @@ def test_labels_show_their_containers_colour(make_form):
         backcolor="#336699",
     )
     assert form.backcolor == "#336699" and form.root["background"] == "#336699"
-    assert form.Label1.widget["background"] == "#336699"  # shows the form's colour
+    assert form.Label1.widget["background"] == "#336699"  # shows the form's color
     assert form.Frame1.widget["background"] == form.Frame1.inner["background"] == "#336699"
     assert form.Check1.widget["background"] == "#336699"
-    assert form.Text1.widget["background"] != "#336699"  # a text box has its own colour
+    assert form.Text1.widget["background"] != "#336699"  # a text box has its own color
     form.Frame1.backcolor = "#ffeedd"
-    assert form.Check1.widget["background"] == "#ffeedd"  # inside the frame: the frame's colour
+    assert form.Check1.widget["background"] == "#ffeedd"  # inside the frame: the frame's color
     assert form.Own.widget["background"] == "#00ff00"
     form.backcolor = "#000000"
     assert form.Label1.widget["background"] == "#000000"
@@ -257,13 +257,13 @@ def app(tmp_path):
     from readymade.ide.app import App
 
     root = tk.Tk()
-    app = App(root, tmp_path / "Colours")
+    app = App(root, tmp_path / "Colors")
     yield app
     app.stop()
     root.destroy()
 
 
-def test_designer_colours_fonts_and_alignment(app, monkeypatch):
+def test_designer_colors_fonts_and_alignment(app, monkeypatch):
     editor = app.form
     editor.add_control("Label", 16, 16)
     panel = app.properties
@@ -279,7 +279,7 @@ def test_designer_colours_fonts_and_alignment(app, monkeypatch):
     assert editor.design.control("Label1")["backcolor"] == "#ff0000"
     assert editor.surface.controls["Label1"].widget["background"] == "#ff0000"
     assert panel._swatches["backcolor"]["background"] == "#ff0000"
-    monkeypatch.setattr(colorchooser, "askcolor", lambda **kw: (None, None))  # cancelled
+    monkeypatch.setattr(colorchooser, "askcolor", lambda **kw: (None, None))  # canceled
     panel._choose("forecolor")
     assert editor.design.control("Label1")["forecolor"] == ""
 
@@ -305,7 +305,7 @@ def test_designer_colours_fonts_and_alignment(app, monkeypatch):
     assert str(editor.surface.controls["Label1"].widget["anchor"]) == "w"
 
 
-def test_designer_form_colour(app, monkeypatch):
+def test_designer_form_color(app, monkeypatch):
     editor = app.form
     editor.add_control("Label", 16, 16)
     editor.add_control("TextBox", 16, 56)

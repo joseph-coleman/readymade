@@ -1,7 +1,7 @@
-"""Syntax colouring for the code window, in the colours of VS Code's light theme.
+"""Syntax coloring for the code window, in the colors of VS Code's light theme.
 
 Uses Pygments when it's installed (`pip install readymade[ide]`); without it,
-a simpler built-in colouring of keywords, strings and comments.
+a simpler built-in coloring of keywords, strings and comments.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import keyword
 import re
 from typing import Any
 
-# Tag name -> colour. The code window gives each tag its colour.
+# Tag name -> color. The code window gives each tag its color.
 COLORS = {
     "keyword": "#0000ff",
     "control": "#af00db",
@@ -40,7 +40,7 @@ except ImportError:
 
 
 def spans(source):
-    """(tag, start, end) for the coloured parts of source, as Tk text indexes like "3.4"."""
+    """(tag, start, end) for the colored parts of source, as Tk text indexes like "3.4"."""
     found = _pygments_spans(source) if _LEXER is not None else _simple_spans(source)
     merged = []
     for tag, start, end in found:

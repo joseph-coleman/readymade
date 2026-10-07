@@ -79,7 +79,7 @@ def answer_inputbox(form, text):
     form.root.after(50, type_it)
 
 
-def test_inputbox_is_like_input_but_can_be_cancelled(form):
+def test_inputbox_is_like_input_but_can_be_canceled(form):
     answer_inputbox(form, "Ada")
     assert inputbox("What's your name?") == "Ada"
     answer_inputbox(form, None)
@@ -100,7 +100,7 @@ def test_file_dialogs(form, monkeypatch):
     assert calls[-1]["filetypes"] == [("Text files", "*.txt"), ("All files", "*")]
     assert calls[-1]["initialdir"] == "/data" and calls[-1]["parent"] is form.root
     monkeypatch.setattr(filedialog, "askopenfilename", fake(""))
-    assert open_file_dialog() is None  # cancelled
+    assert open_file_dialog() is None  # canceled
 
     monkeypatch.setattr(filedialog, "askopenfilenames", fake(("/a.png", "/b.png")))
     assert open_file_dialog(multiple=True) == [Path("/a.png"), Path("/b.png")]

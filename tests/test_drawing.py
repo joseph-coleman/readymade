@@ -37,10 +37,10 @@ def make_form(tmp_path):
         form.root.destroy()
 
 
-def write_png(path, width, height, colour):
+def write_png(path, width, height, color):
     root = tk.Tk()
     photo = tk.PhotoImage(master=root, width=width, height=height)
-    photo.put(colour, to=(0, 0, width, height))
+    photo.put(color, to=(0, 0, width, height))
     photo.write(str(path), format="png")
     root.destroy()
     return path
@@ -90,7 +90,7 @@ def test_text(make_form, capsys):
     image.text(0, 0, "x", font=("No Such Font", 10))
     assert "'No Such Font' wasn't found" in capsys.readouterr().err
     left = [x for x in range(200) if any(image.pixel(x, y) != WHITE for y in range(15, 45))]
-    assert left and 80 < min(left) < 100 < max(left) < 120  # centred on 100
+    assert left and 80 < min(left) < 100 < max(left) < 120  # centered on 100
     with pytest.raises(ValueError, match="anchor must be one of"):
         image.text(0, 0, "x", anchor="middle")
 
@@ -160,10 +160,10 @@ def test_paste_and_save(make_form, tmp_path):
     assert pictures.open_for_drawing(tmp_path / "out.jpg").size == (20, 20)
 
 
-def test_bad_colours(make_form):
+def test_bad_colors(make_form):
     image = make_form().Image1
     image.new(10, 10)
-    with pytest.raises(ValueError, match="isn't a colour"):
+    with pytest.raises(ValueError, match="isn't a color"):
         image.line(0, 0, 5, 5, color="bluish")
 
 

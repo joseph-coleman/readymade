@@ -25,7 +25,7 @@ same handler follows a policy:
     "overlap"  run it straight away, nested, as VB's DoEvents did
 
 @while_running("queue") above a handler changes its policy. When a form
-closes, its busy handlers stop quietly: async ones are cancelled, and
+closes, its busy handlers stop quietly: async ones are canceled, and
 doevents() in one raises FormClosed, which readymade catches.
 """
 
@@ -82,7 +82,7 @@ async def in_thread(func, *args, **kwargs):
     future = loop.create_future()
 
     def settle(outcome, value):
-        if not future.done():  # the handler may have been cancelled meanwhile
+        if not future.done():  # the handler may have been canceled meanwhile
             future.set_result(value) if outcome == "result" else future.set_exception(value)
 
     def work():

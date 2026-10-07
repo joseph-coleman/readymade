@@ -56,8 +56,8 @@ def inputbox(prompt, title=None, default=""):
 
 
 def open_file_dialog(title=None, filetypes=None, folder=None, multiple=False):
-    """Choose a file to open. Returns its Path, or None if cancelled. With
-    multiple=True, returns a list of Paths (empty if cancelled).
+    """Choose a file to open. Returns its Path, or None if canceled. With
+    multiple=True, returns a list of Paths (empty if canceled).
     filetypes is like {"Text files": "*.txt", "Images": "*.png *.jpg"}."""
     options = _file_options(title, filetypes, folder)
     if multiple:
@@ -66,7 +66,7 @@ def open_file_dialog(title=None, filetypes=None, folder=None, multiple=False):
 
 
 def save_file_dialog(title=None, filetypes=None, folder=None, filename=""):
-    """Choose where to save a file. Returns its Path, or None if cancelled. The
+    """Choose where to save a file. Returns its Path, or None if canceled. The
     first filetype's extension is added if the name has none."""
     options = _file_options(title, filetypes, folder)
     options["initialfile"] = filename
@@ -78,14 +78,14 @@ def save_file_dialog(title=None, filetypes=None, folder=None, filename=""):
 
 
 def folder_dialog(title=None, folder=None):
-    """Choose a folder. Returns its Path, or None if cancelled."""
+    """Choose a folder. Returns its Path, or None if canceled."""
     options = _file_options(title, None, folder)
     return _path(filedialog.askdirectory(mustexist=True, **options))
 
 
 def color_dialog(color=None, title=None):
     """Choose a color, starting from color (like "#336699" or "red"). Returns
-    "#rrggbb", or None if cancelled."""
+    "#rrggbb", or None if canceled."""
     options: dict[str, Any] = {"parent": _parent()}
     if color is not None:
         options["color"] = color
@@ -96,7 +96,7 @@ def color_dialog(color=None, title=None):
 
 def font_dialog(font="", title=None):
     """Choose a font, starting from font (like "Arial, 12, bold"). Returns the font in the
-    same form, ready for a control's font property, or None if cancelled. "" is the usual font."""
+    same form, ready for a control's font property, or None if canceled. "" is the usual font."""
     parent = _parent()
     return FontChooser.ask(parent, font, title=str(title) if title is not None else "Font")
 

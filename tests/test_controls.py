@@ -1,4 +1,4 @@
-"""Runtime behaviour of each control type."""
+"""Runtime behavior of each control type."""
 
 import time
 

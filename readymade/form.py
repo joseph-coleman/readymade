@@ -116,7 +116,7 @@ class Form:
             return
         design = formfile.load(self.path)
         self._handlers = {}  # "Form_load" etc. -> events.Handler
-        self._tasks = set()  # running async handlers, cancelled when the form closes
+        self._tasks = set()  # running async handlers, canceled when the form closes
         self.root = tk.Toplevel(self._master or app_root())
         self.root.withdraw()
         self.root.title(design.text)
@@ -203,7 +203,7 @@ class Form:
 
     @property
     def backcolor(self):
-        """The form's background colour, as "#rrggbb"; "" for the usual colour. Labels, check
+        """The form's background color, as "#rrggbb"; "" for the usual color. Labels, check
         boxes, option buttons, frames and pictures with no backcolor of their own show it too."""
         return self._backcolor
 

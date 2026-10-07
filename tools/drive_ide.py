@@ -105,7 +105,7 @@ class Driver:
         subprocess.run(["xdotool", *map(str, args)], check=True)
 
     def at(self, widget, x=None, y=None):
-        """Screen coordinates of a point in widget (default: its centre)."""
+        """Screen coordinates of a point in widget (default: its center)."""
         x = widget.winfo_width() // 2 if x is None else x
         y = widget.winfo_height() // 2 if y is None else y
         return widget.winfo_rootx() + x, widget.winfo_rooty() + y
@@ -561,7 +561,7 @@ def drive(d):
     d.check("click on the background draws a circle", d.ask("[(s.kind, s.x, s.y, s.fill) for s in Canvas1.shapes()]"),
             [("circle", 30, 30, "#3060c0")])
     d.click(x + 32, y + 28)
-    d.check("click on the circle recolours it", d.ask("Canvas1.shapes()[0].fill"), "#e04040")
+    d.check("click on the circle recolors it", d.ask("Canvas1.shapes()[0].fill"), "#e04040")
     d.drag(x + 100, y + 20, x + 180, y + 50, steps=10)
     d.check("drag draws points", d.ask("sum(s.kind == 'point' for s in Canvas1.shapes()) >= 5"), True)
     x, y = d.ask("(Image1.widget.winfo_rootx(), Image1.widget.winfo_rooty())")
@@ -574,7 +574,7 @@ def drive(d):
     while app.process is not None and time.time() < deadline:
         d.pump(0.05)
 
-    print("Colours, font and alignment for Label1, with the Properties panel and the font dialog")
+    print("Colors, font and alignment for Label1, with the Properties panel and the font dialog")
     editor.show_design()
     d.pump()
     d.click(*d.at(editor.surface.controls["Label1"].widget))

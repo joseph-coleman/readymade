@@ -180,7 +180,7 @@ class MenuItem:
 
     @property
     def enabled(self):
-        """Whether it can be chosen. A disabled item is greyed out, and its shortcut does nothing."""
+        """Whether it can be chosen. A disabled item is grayed out, and its shortcut does nothing."""
         return str(self._menu.entrycget(self._index, "state")) != tk.DISABLED
 
     @enabled.setter

@@ -106,7 +106,7 @@ class DesignSurface(tk.Frame):
         self.title.configure(text=design.text)
         self.canvas.configure(width=design.width, height=design.height,
                               background=design.backcolor or self.window.cget("background"))
-        repaint_inside(self.canvas)  # controls showing the form's colour
+        repaint_inside(self.canvas)  # controls showing the form's color
         for control in self.controls.values():
             self._mark_default(control)
         self._draw_grid(design.width, design.height)

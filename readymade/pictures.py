@@ -129,13 +129,13 @@ def save(picture, path):
 
 @functools.lru_cache(maxsize=256)
 def rgba(color):
-    """(r, g, b, a) for "#rrggbb" (or a colour name); "" is transparent."""
+    """(r, g, b, a) for "#rrggbb" (or a color name); "" is transparent."""
     if not color:
         return (0, 0, 0, 0)
     try:
         return _ImageColor.getcolor(color, "RGBA")
     except ValueError:
-        raise ValueError(f"{color!r} isn't a colour; use \"#rrggbb\", like \"#ff0000\" for red") from None
+        raise ValueError(f"{color!r} isn't a color; use \"#rrggbb\", like \"#ff0000\" for red") from None
 
 
 def to_hex(value):

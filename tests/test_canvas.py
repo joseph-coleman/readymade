@@ -47,7 +47,7 @@ def test_drawing_returns_shapes(make_form):
     assert (line.color, line.thickness) == ("#ff0000", 3)
     assert box.points == [(10, 20), (40, 60)] and (box.x, box.y) == (10, 20)
     assert (box.color, box.fill) == ("#000000", "#00ff00")
-    assert (ball.x, ball.y) == (100, 80)  # a circle is where its centre is
+    assert (ball.x, ball.y) == (100, 80)  # a circle is where its center is
     assert (label.x, label.y, label.text, label.color) == (5, 5, "Score: 0", "#000000")
     assert (dot.x, dot.y, dot.color) == (3, 4, "#123456")
     assert triangle.points == [(10, 10), (60, 10), (35, 50)]
@@ -75,7 +75,7 @@ def test_changing_and_moving_shapes(make_form):
     with pytest.raises(AttributeError, match="a circle has no text"):
         ball.text = "no"
     with pytest.raises(ValueError):
-        ball.fill = "not a colour"
+        ball.fill = "not a color"
 
 
 def test_order_visibility_groups_and_deleting(make_form):
@@ -139,7 +139,7 @@ def test_bad_arguments(make_form):
         canvas.rectangle(0, 0, 5, 5, fill="nope")
     with pytest.raises(OSError):
         canvas.picture(0, 0, "missing.png")
-    with pytest.raises(ValueError, match="isn't a colour"):
+    with pytest.raises(ValueError, match="isn't a color"):
         canvas.backcolor = "nope"
 
 
@@ -229,7 +229,7 @@ def test_designing_a_canvas(tmp_path, monkeypatch):
         errors = []
         monkeypatch.setattr(messagebox, "showerror", lambda title, message, **kw: errors.append(message))
         assert editor.set_property("Canvas1", "backcolor", "navy blue please") is None
-        assert "isn't a colour" in errors[0]
+        assert "isn't a color" in errors[0]
         assert editor.design.control("Canvas1")["backcolor"] == "#000080"  # unchanged
         assert app.properties._rows["backcolor"][0].get() == "#000080"
         editor.goto_handler("Canvas1", "click")

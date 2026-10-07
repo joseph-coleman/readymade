@@ -142,7 +142,7 @@ class PropertiesPanel(ttk.Frame):
         self.current = None
         self._rows: dict[str, tuple[tk.StringVar, bool]] = {}  # prop -> (shown value, edited in a dialog)
         self._editors: dict[str, tk.Widget] = {}  # prop -> its editing widget
-        self._swatches: dict[str, tk.Label] = {}  # colour prop -> the patch showing its colour
+        self._swatches: dict[str, tk.Label] = {}  # color prop -> the patch showing its color
         ttk.Label(self, text="Properties").pack(anchor="w")
         self.objects = ttk.Combobox(self, state="readonly", width=24)
         self.objects.pack(fill=tk.X, pady=(2, 6))
@@ -250,7 +250,7 @@ class PropertiesPanel(ttk.Frame):
                 if chooser == "color":
                     swatch = self._swatches[prop] = tk.Label(editor, width=2, relief="solid", bd=1)
                     swatch.pack(side=tk.LEFT, padx=(2, 0), fill=tk.Y)
-                    self._swatch_usual = swatch.cget("background")  # shown for "", the usual colour
+                    self._swatch_usual = swatch.cget("background")  # shown for "", the usual color
                     self._show_swatch(prop, value)
                 ttk.Button(editor, text="\u2026", width=2, style="Dots.TButton",
                            command=lambda p=prop: self._choose(p)).pack(side=tk.LEFT)
@@ -313,7 +313,7 @@ class PropertiesPanel(ttk.Frame):
 
     def _choose(self, prop):
         """Choose a property's value in a dialog: a file (one from elsewhere is copied into
-        the project), a colour or a font."""
+        the project), a color or a font."""
         if self.app is None or self.current is None:
             return
         self.commit(prop)

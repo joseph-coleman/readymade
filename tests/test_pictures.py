@@ -19,11 +19,11 @@ from readymade.project import Project
 pytestmark = pytest.mark.usefixtures("display")
 
 
-def write_png(path, width=20, height=10, colour="#ff0000"):
+def write_png(path, width=20, height=10, color="#ff0000"):
     root = tk.Tk()
     try:
         photo = tk.PhotoImage(master=root, width=width, height=height)
-        photo.put(colour, to=(0, 0, width, height))
+        photo.put(color, to=(0, 0, width, height))
         path.parent.mkdir(parents=True, exist_ok=True)
         photo.write(str(path), format="png")
     finally:
@@ -242,11 +242,11 @@ def test_bring_in_copies_outside_files_into_images(tmp_path):
     project = tmp_path / "project"
     inside = write_png(project / "art" / "a.png")
     assert bring_in(project, inside) == "art/a.png"
-    outside = write_png(tmp_path / "Downloads" / "a.png", colour="#00ff00")
+    outside = write_png(tmp_path / "Downloads" / "a.png", color="#00ff00")
     assert bring_in(project, outside) == "images/a.png"
     assert (project / "images" / "a.png").read_bytes() == outside.read_bytes()
     assert bring_in(project, outside) == "images/a.png"  # the same file again: no second copy
-    other = write_png(tmp_path / "Desktop" / "a.png", colour="#0000ff")
+    other = write_png(tmp_path / "Desktop" / "a.png", color="#0000ff")
     assert bring_in(project, other) == "images/a-2.png"
     assert sorted(p.name for p in (project / "images").iterdir()) == ["a-2.png", "a.png"]
 

@@ -211,7 +211,7 @@ class CodeView(ttk.Frame):
         try:
             self.text.tag_configure("problem", underline=True, underlinefg=_PROBLEM)
             self._underline = {"underline": True, "underlinefg": _PROBLEM}
-        except tk.TclError:  # a Tk before 8.6.6 can't colour underlines
+        except tk.TclError:  # a Tk before 8.6.6 can't color underlines
             self._underline = {"underline": True}
         self.text.tag_raise("sel")
 

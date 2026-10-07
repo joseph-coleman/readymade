@@ -111,7 +111,7 @@ class Control:
 
     # Properties holding a file path, and the files to offer for them: {prop: {label: patterns}}.
     file_props: dict[str, dict[str, str]] = {}
-    # With no backcolor of its own, a label-like control shows its container's colour.
+    # With no backcolor of its own, a label-like control shows its container's color.
     inherits_backcolor = False
 
     def __init__(self, parent, spec, design=False, folder=None):
@@ -216,7 +216,7 @@ class Control:
 
     @property
     def enabled(self):
-        """Whether it responds to the user. A disabled control is greyed out."""
+        """Whether it responds to the user. A disabled control is grayed out."""
         return self._enabled
 
     @enabled.setter
@@ -246,7 +246,7 @@ class Control:
     def __repr__(self):
         return f"<{self.type_name} {self.name}>"
 
-    # ----- how it looks: colours, font, alignment, cursor (see the mixins below) -----
+    # ----- how it looks: colors, font, alignment, cursor (see the mixins below) -----
 
     def _set(self, widget, option, value):
         """Set a Tk option; None puts back the widget's own value."""
@@ -266,7 +266,7 @@ class Control:
         return getattr(self, "_forecolor", "") or None
 
     def _painted(self):
-        """The widgets whose colours follow backcolor and forecolor."""
+        """The widgets whose colors follow backcolor and forecolor."""
         return self.design_widgets()
 
     def _paint(self):
@@ -280,7 +280,7 @@ class Control:
                                   ("activeforeground", fg), ("insertbackground", fg)):
                 if option in options:
                     self._set(widget, option, value)
-        if "highlightbackground" in self.widget.keys():  # the focus ring's surroundings: the container's colour
+        if "highlightbackground" in self.widget.keys():  # the focus ring's surroundings: the container's color
             self.widget["highlightbackground"] = self.widget.master.cget("background")
 
     def _font_widgets(self):
@@ -327,7 +327,7 @@ def control_of(widget):
 
 
 def repaint_inside(widget):
-    """Repaint the controls in a container widget (a form, or a Frame), after its colour changed."""
+    """Repaint the controls in a container widget (a form, or a Frame), after its color changed."""
     for child in widget.winfo_children():
         ref = _controls.get(child)
         control = ref() if ref else None
@@ -347,8 +347,8 @@ class _BackColor:
 
     @property
     def backcolor(self):
-        """The background colour, as "#rrggbb"; "" for the usual colour (for a label, check box,
-        option button, frame or picture: the colour of the form or Frame it's on)."""
+        """The background color, as "#rrggbb"; "" for the usual color (for a label, check box,
+        option button, frame or picture: the color of the form or Frame it's on)."""
         return self._backcolor
 
     @backcolor.setter
@@ -364,7 +364,7 @@ class _ForeColor:
 
     @property
     def forecolor(self):
-        """The text colour, as "#rrggbb"; "" for the usual colour."""
+        """The text color, as "#rrggbb"; "" for the usual color."""
         return self._forecolor
 
     @forecolor.setter
@@ -618,7 +618,7 @@ class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, Contro
 
     @property
     def enabled(self):
-        """Whether it responds to the user. A disabled control is greyed out."""
+        """Whether it responds to the user. A disabled control is grayed out."""
         return self._enabled
 
     @enabled.setter
@@ -674,12 +674,12 @@ class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, Contr
 
     @property
     def enabled(self):
-        """Whether it responds to the user. A disabled control is greyed out."""
+        """Whether it responds to the user. A disabled control is grayed out."""
         return self._enabled
 
     @enabled.setter
     def enabled(self, value):
-        # A LabelFrame has no state of its own, so a disabled frame just greys its caption.
+        # A LabelFrame has no state of its own, so a disabled frame just grays its caption.
         self._enabled = bool(value)
         self._paint()
 
@@ -689,7 +689,7 @@ class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, Contr
     def _paint(self):
         super()._paint()
         if self._ready:
-            repaint_inside(self.inner)  # controls showing its colour follow it
+            repaint_inside(self.inner)  # controls showing its color follow it
 
     def _align(self, alignment, valignment):
         self.widget["labelanchor"] = {"left": "nw", "center": "n", "right": "ne"}[alignment]
@@ -698,7 +698,7 @@ class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, Contr
 @register
 class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, Control):
     """A push button. Its click event runs when it's clicked, or pressed with Space while it has the focus.
-    (On macOS, buttons keep the system's own colours.)"""
+    (On macOS, buttons keep the system's own colors.)"""
 
     type_name = "Button"
     default_alignment = "center"
@@ -881,7 +881,7 @@ class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _TabStop, _C
 
     @property
     def enabled(self):
-        """Whether it responds to the user. A disabled control is greyed out."""
+        """Whether it responds to the user. A disabled control is grayed out."""
         return self._enabled
 
     @enabled.setter
@@ -896,7 +896,7 @@ class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _TabStop, _C
             self.widget["state"] = "normal" if self._editable else "readonly"
 
     def _paint(self):
-        # A ttk widget takes its colours from a style, so each coloured ComboBox gets its own.
+        # A ttk widget takes its colors from a style, so each colored ComboBox gets its own.
         if not self._ready:
             return
         bg, fg = self._background(), self._foreground()
@@ -1047,7 +1047,7 @@ class Image(_BackColor, _Cursor, Control):
     def sizing(self):
         """How picture and control fit: "autosize" (the control takes the picture's size),
         "normal" (the picture at its own size, from the top left), "center" (at its own size,
-        centred), "stretch" (scaled to fill the control) or "zoom" (scaled to fit inside the
+        centered), "stretch" (scaled to fill the control) or "zoom" (scaled to fit inside the
         control, keeping its shape)."""
         return self._sizing
 
@@ -1180,7 +1180,7 @@ class Image(_BackColor, _Cursor, Control):
         self._drawn()
 
     def circle(self, x, y, radius, color="#000000", fill="", thickness=1):
-        """A circle centred on (x, y)."""
+        """A circle centered on (x, y)."""
         self._surface().ellipse((x - radius, y - radius, x + radius, y + radius), **_pixel_style(color, fill, thickness))
         self._drawn()
 
@@ -1231,12 +1231,12 @@ class Image(_BackColor, _Cursor, Control):
         self._drawn()
 
     def point(self, x, y, color="#000000"):
-        """Set one pixel's colour."""
+        """Set one pixel's color."""
         self._surface().point((x, y), fill=pictures.rgba(color))
         self._drawn()
 
     def pixel(self, x, y):
-        """A pixel's colour, as "#rrggbb" ("" if it's transparent)."""
+        """A pixel's color, as "#rrggbb" ("" if it's transparent)."""
         self._surface()
         width, height = self._drawing.size
         if not (0 <= x < width and 0 <= y < height):
@@ -1244,7 +1244,7 @@ class Image(_BackColor, _Cursor, Control):
         return pictures.to_hex(self._drawing.getpixel((int(x), int(y))))
 
     def clear(self, color="#ffffff"):
-        """Fill the whole picture with one colour ("" for transparent)."""
+        """Fill the whole picture with one color ("" for transparent)."""
         self._surface()
         self._drawing.paste(pictures.rgba(color), (0, 0, *self._drawing.size))
         self._drawn()
@@ -1265,7 +1265,7 @@ def _pixel_style(color, fill, thickness):
 class Canvas(_BackColor, _Cursor, Control):
     """A drawing surface. Its drawing methods (line, rectangle, oval, circle, arc, polygon,
     text, picture, point) each return a Shape, which stays until it's deleted: move it,
-    recolour it, hide it, check what it overlaps. Mouse events say where the mouse is and
+    recolor it, hide it, check what it overlaps. Mouse events say where the mouse is and
     which shape is there (None for the background):
 
         ball = self.Canvas1.circle(100, 80, 20, fill="#e04040")
@@ -1274,7 +1274,7 @@ class Canvas(_BackColor, _Cursor, Control):
         def Canvas1_click(self, x, y, shape):
             if shape is ball: ...
 
-    Coordinates are pixels from its top left corner; colours are "#rrggbb", "" for none.
+    Coordinates are pixels from its top left corner; colors are "#rrggbb", "" for none.
     click needs the mouse to stay put between press and release; for dragging, use
     mousedown, drag and mouseup."""
 
@@ -1357,7 +1357,7 @@ class Canvas(_BackColor, _Cursor, Control):
                          **_outlined(color, fill, thickness, dashed))
 
     def circle(self, x, y, radius, color="#000000", fill="", thickness=1, dashed=False, group="") -> Shape:
-        """A circle centred on (x, y)."""
+        """A circle centered on (x, y)."""
         return self._add("circle", "oval", (x - radius, y - radius, x + radius, y + radius), group,
                          **_outlined(color, fill, thickness, dashed))
 
@@ -1478,7 +1478,7 @@ class Timer(Control):
 
     @property
     def enabled(self):
-        """Whether it responds to the user. A disabled control is greyed out."""
+        """Whether it responds to the user. A disabled control is grayed out."""
         return self._enabled
 
     @enabled.setter

@@ -1,8 +1,8 @@
 """Shapes drawn on a Canvas control.
 
 Each drawing method of a Canvas returns a Shape, which stays on the canvas until
-it's deleted: change its colour, move it, hide it, put it in front, ask whether it
-overlaps another. Coordinates are pixels from the canvas's top left corner, colours
+it's deleted: change its color, move it, hide it, put it in front, ask whether it
+overlaps another. Coordinates are pixels from the canvas's top left corner, colors
 are "#rrggbb" strings ("" for none), and angles are degrees counter-clockwise from
 three o'clock.
 """
@@ -20,7 +20,7 @@ DASH = (6, 4)
 class Shape:
     """A shape on a Canvas, from one of its drawing methods (line, rectangle, oval,
     circle, arc, polygon, text, picture, point). x and y are where it is: a circle's
-    centre, a line's first point, a text's or picture's anchor point, otherwise the top
+    center, a line's first point, a text's or picture's anchor point, otherwise the top
     left corner. Shapes that have no fill can only be clicked on their outline."""
 
     def __init__(self, canvas, kind, item, group=""):
@@ -88,7 +88,7 @@ class Shape:
 
     @property
     def color(self):
-        """Its line colour, or a text's colour, as "#rrggbb"; "" for none."""
+        """Its line color, or a text's color, as "#rrggbb"; "" for none."""
         return self._tk.itemcget(self._item, self._color_option())
 
     @color.setter
@@ -97,14 +97,14 @@ class Shape:
 
     def _color_option(self):
         if self.kind in ("line", "point", "text"):
-            return "fill"  # Tk's name for these shapes' only colour
+            return "fill"  # Tk's name for these shapes' only color
         if self.kind == "picture":
             raise AttributeError("a picture has no color")
         return "outline"
 
     @property
     def fill(self):
-        """The colour inside it, as "#rrggbb"; "" for none (it can then only be clicked on its outline)."""
+        """The color inside it, as "#rrggbb"; "" for none (it can then only be clicked on its outline)."""
         if self.kind in ("line", "point", "text", "picture"):
             raise AttributeError(f"a {self.kind} has no fill; use color")
         return self._tk.itemcget(self._item, "fill")

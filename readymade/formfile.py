@@ -24,7 +24,7 @@ class FormDesign:
     text: str = "Form1"
     width: int = 400
     height: int = 300
-    backcolor: str = ""  # "" is the usual colour
+    backcolor: str = ""  # "" is the usual color
     cursor: str = "default"
     default_button: str = ""  # the Button that Enter presses
     cancel_button: str = ""  # the Button that Esc presses

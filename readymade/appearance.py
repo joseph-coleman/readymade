@@ -1,7 +1,7 @@
-"""How controls look, in readymade's own terms: colours, fonts, alignment and mouse
+"""How controls look, in readymade's own terms: colors, fonts, alignment and mouse
 cursors, and what they become in Tk.
 
-Colours are "#rrggbb" strings, with "" for the usual colour. A font is a string like
+Colors are "#rrggbb" strings, with "" for the usual color. A font is a string like
 "Arial, 12, bold" (family, size in points, then any of bold, italic and underline),
 or the same as a tuple, ("Arial", 12, "bold"); empty parts mean the usual font's.
 """
@@ -31,15 +31,15 @@ _HEX = re.compile(r"#[0-9a-fA-F]{6}")
 
 
 def check_color(value):
-    """value as a "#rrggbb" colour (or "" for the usual); ValueError if it isn't one."""
+    """value as a "#rrggbb" color (or "" for the usual); ValueError if it isn't one."""
     value = "" if value is None else str(value).strip()
     if value and not _HEX.fullmatch(value):
-        raise ValueError(f"{value!r} isn't a colour; use \"#rrggbb\", like \"#ff0000\" for red (or \"\" for the usual colour)")
+        raise ValueError(f"{value!r} isn't a color; use \"#rrggbb\", like \"#ff0000\" for red (or \"\" for the usual color)")
     return value.lower()
 
 
 def lighter(color, amount=0.2):
-    """A "#rrggbb" colour mixed with some white (for a hovered button)."""
+    """A "#rrggbb" color mixed with some white (for a hovered button)."""
     channels = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
     return "#" + "".join(f"{round(c + (255 - c) * amount):02x}" for c in channels)
 

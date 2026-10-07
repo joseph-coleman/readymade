@@ -196,7 +196,7 @@ class FormEditor:
         return "file" if obj != FORM and self.file_types_for(obj, prop) else None
 
     def choose(self, obj, prop):
-        """Choose a value with a dialog: a file, colour or font. Returns the object's name,
+        """Choose a value with a dialog: a file, color or font. Returns the object's name,
         or None if nothing was chosen."""
         kind = self.chooser_for(obj, prop)
         if kind == "file":
@@ -301,7 +301,7 @@ class FormEditor:
                     spec["text"] = " ".join(spec["text"].splitlines())  # a single line can't hold line breaks
                 try:
                     self.surface.refresh_control(obj)
-                except ValueError:  # the control refused it (like a backcolor that isn't a colour)
+                except ValueError:  # the control refused it (like a backcolor that isn't a color)
                     spec[prop] = current
                     self.surface.refresh_control(obj)
                     raise

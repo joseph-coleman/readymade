@@ -13,7 +13,7 @@ EDGES = ("lefts", "centers", "rights", "tops", "middles", "bottoms")
 
 
 def align(rects, reference, edge):
-    """Line every control up with the reference control's edge or centre."""
+    """Line every control up with the reference control's edge or center."""
     rl, rt, rw, rh = rects[reference]
     out = {}
     for name, (left, top, width, height) in rects.items():

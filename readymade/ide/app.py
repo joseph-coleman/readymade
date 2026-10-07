@@ -34,7 +34,7 @@ from readymade.ide.tracebacks import TracebackWatcher
 from readymade.project import Project, ProjectError, describe_python, find_pythons
 
 _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containing readymade/
-_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")  # terminal colour and cursor codes
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")  # terminal color and cursor codes
 
 
 class App:
@@ -741,8 +741,8 @@ class App:
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [_PACKAGE_ROOT, env.get("PYTHONPATH")]))
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        # Plain text only: the Immediate window can't show colours, and the IDE reads the
-        # tracebacks and tool output, which colour codes (e.g. from FORCE_COLOR) would garble.
+        # Plain text only: the Immediate window can't show colors, and the IDE reads the
+        # tracebacks and tool output, which color codes (e.g. from FORCE_COLOR) would garble.
         for name in ("FORCE_COLOR", "CLICOLOR_FORCE"):
             env.pop(name, None)
         env["PYTHON_COLORS"] = "0"
@@ -796,7 +796,7 @@ class App:
                 else:
                     self.immediate.write(f"--- Ended (exit code {code}) ---\n")
                 return
-            item = _ANSI.sub("", item)  # in case a program prints colours itself
+            item = _ANSI.sub("", item)  # in case a program prints colors itself
             self.immediate.write(item)
             if self._watcher:
                 self._watcher.feed(item)

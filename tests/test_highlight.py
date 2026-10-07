@@ -1,4 +1,4 @@
-"""Code colouring: with Pygments, and the built-in fallback without it."""
+"""Code coloring: with Pygments, and the built-in fallback without it."""
 
 import time
 
@@ -26,7 +26,7 @@ def tags_by_text(spans, source=SAMPLE):
 
 
 @pytest.mark.skipif(highlight._LEXER is None, reason="needs Pygments")
-def test_pygments_colouring():
+def test_pygments_coloring():
     tags = tags_by_text(highlight.spans(SAMPLE))
     assert tags["@property"] == "function"
     assert tags["def"] == "keyword" and tags["area"] == "function" and tags["self"] == "variable"
@@ -53,12 +53,12 @@ def test_fallback_without_pygments(monkeypatch):
 
 
 @pytest.mark.skipif(highlight._LEXER is None, reason="needs Pygments")
-def test_adjacent_spans_of_one_colour_are_merged():
+def test_adjacent_spans_of_one_color_are_merged():
     # Pygments gives the quotes and the text of "ab" as three tokens; they become one span.
     assert highlight.spans('s = "ab"\n') == [("string", "1.4", "1.8")]
 
 
-def test_long_modules_colour_quickly():
+def test_long_modules_color_quickly():
     source = SAMPLE * 500  # 3000 lines
     start = time.perf_counter()
     highlight.spans(source)

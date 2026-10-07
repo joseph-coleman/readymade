@@ -1069,7 +1069,7 @@ def test_completion_says_when_jedi_is_missing(app, monkeypatch):
     assert "need Jedi" in app.immediate.output.get("1.0", "end")
 
 
-def test_programs_and_tools_run_without_colour(app, monkeypatch):
+def test_programs_and_tools_run_without_color(app, monkeypatch):
     monkeypatch.setenv("FORCE_COLOR", "3")  # as some terminals set it
     env = app.environment()
     assert "FORCE_COLOR" not in env and env["PYTHON_COLORS"] == "0" and env["NO_COLOR"] == "1"
@@ -1078,7 +1078,7 @@ def test_programs_and_tools_run_without_colour(app, monkeypatch):
                "    def Form_load(self):\n        print('\\x1b[31mred\\x1b[0m')\n        self.close()\n")
     app.run()
     output = wait_for_exit(app)
-    assert "red\n" in output and "\x1b" not in output  # colour a program prints itself is dropped too
+    assert "red\n" in output and "\x1b" not in output  # color a program prints itself is dropped too
 
 
 def test_every_designer_property_and_event_has_help():

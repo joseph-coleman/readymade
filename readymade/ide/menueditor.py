@@ -265,8 +265,8 @@ class MenuEditor(tk.Toplevel):
             return
         items, index = self._place(selected)
         del items[index]
-        neighbour = items[min(index, len(items) - 1)] if items else None
-        self._refresh(neighbour)
+        neighbor = items[min(index, len(items) - 1)] if items else None
+        self._refresh(neighbor)
 
     def move(self, step):
         selected = self.selected()
