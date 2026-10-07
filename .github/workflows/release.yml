@@ -62,3 +62,42 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # to create the release, with the repository's own token
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the history and tags, for the notes
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create the GitHub release, with the files that went to PyPI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+          prerelease='(a|b|rc|dev)[0-9]*$'
+          # The notes list the commits since the last full release (release candidates don't count).
+          previous=$(git tag --list 'v*' --merged "$tag" --sort=-v:refname | grep -vx "$tag" | grep -vE "$prerelease" | head -n 1 || true)
+          {
+            if [ -n "$previous" ]; then
+              echo "Changes since $previous:"
+              echo
+              git log --format='- %s' "$previous..$tag"
+              echo
+              echo "All the changes: https://github.com/$GITHUB_REPOSITORY/compare/$previous...$tag"
+              echo
+            fi
+            echo "On PyPI: https://pypi.org/project/readymade/$version/"
+          } > notes.md
+          flags=()
+          if [[ "$tag" =~ $prerelease ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$tag" dist/* --title "readymade $version" --notes-file notes.md "${flags[@]}"
