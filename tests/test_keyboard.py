@@ -69,6 +69,15 @@ MAC_CONTROL, COMMAND, OPTION = 0x4, 0x8, 0x10  # Tk's state bits on macOS
     ("", "Meta_L", COMMAND, "Ctrl"),  # Command on its own
     ("", "Control_L", MAC_CONTROL, "MacCtrl"),
     ("", "Option_L", OPTION, "Alt"),
+    # Checked on a real Mac (Tk 8.6.13): fn is Super_L with state bit 0x40, which arrow, Delete
+    # and F keys also carry (arrows add 0x20 too); neither changes the names.
+    ("", "Super_L", 0x40, "Fn"),
+    ("", "Delete", 0x40, "Del"),  # fn+Delete
+    ("", "F5", 0x40, "F5"),
+    ("", "Left", 0x68, "Ctrl+Left"),  # Cmd+Left
+    ("", "Left", 0x70, "Alt+Left"),  # Option+Left
+    ("´", "acute", OPTION, "´"),  # Option+E: the dead key's accent, then "é" with the next key
+    ("é", "eacute", 0, "é"),
 ])
 def test_mac_key_names(char, keysym, state, expected):
     assert keys.name(char, keysym, state, platform="darwin") == expected

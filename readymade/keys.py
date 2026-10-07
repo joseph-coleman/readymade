@@ -10,6 +10,8 @@ key, the name says so the way shortcuts are written: "Ctrl+S", "Ctrl+Shift+Z",
 On a Mac, as in Qt, "Ctrl" is the Command key, so "Ctrl+S" is the save shortcut on
 every system (Cmd+S on a Mac, Ctrl+S elsewhere). The Mac's own Control key is
 "MacCtrl", and Option is "Alt", except when it types a character (Option+S is "ß").
+fn on its own is "Fn"; with another key it changes the key itself (fn+Delete is "Del").
+macOS keeps some keys for itself: by default Control+Left/Right switch desktops.
 """
 
 from __future__ import annotations
@@ -31,14 +33,15 @@ _NAMES = {
     "Caps_Lock": "CapsLock", "Num_Lock": "NumLock", "Scroll_Lock": "ScrollLock",
     "Print": "PrintScreen", "Pause": "Pause", "Menu": "Menu", "App": "Menu",
 }
-# On a Mac, Command is "Ctrl" and the Control key "MacCtrl" (Tk calls Command Meta or Command).
+# On a Mac, Command is "Ctrl" and the Control key "MacCtrl" (Tk calls Command Meta or Command),
+# and the fn key is "Fn" (Tk calls it Super, as a Windows key is elsewhere).
 _MAC_NAMES = {"Control_L": "MacCtrl", "Control_R": "MacCtrl", "Meta_L": "Ctrl", "Meta_R": "Ctrl",
-              "Command": "Ctrl", "Command_L": "Ctrl", "Command_R": "Ctrl"}
+              "Command": "Ctrl", "Command_L": "Ctrl", "Command_R": "Ctrl", "Super_L": "Fn", "Super_R": "Fn"}
 _PUNCTUATION = {
     "comma": ",", "period": ".", "slash": "/", "semicolon": ";", "apostrophe": "'", "bracketleft": "[",
     "bracketright": "]", "minus": "-", "equal": "=", "backslash": "\\", "grave": "`",
 }
-MODIFIER_KEYS = frozenset({"Shift", "Ctrl", "Alt", "Win", "MacCtrl"})
+MODIFIER_KEYS = frozenset({"Shift", "Ctrl", "Alt", "Win", "MacCtrl", "Fn"})
 _ORDER = ("MacCtrl", "Ctrl", "Alt", "Shift")  # as shortcuts are written: Ctrl+Alt+Shift+Key
 
 
