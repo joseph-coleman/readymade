@@ -465,6 +465,7 @@ def test_menu_items_open_their_handlers_and_renames_follow(app):
     # Clicking the item in the designer's menu bar opens its handler, as in VB.
     dropdown = form.surface.menubar.winfo_children()[0].nametowidget(form.surface.menubar.winfo_children()[0]["menu"])
     dropdown.invoke(0)
+    app.root.update_idletasks()  # menu commands run once the menu has closed
     assert form.frame.select() == str(form.code)
     form.code.text.insert("sel.first", "self.text = 'opened'")
     form.code.text.delete("sel.first", "sel.last")

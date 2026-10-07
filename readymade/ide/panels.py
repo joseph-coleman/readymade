@@ -5,6 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from readymade import menus
 from readymade.controls import REGISTRY
 
 MONO = "TkFixedFont"
@@ -73,6 +74,8 @@ class ProjectExplorer(ttk.Frame):
         self.libraries_menu = tk.Menu(self, tearoff=False)
         self.libraries_menu.add_command(label="Add Library...", command=app.add_library)
         self.libraries_menu.add_command(label="Remove Library...", command=self._remove)
+        for menu in (self.menu, self.python_menu, self.libraries_menu):
+            menus.defer_commands(menu)  # or dialogs opened from them freeze on macOS
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())

@@ -117,6 +117,29 @@ def names(items):
     return [item["name"] for item in walk(items) if item.get("name")]
 
 
+def later(widget, command):
+    """command, run once the menu that chose it has closed rather than while it's still
+    open. On macOS, a dialog (or anything else with its own wait loop) started from
+    inside a menu bar command never paints and freezes the program; elsewhere the
+    moment's delay is harmless."""
+    return lambda: widget.after_idle(command)
+
+
+def defer_commands(menu):
+    """Make every command in menu, and in its submenus, run later() (see there)."""
+    end = menu.index("end")
+    if end is None:
+        return
+    for index in range(end + 1):
+        kind = menu.type(index)
+        if kind == "cascade":
+            defer_commands(menu.nametowidget(menu.entrycget(index, "menu")))
+        elif kind in ("command", "checkbutton", "radiobutton"):
+            command = menu.entrycget(index, "command")
+            if command:  # the name of the Tcl command tkinter made for the Python function
+                menu.entryconfigure(index, command=later(menu, lambda c=command: menu.tk.eval(c)))
+
+
 def build(menu, items, on_entry):
     """Add items to a tk.Menu. Commands are check buttons, so any item can show a
     check mark. on_entry(item, menu, index, variable) is called for each named item
@@ -143,7 +166,7 @@ def build(menu, items, on_entry):
             menu.add_checkbutton(variable=variable, **options)
             command = on_entry(item, menu, index, variable)
             if command is not None:
-                menu.entryconfigure(index, command=command)
+                menu.entryconfigure(index, command=later(menu, command))
 
 
 class MenuItem:

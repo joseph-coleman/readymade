@@ -206,33 +206,68 @@ def test_running_a_project_uses_its_icon(tmp_path):
         assert "ICON True" in done.stdout, (args, done.stderr)
 
 
-@pytest.mark.parametrize("platform, icon, needs", [
-    ("win32", "images/icon.png", True), ("win32", "images/icon.ico", False),
-    ("darwin", "images/icon.png", True), ("darwin", "images/icon.icns", False),
-    ("linux", "images/icon.png", False), ("win32", None, False),
+@pytest.mark.parametrize("platform, icon, ide_has_pillow, needs", [
+    ("win32", "images/icon.png", True, False),  # the IDE converts it
+    ("win32", "images/icon.png", False, True),  # PyInstaller does, with Pillow in the project
+    ("win32", "images/icon.ico", False, False),  # already Windows' own format
+    ("darwin", "images/icon.png", False, True),
+    ("darwin", "images/icon.icns", False, False),
+    ("linux", "images/icon.png", False, False),  # Linux programs have no icon of their own
+    ("win32", None, False, False),
 ])
-def test_icon_needs_pillow(tmp_path, platform, icon, needs):
+def test_icon_needs_pillow(tmp_path, monkeypatch, platform, icon, ide_has_pillow, needs):
+    from readymade import pictures
+
+    if not ide_has_pillow:
+        monkeypatch.setattr(pictures, "_PILImage", None)
+    elif not pictures.have_pillow():
+        pytest.skip("Pillow isn't installed")
     project = Project.create(tmp_path / "Shop")
     if icon:
         project.set_setting("icon", icon)
     assert package.icon_needs_pillow(project, platform=platform) is needs
 
 
-def test_make_exe_uses_the_icon(tmp_path):
+def test_make_exe_uses_the_icon(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from readymade import pictures
+
     project = Project.create(tmp_path / "Shop", first_form="Main")
-    icon = write_png(project.folder / "images" / "icon.png")
+    icon = write_png(project.folder / "images" / "icon.png", size=20)
     project.set_setting("icon", "images/icon.png")
     source = package.launcher_source(project, "Main")
     assert "set_app_icon(app_path('images/icon.png'))\nforms.Main.show()" in source
     compile(source, "launcher", "exec")
     assert (icon, "images") in package.bundled_files(project)[0]  # for the windows' icon
     launcher = package.write_launcher(project, "Main")
-    args = package.pyinstaller_args(project, launcher, "/opt/readymade", platform="win32")
-    assert args[args.index("--icon") + 1] == str(icon)  # the program file's own icon
-    assert "--icon" not in package.pyinstaller_args(project, launcher, "/opt/readymade", platform="linux")
+
+    def icon_arg(platform):
+        args = package.pyinstaller_args(project, launcher, "/opt/readymade", platform=platform)
+        return Path(args[args.index("--icon") + 1]) if "--icon" in args else None
+
+    # The IDE has Pillow, so it converts the PNG: square, at every size Windows shows.
+    ico = icon_arg("win32")
+    assert ico == project.folder / "build" / "readymade" / "icon.ico"
+    with Image.open(ico) as converted:
+        assert converted.format == "ICO" and (256, 256) in converted.info["sizes"] and (16, 16) in converted.info["sizes"]
+    icns = icon_arg("darwin")
+    with Image.open(icns) as converted:
+        assert converted.format == "ICNS"
+    assert icon_arg("linux") is None
+    monkeypatch.setattr(pictures, "_PILImage", None)  # without Pillow here, PyInstaller gets the PNG
+    assert icon_arg("win32") == icon
     icon.unlink()
     assert package.bundled_files(project)[1] == ["icon: images/icon.png"]
-    assert "--icon" not in package.pyinstaller_args(project, launcher, "/opt/readymade", platform="win32")
+    assert icon_arg("win32") is None
+
+
+def test_an_icon_that_isnt_a_picture(tmp_path):
+    project = Project.create(tmp_path / "Shop", first_form="Main")
+    (project.folder / "icon.png").write_text("not a picture")
+    project.set_setting("icon", "icon.png")
+    with pytest.raises(OSError):
+        package.program_icon(project, platform="win32")
 
 
 # ----- the IDE -----

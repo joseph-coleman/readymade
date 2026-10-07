@@ -167,6 +167,7 @@ class App:
         help_menu.add_command(label="Help on This", accelerator="F1", command=self.show_help)
         help_menu.add_command(label="readymade Overview", command=lambda: self.show_topic(helptext.home()))
         menubar.add_cascade(label="Help", menu=help_menu)
+        menus.defer_commands(menubar)  # or dialogs opened from it freeze on macOS
         self.root.configure(menu=menubar)
 
     # ----- the project -----
@@ -939,7 +940,12 @@ class App:
                 else:
                     self.immediate.write("--- PyInstaller couldn't make the program; its messages are above. ---\n")
 
-            self._start([str(python), *package.pyinstaller_args(project, launcher, _PACKAGE_ROOT)], on_exit=built)
+            try:
+                args = package.pyinstaller_args(project, launcher, _PACKAGE_ROOT)
+            except OSError as e:  # the icon couldn't be converted
+                self.immediate.write(f"--- Couldn't make the program's icon from {project.setting('icon')}: {e} ---\n")
+                return
+            self._start([str(python), *args], on_exit=built)
 
         def with_pyinstaller():
             # Quietly check whether the environment has PyInstaller (and Pillow, if the icon

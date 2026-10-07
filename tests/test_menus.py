@@ -1,10 +1,11 @@
 """Menus: the text and shortcut formats, the .form file, and menus at runtime."""
 
 import time
+import tkinter as tk
 
 import pytest
 
-from readymade import Form, formfile
+from readymade import Form, formfile, menus
 from readymade.menus import KEYS, names, normalize_shortcut, parse_text, shortcut_sequence
 
 MENU = [
@@ -112,12 +113,16 @@ def test_menus_at_runtime(tmp_path):
         assert file_menu.type(1) == "separator"
 
         file_menu.invoke(0)
+        assert calls == []  # menu commands run once the menu has closed (see menus.later)
+        form.root.update_idletasks()
         assert calls == ["open"]
         # Clicking doesn't toggle the check mark by itself, as in VB; the handler does it.
         view_menu = menubar.nametowidget(menubar.entrycget(1, "menu"))
         view_menu.invoke(0)
+        form.root.update_idletasks()
         assert calls[-1] == ("wrap", True) and form.mnuWrap.checked is False
         view_menu.invoke(1)  # disabled
+        form.root.update_idletasks()
         assert calls[-1] != "zoom" and form.mnuZoom.enabled is False
 
         form.mnuZoom.enabled = True
@@ -135,3 +140,56 @@ def test_menus_at_runtime(tmp_path):
         assert calls[-2:] == ["open", "zoom"]
     finally:
         form.root.destroy()
+
+
+def test_defer_commands_runs_them_after_the_menu_closes():
+    """On macOS a dialog opened from inside a menu bar command freezes unpainted, so menu
+    commands run just after: from an idle callback, once the menu has closed."""
+    root = tk.Tk()
+    try:
+        ran = []
+        bar = tk.Menu(root)
+        file_menu = tk.Menu(bar, tearoff=False)
+        recent = tk.Menu(file_menu, tearoff=False)
+        recent.add_command(label="a.txt", command=lambda: ran.append("a.txt"))
+        file_menu.add_command(label="Open", command=lambda: ran.append("open"))
+        file_menu.add_cascade(label="Recent", menu=recent)
+        file_menu.add_separator()
+        wrap = tk.BooleanVar(root, False)
+        file_menu.add_checkbutton(label="Wrap", variable=wrap, command=lambda: ran.append(("wrap", wrap.get())))
+        bar.add_cascade(label="File", menu=file_menu)
+        menus.defer_commands(bar)
+        for menu, index in ((file_menu, 0), (recent, 0), (file_menu, 3)):
+            menu.invoke(index)
+        assert ran == []  # nothing yet: the menu is still "open"
+        root.update_idletasks()
+        assert ran == ["open", "a.txt", ("wrap", True)]
+    finally:
+        root.destroy()
+
+
+@pytest.mark.usefixtures("display")
+def test_every_ide_menu_command_is_deferred(tmp_path, monkeypatch):
+    from tkinter import simpledialog
+
+    from readymade.ide.app import App
+
+    root = tk.Tk()
+    app = App(root, tmp_path / "Shop")
+    try:
+        asked = []
+        monkeypatch.setattr(simpledialog, "askstring", lambda *a, **kw: asked.append(a[0]))
+        bar = root.nametowidget(root["menu"])
+        project_menu = next(bar.nametowidget(bar.entrycget(i, "menu")) for i in range(bar.index("end") + 1)
+                            if bar.type(i) == "cascade" and bar.entrycget(i, "label") == "Project")
+        project_menu.invoke("Add Form...")
+        assert asked == []  # the dialog waits for the menu to close
+        root.update_idletasks()
+        assert asked == ["Add Form"]
+        explorer = app.explorer.libraries_menu
+        explorer.invoke("Add Library...")
+        root.update_idletasks()
+        assert asked == ["Add Form", "Add Library"]
+    finally:
+        app.stop()
+        root.destroy()

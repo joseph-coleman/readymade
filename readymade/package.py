@@ -21,7 +21,7 @@ import os
 import sys
 from pathlib import Path, PurePath
 
-from readymade import formfile
+from readymade import formfile, pictures
 from readymade.controls import REGISTRY
 
 LAUNCHER = "_readymade_launcher.py"
@@ -54,12 +54,34 @@ def launcher_source(project, startup):
     )
 
 
+# The format of a program file's own icon on each system (Linux programs have none).
+_ICON_FORMATS = {"win32": ".ico", "darwin": ".icns"}
+
+
 def icon_needs_pillow(project, platform=sys.platform):
-    """Whether PyInstaller needs Pillow to turn the project's icon into the system's own format
-    (.ico on Windows, .icns on macOS; Linux programs have no icon of their own)."""
+    """Whether the project's environment needs Pillow, for PyInstaller to turn the project's
+    icon into the system's own format. Not when the IDE has Pillow: program_icon() does it here."""
     icon = project.setting("icon")
-    native = {"win32": ".ico", "darwin": ".icns"}.get(platform)
-    return bool(icon and native and Path(icon).suffix.lower() != native)
+    native = _ICON_FORMATS.get(platform)
+    return bool(icon and native and Path(icon).suffix.lower() != native and not pictures.have_pillow())
+
+
+def program_icon(project, platform=sys.platform):
+    """The icon for the program file (PyInstaller's --icon), or None: the project's icon in
+    the system's own format. When the IDE has Pillow, a PNG or other picture is converted
+    here, into the build folder; otherwise PyInstaller converts it, with Pillow in the
+    project's environment. Raises OSError if the picture can't be read."""
+    icon = project.setting("icon")
+    native = _ICON_FORMATS.get(platform)
+    source = project.folder / icon if icon else None
+    if source is None or native is None or not source.is_file():
+        return None
+    if source.suffix.lower() == native or not pictures.have_pillow():
+        return source
+    target = build_folder(project) / "readymade" / f"icon{native}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    pictures.make_icon(source, target)
+    return target
 
 
 def write_launcher(project, startup):
@@ -129,8 +151,8 @@ def pyinstaller_args(project, launcher, readymade_root, platform=sys.platform):
     for path, place in bundled_files(project)[0]:
         # Paths are absolute, as the spec lives in build/.
         args += ["--add-data", f"{path}{os.pathsep}{place}"]
-    icon = project.setting("icon")
-    if icon and platform in ("win32", "darwin") and (project.folder / icon).is_file():
-        args += ["--icon", str(project.folder / icon)]  # the program file's own icon
+    icon = program_icon(project, platform)
+    if icon is not None:
+        args += ["--icon", str(icon)]  # the program file's own icon
     args.append(str(launcher))
     return args

@@ -112,6 +112,26 @@ def blank(size, background="#ffffff"):
     return _PILImage.new("RGBA", size, rgba(background))
 
 
+ICON_SIZES = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]  # what Windows shows
+
+
+def make_icon(source, target):
+    """Save the picture at source as a program icon at target: an .ico (Windows) or .icns
+    (macOS), chosen by target's extension. It's made square first, keeping its shape."""
+    with _PILImage.open(source) as picture:
+        picture = picture.convert("RGBA")
+    side = max(picture.size)
+    square = blank((side, side), "")
+    square.paste(picture, ((side - picture.width) // 2, (side - picture.height) // 2))
+    biggest = 1024 if str(target).lower().endswith(".icns") else 256
+    if side != biggest:
+        square = square.resize((biggest, biggest), _PILImage.Resampling.LANCZOS)
+    if biggest == 256:
+        square.save(target, format="ICO", sizes=ICON_SIZES)
+    else:
+        square.save(target, format="ICNS")
+
+
 def drawer(picture):
     from PIL import ImageDraw
 
