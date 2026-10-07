@@ -10,7 +10,7 @@ Ideas and gaps noted along the way, roughly by area.
 
 ## IDE
 - **Copy and paste**: optionally bring the controls' event handlers along (renamed to match), which VB never did. Also a selection box inside a Frame (today it only works on the form itself; Ctrl+click works anywhere).
-- **Project Explorer**: remove a form, module or library.
+- **Project Explorer**: send removed forms and modules to the Recycle Bin / Trash instead of deleting them (`send2trash`); rename a module; when a form is removed, point out code that still uses it (`forms.Name`, imports).
 - **Environments**: create conda/mamba environments (existing ones work via Choose Python Interpreter).
 - **Add Library**: keep comments inside the `dependencies` list when it's rewritten.
 - **Code window**: after jumping to a run-time error, name the handler in the Object/Event dropdowns.

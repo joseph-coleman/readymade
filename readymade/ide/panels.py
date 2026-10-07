@@ -59,16 +59,20 @@ class ProjectExplorer(ttk.Frame):
         self.tree.bind("<Double-Button-1>", lambda e: self._open("design"))
         self.tree.bind("<Return>", lambda e: self._open("design"))
         self.tree.bind("<Button-3>", self._popup)
+        self.tree.bind("<Delete>", lambda e: self._remove())
         self.menu = tk.Menu(self, tearoff=False)
         self.menu.add_command(label="View Object", command=lambda: self._open("design"))
         self.menu.add_command(label="View Code", command=lambda: self._open("code"))
         self.menu.add_command(label="Set as Startup", command=self._set_startup)
+        self.menu.add_separator()
+        self.menu.add_command(label="Remove...", command=self._remove)
         self.python_menu = tk.Menu(self, tearoff=False)
         self.python_menu.add_command(label="Create Environment...", command=app.ask_create_environment)
         self.python_menu.add_command(label="Choose Python Interpreter...", command=app.choose_python)
         self.python_menu.add_command(label="Use Default Python", command=lambda: app.set_python(None))
         self.libraries_menu = tk.Menu(self, tearoff=False)
         self.libraries_menu.add_command(label="Add Library...", command=app.add_library)
+        self.libraries_menu.add_command(label="Remove Library...", command=self._remove)
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
@@ -87,7 +91,7 @@ class ProjectExplorer(ttk.Frame):
             self.tree.insert(modules, tk.END, iid=f"module:{name}", text=f"{name}.py")
         libraries = self.tree.insert(top, tk.END, iid="libraries", text="Libraries", open=True)
         for requirement in project.dependencies:
-            self.tree.insert(libraries, tk.END, text=requirement)
+            self.tree.insert(libraries, tk.END, iid=f"library:{requirement}", text=requirement)
 
     def _selected(self):
         kind, _, name = self.tree.focus().partition(":")
@@ -107,22 +111,35 @@ class ProjectExplorer(ttk.Frame):
             self.app.open_module(name)
         return "break"
 
+    def _remove(self):
+        """Remove the selected form, module or library (the app asks first)."""
+        kind, name = self._selected()
+        if kind in ("form", "module", "library"):
+            self.app.remove_from_project(kind, name)
+        return "break"
+
     def _popup(self, e):
         row = self.tree.identify_row(e.y)
         if not row:
             return
         self.tree.selection_set(row)
         self.tree.focus(row)
+        self.menu_for(row).tk_popup(e.x_root, e.y_root)
+
+    def menu_for(self, row):
+        """The right-click menu for a row, with what doesn't apply to it disabled."""
+        def enable(menu, label, on):
+            menu.entryconfigure(label, state=tk.NORMAL if on else tk.DISABLED)
+
         if row == "python":
-            self.python_menu.tk_popup(e.x_root, e.y_root)
-            return
+            return self.python_menu
         if row == "libraries" or self.tree.parent(row) == "libraries":
-            self.libraries_menu.tk_popup(e.x_root, e.y_root)
-            return
-        is_form = row.startswith("form:")
-        for item in ("View Object", "Set as Startup"):
-            self.menu.entryconfigure(item, state=tk.NORMAL if is_form else tk.DISABLED)
-        self.menu.tk_popup(e.x_root, e.y_root)
+            enable(self.libraries_menu, "Remove Library...", row.startswith("library:"))
+            return self.libraries_menu
+        for label in ("View Object", "Set as Startup"):
+            enable(self.menu, label, row.startswith("form:"))
+        enable(self.menu, "Remove...", row.startswith(("form:", "module:")))
+        return self.menu
 
     def _set_startup(self):
         kind, name = self._selected()

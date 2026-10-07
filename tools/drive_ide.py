@@ -636,6 +636,26 @@ def drive(d):
         d.pump(0.05)
     d.check("program ended", app.process, None)
 
+    print("Remove the Settings form with the Project Explorer's right-click menu")
+    tree = app.explorer.tree
+    app.explorer_refresh()
+    d.pump()
+    x, y, w, h = tree.bbox("form:Settings")
+    menu = app.explorer.menu
+    # The confirmation waits for its answer inside the menu click, so answer it from another
+    # process: Shift+Tab from the default ("No") to "Yes", then Space presses it.
+    typist = subprocess.Popen(["sh", "-c", "sleep 2; xdotool key shift+Tab; sleep 0.3; xdotool key space"])
+    d.xdo("mousemove", tree.winfo_rootx() + x + 20, tree.winfo_rooty() + y + h // 2)
+    d.pump(0.05)
+    d.xdo("click", 3)
+    d.pump(0.5)
+    d.click(menu.winfo_rootx() + 20, menu.winfo_rooty() + menu.yposition("Remove...") + 8)
+    typist.wait(timeout=20)
+    d.pump(0.3)
+    d.check("Settings deleted", (editor.path.parent / "Settings.form").exists(), False)
+    d.check("its tab closed", any(e.name == "Settings" for e in app.editors), False)
+    d.check("gone from the Explorer", tree.exists("form:Settings"), False)
+
 
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/readymade-ui")

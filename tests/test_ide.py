@@ -5,6 +5,7 @@ import time
 import tkinter as tk
 import types
 from pathlib import Path
+from tkinter import messagebox
 
 import pytest
 
@@ -327,6 +328,18 @@ def test_create_environment_then_add_a_library(app, tmp_path, monkeypatch):
     app.create_environment(Path(sys.executable))
     output = wait_until_idle(app)
     assert output.count("--- Installing tinypkg ---") == 2 and output.rstrip().endswith("The environment is ready. ---")
+
+    # Removing it takes it out of the list and uninstalls it from the project's environment.
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **kw: True)
+    assert app.remove_from_project("library", "tinypkg")
+    output = wait_until_idle(app)
+    assert "Removed tinypkg from the project." in output, output
+    assert app.project.dependencies == []
+    assert app.explorer.tree.get_children("libraries") == ()
+    import subprocess
+
+    still_there = subprocess.run([str(app.project.python()), "-c", "import tinypkg"], capture_output=True, check=False)
+    assert still_there.returncode != 0
 
 
 def test_failed_pip_install_changes_nothing(app, tmp_path, monkeypatch):

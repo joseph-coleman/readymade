@@ -156,6 +156,12 @@ class Project:
         text = self.pyproject.read_text(encoding="utf-8") if self.pyproject.exists() else new_pyproject(self.folder.name)
         self.pyproject.write_text(add_dependency(text, requirement), encoding="utf-8")
 
+    def remove_dependency(self, requirement):
+        """Take a library out of the project's dependencies (it stays installed; see the IDE)."""
+        if self.pyproject.exists():
+            text = self.pyproject.read_text(encoding="utf-8")
+            self.pyproject.write_text(remove_dependency(text, requirement), encoding="utf-8")
+
     def set_python(self, path):
         """Use the interpreter at path on this machine (None: back to .venv or the IDE's Python).
         Paths inside the project are stored relative to it, so the project can move."""
@@ -182,6 +188,18 @@ class Project:
     def add_module(self, name):
         self._check_new_name(name)
         (self.folder / f"{name}.py").write_text(f'"""{name}: code shared by the project\'s forms."""\n', encoding="utf-8")
+
+    def remove_form(self, name):
+        """Delete a form's .form and .py files. If it was the startup form, the first
+        remaining form becomes the startup form."""
+        if self.setting("startup") == name:
+            self.set_setting("startup", None)
+        for path in (self.folder / f"{name}.form", self.folder / f"{name}.py"):
+            path.unlink(missing_ok=True)
+
+    def remove_module(self, name):
+        """Delete a module's .py file."""
+        (self.folder / f"{name}.py").unlink(missing_ok=True)
 
     def _check_new_name(self, name):
         if not name.isidentifier() or keyword.iskeyword(name):
@@ -245,24 +263,51 @@ def add_dependency(text, requirement):
     """Add requirement to [project] dependencies in pyproject.toml text, replacing
     any entry for the same package and leaving the rest of the text as it was."""
     requirement = requirement.strip()
+    return _change_dependencies(text, lambda current: [*_without(current, requirement), requirement])
+
+
+def remove_dependency(text, requirement):
+    """Remove requirement's package from [project] dependencies in pyproject.toml text."""
+    return _change_dependencies(text, lambda current: _without(current, requirement))
+
+
+def _without(requirements, requirement):
+    return [r for r in requirements if requirement_name(r) != requirement_name(requirement)]
+
+
+def _change_dependencies(text, change):
+    """Replace [project] dependencies with change(the current list), leaving the rest of the text as it was."""
     header = re.search(r"(?m)^\[project\][ \t]*$", text)
     if header is None:
-        return text.rstrip("\n") + f"\n\n[project]\ndependencies = [{json.dumps(requirement)}]\n"
+        wanted = change([])
+        return text.rstrip("\n") + f"\n\n[project]\ndependencies = {_inline(wanted)}\n" if wanted else text
     start = header.end()
     following = re.search(r"(?m)^\[", text[start:])
     end = start + following.start() if following else len(text)
     key = re.search(r"(?m)^dependencies[ \t]*=[ \t]*\[", text[start:end])
     if key is None:
-        line = f"\ndependencies = [{json.dumps(requirement)}]"
-        return text[:start] + line + text[start:]
+        wanted = change([])
+        return text[:start] + f"\ndependencies = {_inline(wanted)}" + text[start:] if wanted else text
     open_at = start + key.end() - 1
     close_at = _closing_bracket(text, open_at)
     import tomllib
 
     current = tomllib.loads("d = " + text[open_at : close_at + 1])["d"]
-    kept = [r for r in current if requirement_name(r) != requirement_name(requirement)]
-    items = "".join(f"\n    {json.dumps(r)}," for r in [*kept, requirement])
-    return text[:open_at] + f"[{items}\n]" + text[close_at + 1 :]
+    wanted = change(current)
+    if wanted == current:
+        return text  # nothing to change, so not even the list's layout
+    return text[:open_at] + _toml_list(wanted) + text[close_at + 1 :]
+
+
+def _inline(requirements):
+    return "[" + ", ".join(json.dumps(r) for r in requirements) + "]"
+
+
+def _toml_list(requirements):
+    """A rewritten list: one requirement per line, so changes diff cleanly."""
+    if not requirements:
+        return "[]"
+    return "[" + "".join(f"\n    {json.dumps(r)}," for r in requirements) + "\n]"
 
 
 def _closing_bracket(text, open_at):

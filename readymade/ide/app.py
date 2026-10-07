@@ -31,7 +31,7 @@ from readymade.ide import helptext
 from readymade.ide.panels import HelpPanel, ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
 from readymade.ide.tooldialog import formatting_dialog, linting_dialog
 from readymade.ide.tracebacks import TracebackWatcher
-from readymade.project import Project, ProjectError, describe_python, find_pythons
+from readymade.project import Project, ProjectError, describe_python, find_pythons, requirement_name
 
 _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containing readymade/
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")  # terminal color and cursor codes
@@ -971,6 +971,55 @@ class App:
             [str(python), "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off", *requirements],
             on_exit=lambda code: on_success() if code == 0 else self.immediate.write(f"--- {failed} ---\n"),
         )
+
+    def remove_from_project(self, kind, name):
+        """Delete a form's or module's files ("form", "module"), or take a library out of the
+        project ("library"), after asking. Returns whether it was removed."""
+        if self.project is None or not self._idle():
+            return False
+        if kind == "library":
+            return self._remove_library(name)
+        files = " and ".join([f"{name}.form", f"{name}.py"] if kind == "form" else [f"{name}.py"])
+        uses = f"forms.{name}" if kind == "form" else f"import {name}"
+        if not messagebox.askyesno(
+            f"Remove {kind.capitalize()}",
+            f"Delete {name} from the project? This deletes {files} and can't be undone.\n\n"
+            f"Code that uses it (like {uses}) will need changing.",
+            icon="warning", default="no", parent=self.root,
+        ):
+            return False
+        editor = self._editor(FormEditor if kind == "form" else ModuleEditor, name)
+        if editor is not None:
+            self.close_document(editor, ask=False)  # its unsaved changes go with it
+        (self.project.remove_form if kind == "form" else self.project.remove_module)(name)
+        self.explorer_refresh()
+        self.immediate.write(f"--- Deleted {files}. ---\n")
+        return True
+
+    def _remove_library(self, requirement):
+        python = self.project.python()
+        library = requirement_name(requirement)
+        where = ("It will also be uninstalled from the project's environment (libraries it brought with it stay)."
+                 if python is not None else "The project uses the IDE's Python, so it stays installed there.")
+        if not messagebox.askyesno("Remove Library", f"Remove {requirement} from the project's libraries? {where}",
+                                   icon="warning", default="no", parent=self.root):
+            return False
+        self.project.remove_dependency(requirement)
+        self.explorer_refresh()
+        if python is None or not self._python_exists(python):
+            self.immediate.write(f"--- Removed {requirement} from the project. ---\n")
+            return True
+
+        def uninstalled(code):
+            if code == 0:
+                self.immediate.write(f"--- Removed {requirement} from the project. ---\n")
+            else:
+                self.immediate.write(f"--- pip couldn't uninstall {library}, but it's no longer one of the project's libraries. ---\n")
+
+        self.immediate.write(f"--- Uninstalling {library} ---\n")
+        self._start([str(python), "-m", "pip", "uninstall", "-y", "--disable-pip-version-check", library],
+                    on_exit=uninstalled)
+        return True
 
     def _library_added(self, requirement):
         self.project.add_dependency(requirement)
