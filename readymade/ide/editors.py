@@ -15,7 +15,7 @@ import shutil
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from readymade import appearance, codegen, dialogs, formfile, menus
+from readymade import appearance, codegen, dialogs, formfile, layout, menus
 from readymade.controls import LOOK_CHOICES, REGISTRY, Event
 from readymade.form import FORM, FORM_EVENTS, check_name
 from readymade.ide import arrange, assist
@@ -351,7 +351,18 @@ class FormEditor:
 
     @_undoable
     def set_geometries(self, geometries):
-        """Move and resize controls, as {name: (left, top, width, height)}."""
+        """Move and resize controls, as {name: (left, top, width, height)}. A Frame that changes
+        size takes the anchored controls inside it along."""
+        geometries = dict(geometries)
+        for name, geometry in list(geometries.items()):
+            spec = self._spec(name)
+            if spec["type"] == "Frame":
+                grown = (geometry[2] - spec["width"], geometry[3] - spec["height"])
+                for inside, moved in self._anchored(name, *grown).items():
+                    geometries.setdefault(inside, moved)
+        self._apply_geometries(geometries)
+
+    def _apply_geometries(self, geometries):
         for name, geometry in geometries.items():
             spec = self._spec(name)
             for key, value in zip(("left", "top", "width", "height"), geometry):
@@ -361,12 +372,30 @@ class FormEditor:
         self.properties.update_values()
         self.update_title()
 
+    def _anchored(self, container, across, down):
+        """Where the anchored controls in a container (a Frame's name, or None for the form) go
+        when it grows by across and down: {name: (left, top, width, height)}, Frames' contents too."""
+        moves = {}
+        if not (across or down):
+            return moves
+        for spec in self.design.controls:
+            if spec.get("container") != container or "width" not in spec:
+                continue  # elsewhere, or a Timer
+            old = (spec["left"], spec["top"], spec["width"], spec["height"])
+            new = layout.follow(old, spec.get("anchor", layout.DEFAULT), across, down)
+            if new != old:
+                moves[spec["name"]] = new
+                if spec["type"] == "Frame":
+                    moves.update(self._anchored(spec["name"], new[2] - old[2], new[3] - old[3]))
+        return moves
+
     @_undoable
     def set_form_size(self, width, height):
+        """Resize the form; its anchored controls follow, as they will when the program runs."""
+        across, down = width - self.design.width, height - self.design.height
         self.design.width, self.design.height = width, height
         self.surface.refresh_form()
-        self.properties.update_values()
-        self.update_title()
+        self._apply_geometries(self._anchored(None, across, down))
 
     @_undoable
     def add_control(self, type_name, left, top, width=None, height=None, container=None):

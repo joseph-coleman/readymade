@@ -18,7 +18,7 @@ from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
 
-from readymade import appearance, keys, pictures
+from readymade import appearance, keys, layout, pictures
 from readymade import shapes as _shapes
 from readymade.shapes import Shape
 
@@ -74,11 +74,20 @@ def create(parent, spec, design=False, folder=None):
 
 
 def _geometry(attr, doc):
+    """A position or size property. _left and the rest hold where the control was put for
+    its container's designed size; with an anchor, it follows the container from there."""
+    index = ("left", "top", "width", "height").index(attr)
+
     def get(self):
-        return getattr(self, "_" + attr)
+        return self._rect()[index]
 
     def set(self, value):
-        setattr(self, "_" + attr, int(value))
+        if not self._ready:
+            setattr(self, "_" + attr, int(value))
+            return
+        rect = list(self._rect())
+        rect[index] = int(value)
+        self._left, self._top, self._width, self._height = self._unfollow(rect)
         self._place()
 
     return property(get, set, doc=doc)
@@ -157,6 +166,7 @@ class Control:
             "top": 0,
             "width": width,
             "height": height,
+            **({"anchor": layout.DEFAULT} if issubclass(cls, _Anchored) else {}),
             "enabled": True,
             "visible": True,
             **({"tabindex": 0} if issubclass(cls, _TabStop) else {}),
@@ -235,12 +245,36 @@ class Control:
         self._enabled = bool(value)
         self.widget["state"] = tk.NORMAL if self._enabled else tk.DISABLED
 
+    # ----- where it is: anchors (see readymade.layout) -----
+
+    _grown = (0, 0)  # how much its container has grown since it was designed (across, down)
+
+    def _rect(self):
+        """(left, top, width, height) now: where it was put, moved or stretched by its anchor."""
+        base = (self._left, self._top, self._width, self._height)
+        if self._grown == (0, 0) or not isinstance(self, _Anchored):
+            return base
+        return layout.follow(base, self._anchor, *self._grown)
+
+    def _unfollow(self, rect):
+        """Where a control now at rect was put, for the container's designed size."""
+        if self._grown == (0, 0) or not isinstance(self, _Anchored):
+            return tuple(rect)
+        return layout.follow(rect, self._anchor, -self._grown[0], -self._grown[1])
+
+    def follow_container(self, grown_across, grown_down):
+        """Its container has grown (or shrunk, with negative numbers) since it was designed:
+        move or stretch as its anchor says."""
+        self._grown = (int(grown_across), int(grown_down))
+        self._place()
+
     def _place(self):
         if not self._ready:
             return
         # The designer always shows invisible controls, as VB did.
         if self._visible or self.design:
-            self.widget.place(x=self._left, y=self._top, width=self._width, height=self._height)
+            left, top, width, height = self._rect()
+            self.widget.place(x=left, y=top, width=width, height=height)
         else:
             self.widget.place_forget()
 
@@ -399,7 +433,7 @@ def repaint_inside(widget):
 
 
 LOOK_CHOICES = {"alignment": appearance.ALIGNMENTS, "valignment": appearance.VALIGNMENTS,
-                "cursor": tuple(appearance.CURSORS)}
+                "cursor": tuple(appearance.CURSORS), "anchor": layout.CHOICES}
 
 
 class _BackColor:
@@ -526,6 +560,28 @@ class _TabStop:
         return self.widget
 
 
+class _Anchored:
+    """An anchor property (see readymade.layout)."""
+
+    _anchor: str
+
+    @property
+    def anchor(self):
+        """The edges of its container (the form, or a Frame) it keeps its distance to when that
+        changes size: "top left" (it stays put), "bottom right" (it stays in that corner),
+        "top left right" (it stretches across), "top bottom left right" (both ways). With
+        neither left nor right it stays centered across; "none" centers it both ways."""
+        return self._anchor
+
+    @anchor.setter
+    def anchor(self, value):
+        rect = self._rect() if self._ready else None
+        self._anchor = layout.normalize(value)
+        if rect is not None:  # it stays where it is now; from here on it follows the new edges
+            self._left, self._top, self._width, self._height = self._unfollow(rect)
+            self._place()
+
+
 class _Tooltip:
     """A tooltip property."""
 
@@ -559,7 +615,7 @@ class _WidgetText:
 
 
 @register
-class Label(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, _Tooltip, Control):
+class Label(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, _Tooltip, _Anchored, Control):
     """Text on a form, such as a caption or a result. It can't be typed in, but it can be clicked."""
 
     type_name = "Label"
@@ -576,7 +632,7 @@ SCROLLBARS = ("none", "horizontal", "vertical", "both")
 
 
 @register
-class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, _Tooltip, Control):
+class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, _Tooltip, _Anchored, Control):
     """A text field. With multiline True it's a multi-line text area, optionally with
     scrollbars. As in VB, both are set in the designer, and scrollbars only apply to
     multi-line boxes. readonly, password and maxlength limit what the user can do;
@@ -813,7 +869,7 @@ class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, _Toolt
 
 
 @register
-class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, _Tooltip, Control):
+class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, _Tooltip, _Anchored, Control):
     """A captioned box that groups controls. Controls drawn inside it belong to it: they're
     positioned relative to it and move with it, and its OptionButtons form their own group."""
 
@@ -854,12 +910,27 @@ class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, _Tool
         if self._ready:
             repaint_inside(self.inner)  # controls showing its color follow it
 
+    def _place(self):
+        super()._place()
+        if not self._ready or self.design:
+            return  # (the designer moves anchored controls itself, in the form's design)
+        # The controls inside follow its size, measured from the size it was designed at.
+        _, _, width, height = self._rect()
+        designed = getattr(self, "_designed_size", None)
+        if designed is None:
+            designed = self._designed_size = (width, height)
+        for child in self.inner.winfo_children():
+            ref = _controls.get(child)
+            control = ref() if ref else None
+            if control is not None:
+                control.follow_container(width - designed[0], height - designed[1])
+
     def _align(self, alignment, valignment):
         self.widget["labelanchor"] = {"left": "nw", "center": "n", "right": "ne"}[alignment]
 
 
 @register
-class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, _Tooltip, Control):
+class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, _Tooltip, _Anchored, Control):
     """A push button. Its click event runs when it's clicked, or pressed with Space while it has the focus.
     (On macOS, buttons keep the system's own colors.)"""
 
@@ -881,7 +952,7 @@ class Button(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _T
 
 
 @register
-class CheckBox(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, _Tooltip, Control):
+class CheckBox(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, _Tooltip, _Anchored, Control):
     """A box that can be ticked. value is True while it's ticked; click runs each time it changes."""
 
     type_name = "CheckBox"
@@ -915,7 +986,7 @@ _option_groups: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 @register
-class OptionButton(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, _Tooltip, Control):
+class OptionButton(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabStop, _Cursor, _Tooltip, _Anchored, Control):
     """A radio button. Option buttons in the same container form one group, as in VB."""
 
     type_name = "OptionButton"
@@ -986,7 +1057,7 @@ class _ListMixin:
 
 
 @register
-class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, _Tooltip, Control):
+class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, _Tooltip, _Anchored, Control):
     """A drop-down list. With editable False the user can only pick from the list."""
 
     type_name = "ComboBox"
@@ -1102,7 +1173,7 @@ class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _TabStop, _C
 
 
 @register
-class ListBox(_ListMixin, _BackColor, _ForeColor, _Font, _TabStop, _Cursor, _Tooltip, Control):
+class ListBox(_ListMixin, _BackColor, _ForeColor, _Font, _TabStop, _Cursor, _Tooltip, _Anchored, Control):
     """A list to choose from. click runs when the choice changes; list_index and text tell
     which item is chosen."""
 
@@ -1158,7 +1229,7 @@ _TEXT_ANCHORS = {"nw": "la", "n": "ma", "ne": "ra", "w": "lm", "center": "mm", "
 
 
 @register
-class Image(_BackColor, _Cursor, _Tooltip, Control):
+class Image(_BackColor, _Cursor, _Tooltip, _Anchored, Control):
     """A picture from a file: PNG or GIF, and with Pillow installed also JPEG and others.
     picture is the file's path, relative to the program's folder (see app_path); sizing
     chooses how picture and control fit each other. In code, picture can also be set to
@@ -1254,7 +1325,8 @@ class Image(_BackColor, _Cursor, _Tooltip, Control):
 
     def _inner_size(self):
         edge = 2 * self._border
-        return max(1, self._width - edge), max(1, self._height - edge)
+        _, _, width, height = self._rect()
+        return max(1, width - edge), max(1, height - edge)
 
     def _showing(self):
         scaled = self._sizing in ("stretch", "zoom")
@@ -1284,7 +1356,7 @@ class Image(_BackColor, _Cursor, _Tooltip, Control):
             if self.design:
                 message = "(no picture)"  # so it can be seen and clicked in the designer
         self.widget.configure(
-            image=self._photo or "", text=message, wraplength=max(1, self._width - 4),
+            image=self._photo or "", text=message, wraplength=max(1, self._rect()[2] - 4),
             anchor="nw" if self._sizing in ("autosize", "normal") else "center",
             relief="solid" if self._border else "flat", bd=int(self._border),
         )
@@ -1426,7 +1498,7 @@ def _pixel_style(color, fill, thickness):
 
 
 @register
-class Canvas(_BackColor, _Cursor, _Tooltip, Control):
+class Canvas(_BackColor, _Cursor, _Tooltip, _Anchored, Control):
     """A drawing surface. Its drawing methods (line, rectangle, oval, circle, arc, polygon,
     text, picture, point) each return a Shape, which stays until it's deleted: move it,
     recolor it, hide it, check what it overlaps. Mouse events say where the mouse is and
@@ -1615,6 +1687,12 @@ class Timer(Control):
 
     width = property(lambda self: self.default_size[0])
     height = property(lambda self: self.default_size[1])
+
+    def _rect(self):
+        return (self._left, self._top, *self.default_size)  # always its icon's size, and no anchor
+
+    def _unfollow(self, rect):
+        return tuple(rect)
 
     def create_widget(self, parent):
         self._handler = None

@@ -161,11 +161,15 @@ class Form:
         self.backcolor = design.backcolor  # before the controls, which may show it
         self.cursor = design.cursor
         self.controls = {}
+        self._designed_size = self._configured_size = (design.width, design.height)
+        self._on_form = []  # the controls straight on the form (the rest follow their Frame)
         for spec in design.controls:
             check_name(spec["name"], self.controls)
             control = create(self._parent_widget(spec), spec, folder=self.path.parent)
             self.controls[control.name] = control
             setattr(self, control.name, control)
+            if spec.get("container") is None:
+                self._on_form.append(control)
         self.menus = {}
         if design.menu:
             menubar = tk.Menu(self.root, tearoff=False)
@@ -382,8 +386,12 @@ class Form:
         self.root.bind("<Destroy>", self._on_destroy, add="+")
 
     def _on_configure(self, e):
-        if e.widget is self.root and (e.width, e.height) != self._size:
-            self._size = (e.width, e.height)
+        # (Compared with the last size seen here: the width and height setters change _size first.)
+        if e.widget is self.root and (e.width, e.height) != self._configured_size and e.width > 1:
+            self._size = self._configured_size = (e.width, e.height)
+            across, down = e.width - self._designed_size[0], e.height - self._designed_size[1]
+            for control in self._on_form:  # anchors: before Form_resize, so it sees where they went
+                control.follow_container(across, down)
             self._fire("resize")
 
     def _on_form_mouse(self, e, event):

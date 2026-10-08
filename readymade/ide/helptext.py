@@ -134,6 +134,8 @@ def home(platform=sys.platform):
         f"  Arrows move the selection ({ctrl}: 1 pixel); Shift+arrows resize it.",
         f"  {keys('Ctrl+Z')} / {keys(redo)} undo and redo; {keys('Ctrl+X')}, C and V cut, copy and paste controls.",
         f"  Tools > Menu Editor ({keys('Ctrl+E')}) designs the form's menus.",
+        "  A control's anchor keeps it to edges of the form (or its Frame) as that resizes:",
+        "  \"bottom right\" for OK buttons, \"top left right\" to stretch across.",
         "  Format > Tab Order: click the controls in the order Tab should visit them.",
         "",
         "Code",

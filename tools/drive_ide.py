@@ -752,6 +752,30 @@ def drive(d):
     options.apply(app)
     d.check("back to light", editor.code.text.cget("background"), "#ffffff")
 
+    print("Anchors: Button2 keeps to the bottom right as the form grows, in the designer and when running")
+    editor.show_design()
+    editor.set_property("Button2", "anchor", "bottom right")
+    before = tuple(editor.design.control("Button2")[k] for k in ("left", "top"))
+    x, y = d.at(editor.surface.form_handle)
+    d.drag(x, y, x + 48, y + 32)
+    after = tuple(editor.design.control("Button2")[k] for k in ("left", "top"))
+    d.check("dragging the form bigger moves it", (after[0] - before[0], after[1] - before[1]), (48, 32))
+    d.shot("anchors-designer")
+    d.key("F5")
+    d.check("running at the designed place", d.ask("(Button2.left, Button2.top)"), after)
+    # A person resizes the window through the window manager, and this display has none (Tk keeps its
+    # window at the size it asked for when another program resizes it), so the program's Tk does it.
+    app.immediate_line(f"form.root.geometry('{editor.design.width + 100}x{editor.design.height + 60}')")
+    deadline = time.time() + 5
+    while d.ask("Button2.left") == after[0] and time.time() < deadline:
+        d.pump(0.1)
+    d.check("resizing the program's window moves it", d.ask("(Button2.left, Button2.top)"), (after[0] + 100, after[1] + 60))
+    d.shot("anchors-running")
+    app.immediate_line("form.close()")
+    deadline = time.time() + 10
+    while app.process is not None and time.time() < deadline:
+        d.pump(0.05)
+
 
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/readymade-ui")
