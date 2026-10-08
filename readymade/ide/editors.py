@@ -16,13 +16,15 @@ from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from readymade import appearance, codegen, dialogs, formfile, layout, menus
-from readymade.controls import LOOK_CHOICES, REGISTRY, Event
+from readymade.controls import GRID_CELL, LOOK_CHOICES, REGISTRY, Event, Grid
 from readymade.form import FORM, FORM_EVENTS, check_name
 from readymade.ide import arrange, assist
 from readymade.ide.codeview import CodeView
 from readymade.ide.designer import GRID, DesignSurface, snap
 
 UNDO_LIMIT = 200
+# Properties whose controls tidy what's typed, which is then saved tidied too.
+_TIDIED = ("columns", "rows", "font", "anchor", "backcolor", "forecolor")
 MULTIPLE = "(multiple controls)"  # the Properties panel's object while several controls are selected
 
 
@@ -152,7 +154,50 @@ class FormEditor:
         if spec is None:
             return []
         defaults = REGISTRY[spec["type"]].prop_defaults()
-        return [("name", obj)] + [(prop, spec.get(prop, default)) for prop, default in defaults.items()]
+        props = [("name", obj)]
+        in_grid = self._grid_of(spec) is not None
+        for prop, default in defaults.items():
+            if in_grid and prop == "left":  # in a Grid its cell says where it goes
+                props += [(key, spec.get(key, value)) for key, value in GRID_CELL.items()]
+            elif not (in_grid and prop == "top"):
+                props.append((prop, spec.get(prop, default)))
+        return props
+
+    def _grid_size(self, spec):
+        """(rows, columns) of the Grid a control is in."""
+        grid = self._grid_of(spec)
+        return len(layout.parse_tracks(grid.get("rows", "*, *"))), len(layout.parse_tracks(grid.get("columns", "*, *")))
+
+    def _check_cell(self, spec, prop, value):
+        """A row, column or span typed in the Properties panel must fit in the control's Grid."""
+        rows, columns = self._grid_size(spec)
+        cell = {key: spec.get(key, default) for key, default in GRID_CELL.items()}
+        cell[prop] = value
+        fits = {"row": (0, rows - cell["rowspan"]), "column": (0, columns - cell["columnspan"]),
+                "rowspan": (1, rows - cell["row"]), "columnspan": (1, columns - cell["column"])}
+        low, high = fits[prop]
+        if not low <= value <= high:
+            grid = self._grid_of(spec)
+            raise ValueError(f"{grid['name']} has {rows} row{'s' * (rows != 1)} and {columns} column{'s' * (columns != 1)}, "
+                             f"so {prop} can be {low} to {high} here (add more in its rows or columns)")
+
+    def _grid_of(self, spec):
+        """The spec of the Grid a control is in, or None."""
+        container = self.design.control(spec["container"]) if spec.get("container") else None
+        return container if container and container["type"] == "Grid" else None
+
+    @_undoable
+    def set_cells(self, changes):
+        """Move controls in a Grid to other cells, or change their spans: {name: {"row": 2, ...}}."""
+        for name, cell in changes.items():
+            spec = self._spec(name)
+            spec.update(cell)
+            rows, columns = self._grid_size(spec)  # (a group moved together stays inside the Grid)
+            fitted = layout.fit_cell(*(spec.get(k, d) for k, d in GRID_CELL.items()), rows, columns)
+            spec.update(zip(GRID_CELL, fitted))
+            self.surface.refresh_control(name)
+        self.properties.update_values()
+        self.update_title()
 
     def _common_props(self):
         """The simple properties every selected control has; a value only where they all agree."""
@@ -293,6 +338,8 @@ class FormEditor:
                 self.surface.refresh_form()
             else:
                 spec = self._spec(obj)
+                if prop in GRID_CELL and self._grid_of(spec) is not None:
+                    self._check_cell(spec, prop, value)
                 if prop == "tabindex":
                     self._order_tabs(obj, value)  # the others make room
                     value = spec["tabindex"]
@@ -305,6 +352,8 @@ class FormEditor:
                     spec[prop] = current
                     self.surface.refresh_control(obj)
                     raise
+                if prop in _TIDIED:  # keep what the control made of it: "auto,250" is saved as "auto, 250"
+                    spec[prop] = getattr(self.surface.controls[obj], prop)
                 if prop in REGISTRY[spec["type"]].recreate_props:
                     # Rebuild the rows (the text row changes editor) without committing their old values.
                     self.properties.clear()
@@ -365,9 +414,10 @@ class FormEditor:
     def _apply_geometries(self, geometries):
         for name, geometry in geometries.items():
             spec = self._spec(name)
+            in_grid = self._grid_of(spec) is not None
             for key, value in zip(("left", "top", "width", "height"), geometry):
-                if key in spec:  # a Timer has no size
-                    spec[key] = value
+                if key in spec and not (in_grid and key in ("left", "top")):  # (a Timer has no size;
+                    spec[key] = value  # in a Grid, its cell decides where it goes)
             self.surface.refresh_control(name)
         self.properties.update_values()
         self.update_title()
@@ -401,6 +451,11 @@ class FormEditor:
     def add_control(self, type_name, left, top, width=None, height=None, container=None):
         name = self._free_name(type_name, set(self.object_names() + menus.names(self.design.menu)))
         spec = REGISTRY[type_name].new_spec(name, left, top, width, height, container)
+        grid = self.surface.controls.get(container) if container else None
+        if isinstance(grid, Grid):
+            spec["row"], spec["column"] = grid.cell_at(left, top)
+            if "anchor" in spec:
+                spec["anchor"] = "top bottom left right"  # fills its cell, as in WPF
         self.design.controls.append(spec)
         self._order_tabs(last=[spec])
         self.surface.add(spec)
@@ -679,7 +734,29 @@ class FormEditor:
         self.update_title()
 
     def nudge(self, dx=0, dy=0, dwidth=0, dheight=0):
-        """Move or resize the selected controls from the keyboard."""
+        """Move or resize the selected controls from the keyboard (in a Grid: by cells)."""
+        selected = self.selected_controls()
+        if selected and all(self._grid_of(self._spec(n)) for n in selected):
+            def step(n):
+                return (n > 0) - (n < 0)
+
+            changes = {}
+            for name in selected:
+                spec = self._spec(name)
+                rows, columns = self._grid_size(spec)
+                row, column = spec.get("row", 0), spec.get("column", 0)
+                if dwidth or dheight:  # spans stop at the Grid's edge
+                    cell = {"rowspan": max(1, min(rows - row, spec.get("rowspan", 1) + step(dheight))),
+                            "columnspan": max(1, min(columns - column, spec.get("columnspan", 1) + step(dwidth)))}
+                else:  # and so do moves
+                    cell = {"row": max(0, min(rows - spec.get("rowspan", 1), row + step(dy))),
+                            "column": max(0, min(columns - spec.get("columnspan", 1), column + step(dx)))}
+                if any(spec.get(k, GRID_CELL[k]) != v for k, v in cell.items()):
+                    changes[name] = cell
+            if changes:
+                with self._change(merge=("cells", tuple(self.selection), bool(dwidth or dheight))):
+                    self.set_cells(changes)
+            return
         geometries = {}
         for name in self.selected_controls():
             control = self.surface.controls[name]

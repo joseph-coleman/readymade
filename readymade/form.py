@@ -24,7 +24,7 @@ import tkinter as tk
 from pathlib import Path
 
 from readymade import appearance, events, formfile, forms, menus, pictures
-from readymade.controls import Button, Event, _TabStop, control_of, create, repaint_inside
+from readymade.controls import Button, Event, Grid, _TabStop, control_of, create, repaint_inside
 
 FORM = "Form"
 FORM_EVENTS = (
@@ -170,6 +170,9 @@ class Form:
             setattr(self, control.name, control)
             if spec.get("container") is None:
                 self._on_form.append(control)
+        for control in self.controls.values():  # (made before what's in them, so arranged now)
+            if isinstance(control, Grid):
+                control.arrange()
         self.menus = {}
         if design.menu:
             menubar = tk.Menu(self.root, tearoff=False)

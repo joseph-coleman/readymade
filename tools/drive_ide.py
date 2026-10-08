@@ -776,6 +776,34 @@ def drive(d):
     while app.process is not None and time.time() < deadline:
         d.pump(0.05)
 
+    print("A Grid: draw it, draw a button into a cell, drag it to another cell")
+    app.project.add_form("Gridded")
+    app.explorer_refresh()
+    gridded = app.open_form("Gridded")
+    gridded.show_design()
+    d.pump(0.3)
+    gcanvas = gridded.surface.canvas
+    d.click(*d.at(tool["Grid"]))
+    x0, y0 = d.at(gcanvas, 16, 16)
+    d.drag(x0, y0, x0 + 304, y0 + 160)
+    d.check("Grid drawn", gridded.selected, "Grid1")
+    gridded.set_property("Grid1", "columns", "*, *, *")
+    grid = gridded.surface.controls["Grid1"]
+    d.pump(0.2)
+
+    def cell_point(row, column):
+        x, y, w, h = grid.cell_box(row, column)
+        return grid.inner.winfo_rootx() + x + w // 2, grid.inner.winfo_rooty() + y + h // 2
+
+    d.click(*d.at(tool["Button"]))
+    x, y = cell_point(1, 1)
+    d.drag(x - 20, y - 10, x + 20, y + 10)
+    spec = gridded.design.control("Button1")
+    d.check("drawn into the middle cell of the bottom row", spec and (spec["row"], spec["column"]), (1, 1))
+    d.drag(*cell_point(1, 1), *cell_point(0, 2), steps=10)
+    d.check("dragged to the top-right cell", (spec["row"], spec["column"]), (0, 2))
+    d.shot("grid-designer")
+
 
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/readymade-ui")

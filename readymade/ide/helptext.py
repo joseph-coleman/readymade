@@ -136,6 +136,8 @@ def home(platform=sys.platform):
         f"  Tools > Menu Editor ({keys('Ctrl+E')}) designs the form's menus.",
         "  A control's anchor keeps it to edges of the form (or its Frame) as that resizes:",
         "  \"bottom right\" for OK buttons, \"top left right\" to stretch across.",
+        "  A Grid lays controls out in rows and columns (columns = \"auto, *, 2*, 120\"):",
+        "  draw controls into its cells; arrows move them between cells, Shift+arrows span more.",
         "  Format > Tab Order: click the controls in the order Tab should visit them.",
         "",
         "Code",

@@ -15,7 +15,7 @@ from __future__ import annotations
 import tkinter as tk
 
 from readymade import menus
-from readymade.controls import Button, create, repaint_inside
+from readymade.controls import GRID_CELL, Button, Grid, create, repaint_inside
 from readymade.form import FORM
 from readymade.ide import options
 
@@ -51,6 +51,7 @@ class DesignSurface(tk.Frame):
         self.controls = {}
         self._markers = []  # the corner marks of a multiple selection
         self._drag = None  # (kind, control, x_root, y_root, {name: original geometry})
+        self._grid_drag = None  # [kind, control, grid, target cell] while dragging in a Grid
         self._band = None  # (container, x, y) while drawing a new control
         self._lasso = None  # (x, y, adding) while dragging a box to select controls
         self._form_drag = (0, 0, 0, 0)  # (x_root, y_root, width, height) while resizing the form
@@ -166,6 +167,8 @@ class DesignSurface(tk.Frame):
         self.controls[control.name] = control
         _follow_size(spec, control)
         self._mark_default(control)
+        if isinstance(container, Grid):
+            container.arrange()  # into its cell
         self._lift_handles()
 
     def refresh_control(self, name):
@@ -177,6 +180,9 @@ class DesignSurface(tk.Frame):
         else:
             for prop, default in defaults.items():
                 setattr(control, prop, spec.get(prop, default))
+            if control._grid() is not None:
+                for prop, default in GRID_CELL.items():
+                    setattr(control, prop, spec.get(prop, default))
             _follow_size(spec, control)
         self.show_selection()
 
@@ -197,7 +203,11 @@ class DesignSurface(tk.Frame):
         self.controls[new] = control
 
     def remove(self, name):
-        self.controls.pop(name).widget.destroy()
+        control = self.controls.pop(name)
+        grid = control._grid()
+        control.widget.destroy()
+        if grid is not None and grid.name in self.controls:
+            grid.arrange()  # the rest of the Grid may change size
         self.show_selection()
 
     def show_selection(self):
@@ -314,7 +324,9 @@ class DesignSurface(tk.Frame):
         return "break"
 
     def _motion(self, e):
-        if self._band:
+        if self._grid_drag:
+            self._grid_drag_motion(e)
+        elif self._band:
             self._band_motion(e, self._band)
         elif self._drag:
             self._drag_motion(e, self._drag)
@@ -324,7 +336,9 @@ class DesignSurface(tk.Frame):
         return "break"
 
     def _release(self, e):
-        if self._band:
+        if self._grid_drag:
+            self._grid_drag_release()
+        elif self._band:
             self._band_release(e, self._band)
         elif self._drag:
             self._drag_release(self._drag)
@@ -423,6 +437,14 @@ class DesignSurface(tk.Frame):
     def _start_drag(self, e, kind, control=None):
         """Start moving the selection (dragging one of its controls) or resizing one control."""
         control = control or self.controls[self.app.selected]
+        grid = control._grid()
+        if grid is not None:
+            # In a Grid, dragging chooses cells: a move goes to the cell under the mouse, and the
+            # bottom and right handles stretch over more rows and columns.
+            if kind != "move" and (kind[0] == 0 or kind[1] == 0):
+                return "break"
+            self._grid_drag = [kind, control, grid, None]
+            return "break"
         if kind != "move" and not control.resizable:
             return "break"
         moving = [self.controls[n] for n in self.app.selection if n in self.controls] if kind == "move" else [control]
@@ -471,6 +493,46 @@ class DesignSurface(tk.Frame):
             # Pressing a control in a multiple selection keeps it, so the group can be dragged;
             # just clicking it (no drag) selects that control alone.
             self.app.select(pressed.name)
+
+    # ----- in a Grid: dragging chooses cells -----
+
+    def _grid_drag_motion(self, e):
+        kind, control, grid, _ = self._grid_drag
+        row, column = grid.cell_at(e.x_root - grid.inner.winfo_rootx(), e.y_root - grid.inner.winfo_rooty())
+        if kind == "move":
+            target = (row, column, control.rowspan, control.columnspan)
+        else:
+            fx, fy = kind
+            target = (control.row, control.column,
+                      max(1, row - control.row + 1) if fy == 1 else control.rowspan,
+                      max(1, column - control.column + 1) if fx == 1 else control.columnspan)
+        self._grid_drag[3] = target
+        try:
+            x, y, width, height = grid.cell_box(*target)
+        except IndexError:  # past the last cell
+            return
+        self._draw_rect(x + grid.inner.winfo_rootx() - self.canvas.winfo_rootx(),
+                        y + grid.inner.winfo_rooty() - self.canvas.winfo_rooty(), width, height)
+
+    def _grid_drag_release(self):
+        kind, control, _, target = self._grid_drag
+        self._grid_drag = None
+        for line in self.band:
+            line.place_forget()
+        if target is None:
+            return
+        row, column, rowspan, columnspan = target
+        changes = {}
+        if kind == "move":
+            down, across = row - control.row, column - control.column
+            for name in self.app.selection:
+                moving = self.controls.get(name)
+                if moving is not None and (down or across):
+                    changes[name] = {"row": max(0, moving.row + down), "column": max(0, moving.column + across)}
+        elif (rowspan, columnspan) != (control.rowspan, control.columnspan):
+            changes[control.name] = {"rowspan": rowspan, "columnspan": columnspan}
+        if changes:
+            self.app.set_cells(changes)
 
     # ----- resizing the form -----
 

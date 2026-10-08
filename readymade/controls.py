@@ -82,8 +82,12 @@ def _geometry(attr, doc):
         return self._rect()[index]
 
     def set(self, value):
-        if not self._ready:
+        grid = self._grid() if self._ready else None
+        if not self._ready or grid is not None:
+            # (In a Grid: width and height are the size it asks for; its place is the Grid's to decide.)
             setattr(self, "_" + attr, int(value))
+            if grid is not None:
+                grid.arrange()
             return
         rect = list(self._rect())
         rect[index] = int(value)
@@ -137,6 +141,9 @@ class Control:
                 widget["cursor"] = "arrow"
         for prop, default in self.prop_defaults().items():
             setattr(self, prop, spec.get(prop, default))
+        if isinstance(self, _Anchored):  # its cell, if it's in a Grid
+            for prop, default in GRID_CELL.items():
+                setattr(self, prop, spec.get(prop, default))
         self._ready = True
         self._paint()
         self._apply_font()
@@ -249,8 +256,19 @@ class Control:
 
     _grown = (0, 0)  # how much its container has grown since it was designed (across, down)
 
+    _grid_rect = None  # in a Grid: where the Grid put it
+
+    def _grid(self):
+        """The Grid it's in, or None."""
+        ref = _controls.get(self.widget.master)
+        container = ref() if ref else None
+        return container if isinstance(container, Grid) else None
+
     def _rect(self):
-        """(left, top, width, height) now: where it was put, moved or stretched by its anchor."""
+        """(left, top, width, height) now: where it was put, moved or stretched by its anchor
+        (or in a Grid, where its row, column and anchor put it)."""
+        if self._grid_rect is not None and self._grid() is not None:
+            return self._grid_rect
         base = (self._left, self._top, self._width, self._height)
         if self._grown == (0, 0) or not isinstance(self, _Anchored):
             return base
@@ -570,16 +588,48 @@ class _Anchored:
         """The edges of its container (the form, or a Frame) it keeps its distance to when that
         changes size: "top left" (it stays put), "bottom right" (it stays in that corner),
         "top left right" (it stretches across), "top bottom left right" (both ways). With
-        neither left nor right it stays centered across; "none" centers it both ways."""
+        neither left nor right it stays centered across; "none" centers it both ways.
+        In a Grid, the edges of its cell it sticks to: all four fill the cell."""
         return self._anchor
 
     @anchor.setter
     def anchor(self, value):
+        grid = self._grid() if self._ready else None
+        if grid is not None:  # in a Grid: the edges of its cell it sticks to
+            self._anchor = layout.normalize(value)
+            grid.arrange()
+            return
         rect = self._rect() if self._ready else None
         self._anchor = layout.normalize(value)
         if rect is not None:  # it stays where it is now; from here on it follows the new edges
             self._left, self._top, self._width, self._height = self._unfollow(rect)
             self._place()
+
+
+    def _cell_prop(name, doc, smallest):
+        def get(self):
+            return getattr(self, "_" + name)
+
+        def set(self, value):
+            value = int(value)
+            if value < smallest:
+                raise ValueError(f"{name} can't be less than {smallest}")
+            setattr(self, "_" + name, value)
+            grid = self._grid() if getattr(self, "_ready", False) else None
+            if grid is not None:
+                grid.arrange()
+
+        return property(get, set, doc=doc)
+
+    row = _cell_prop("row", "In a Grid: the row it's in, counting from 0.", 0)
+    column = _cell_prop("column", "In a Grid: the column it's in, counting from 0.", 0)
+    rowspan = _cell_prop("rowspan", "In a Grid: how many rows it covers.", 1)
+    columnspan = _cell_prop("columnspan", "In a Grid: how many columns it covers.", 1)
+    del _cell_prop
+
+
+# A control's place in a Grid, kept in the .form only for controls in one (with these defaults).
+GRID_CELL = {"row": 0, "column": 0, "rowspan": 1, "columnspan": 1}
 
 
 class _Tooltip:
@@ -1669,6 +1719,134 @@ class Canvas(_BackColor, _Cursor, _Tooltip, _Anchored, Control):
 
 def _outlined(color, fill, thickness, dashed):
     return {"outline": color or "", "fill": fill or "", "width": thickness, "dash": _shapes.DASH if dashed else ""}
+
+
+@register
+class Grid(_BackColor, _Cursor, _Tooltip, _Anchored, Control):
+    """Rows and columns of controls. columns and rows are lists like "auto, *, 2*, 120": auto
+    fits what's in it, * and 2*, 3*... share the space left over by weight, and a number is
+    fixed pixels. Each control in it has a row and column (counting from 0), may span
+    several, and its anchor names the edges of its cell it sticks to (all four fill it).
+    Its width and height are the size it asks for: what auto rows and columns fit."""
+
+    inner: tk.Canvas
+    type_name = "Grid"
+    default_size = (240, 160)
+    is_container = True
+    inherits_backcolor = True
+    events = _MOUSE_EVENTS
+    extra_props = {"columns": "*, *", "rows": "*, *", "gap": 4, "padding": 4, "border": False}
+
+    def create_widget(self, parent):
+        self._columns, self._rows = "*, *", "*, *"
+        self._gap = self._padding = 4
+        self._border = False
+        self.column_lines = self.row_lines = None  # where its columns and rows are, once arranged
+        # A canvas, so the designer can draw the cells; the controls are placed on it.
+        self.inner = tk.Canvas(parent, highlightthickness=0, bd=0)
+        return self.inner
+
+    def _tracks(name, doc):
+        def get(self):
+            return getattr(self, "_" + name)
+
+        def set(self, value):
+            setattr(self, "_" + name, layout.normalize_tracks(value))
+            self.arrange()
+
+        return property(get, set, doc=doc)
+
+    columns = _tracks("columns", """Its columns' widths, like "auto, *, 2*, 120": auto fits what's in it,
+        * and 2*, 3*... share the space left over by weight, and a number is fixed pixels.""")
+    rows = _tracks("rows", """Its rows' heights, like "auto, auto, *": as for columns.""")
+    del _tracks
+
+    @property
+    def gap(self):
+        """Pixels between its rows and columns."""
+        return self._gap
+
+    @gap.setter
+    def gap(self, value):
+        self._gap = max(0, int(value))
+        self.arrange()
+
+    @property
+    def padding(self):
+        """Pixels between its edge and its cells."""
+        return self._padding
+
+    @padding.setter
+    def padding(self, value):
+        self._padding = max(0, int(value))
+        self.arrange()
+
+    @property
+    def border(self):
+        """Whether a thin line is drawn around it."""
+        return self._border
+
+    @border.setter
+    def border(self, value):
+        self._border = bool(value)
+        self.widget.configure(bd=int(self._border), relief="solid" if self._border else "flat")
+        self.arrange()
+
+    def _place(self):
+        super()._place()
+        self.arrange()
+
+    def _paint(self):
+        super()._paint()
+        if self._ready:
+            repaint_inside(self.inner)
+
+    def children(self):
+        """The controls in it."""
+        found = []
+        for widget in self.inner.winfo_children():
+            ref = _controls.get(widget)
+            control = ref() if ref else None
+            if control is not None:
+                found.append(control)
+        return found
+
+    def arrange(self):
+        """Put the controls in it in their cells (it does this itself when anything changes)."""
+        if not getattr(self, "_ready", False):
+            return
+        _, _, width, height = self._rect()
+        edge = int(self._border)
+        children = [c for c in self.children() if c.visible or c.design]
+        cells = [(c.row, c.column, c.rowspan, c.columnspan, c.anchor, (c._width, c._height)) for c in children]
+        rects, self.column_lines, self.row_lines = layout.arrange_grid(
+            self._columns, self._rows, width - 2 * edge, height - 2 * edge, cells, self._gap, self._padding)
+        for control, rect in zip(children, rects):
+            control._grid_rect = rect
+            control._place()
+        if self.design:
+            self._draw_cells(width - 2 * edge, height - 2 * edge)
+
+    def _draw_cells(self, width, height):
+        """The designer shows where the cells are."""
+        self.inner.delete("cells")
+        for lines, across in ((self.column_lines, True), (self.row_lines, False)):
+            for start, size in zip(lines.starts, lines.sizes):
+                for edge in (start, start + size):
+                    points = (edge, 0, edge, height) if across else (0, edge, width, edge)
+                    self.inner.create_line(*points, fill="#9a9a9a", dash=(2, 3), tags="cells")
+
+    def cell_at(self, x, y):
+        """The (row, column) at a point inside it (the nearest cell, outside its cells)."""
+        if self.row_lines is None:
+            return 0, 0
+        return self.row_lines.index_at(y), self.column_lines.index_at(x)
+
+    def cell_box(self, row, column, rowspan=1, columnspan=1):
+        """(left, top, width, height) of a cell, or of several spanned, inside it."""
+        x, width = layout._span(self.column_lines, column, columnspan, self._gap)
+        y, height = layout._span(self.row_lines, row, rowspan, self._gap)
+        return x, y, width, height
 
 
 @register
