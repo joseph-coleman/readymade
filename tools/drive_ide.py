@@ -680,6 +680,39 @@ def drive(d):
         d.pump(0.05)
 
 
+    print("The Problems tab: lint every file, click a problem to go to it")
+    from readymade import lint
+
+    folder = editor.path.parent
+    linter = Path(tempfile.mkdtemp(prefix="readymade-lint-")) / "fake_linter.py"  # not in the project, or it's a module
+    linter.write_text(
+        "import sys\nsource = sys.stdin.read()\nfor n, line in enumerate(source.splitlines(), 1):\n"
+        "    if 'bad' in line:\n        print(f\"{sys.argv[-1]}:{n}:{line.index('bad') + 1}: X100 found bad\")\n",
+        encoding="utf-8")
+    pyproject = app.project.pyproject
+    pyproject.write_text(pyproject.read_text() + (
+        "\n[tool.readymade.lint-tools.typing-check]\n"
+        f'command = ["{{python}}", "{linter.as_posix()}", "--stdin", "{{file}}"]\nstdin = true\n'))
+    (folder / "helpers.py").write_text("x = 1\n\n\ndef f():\n    return 'bad'\n", encoding="utf-8")
+    lint.set_choices(app.project, ["typing-check"], [])
+    app.linter.check_all()
+    deadline = time.time() + 15
+    while (app.linter.busy or not app.problems.tree.get_children()) and time.time() < deadline:
+        d.pump(0.1)
+    d.click(*d.tab_at(app.bottom, app.problems))
+    tree = app.problems.tree
+    rows = [tree.item(r, "values") for r in tree.get_children()]
+    d.check("helpers.py's problem is listed", [(str(v[0]), str(v[1])) for v in rows], [("helpers.py", "5")])
+    d.check("the tab shows the count", app.bottom.tab(app.problems, "text"), "Problems (1)")
+    d.shot("problems")
+    x, y, w, h = tree.bbox(tree.get_children()[0])
+    d.click(tree.winfo_rootx() + x + 40, tree.winfo_rooty() + y + h // 2)
+    module = next((e for e in app.editors if e.name == "helpers"), None)
+    d.check("clicking opens the module at the problem",
+            module and (app.documents.select() == str(module.frame), module.code.text.index("insert")), (True, "5.12"))
+    d.shot("problem-opened")
+
+
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/readymade-ui")
     shutil.rmtree(out, ignore_errors=True)

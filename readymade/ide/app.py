@@ -28,7 +28,7 @@ from readymade.ide.editors import FormEditor, ModuleEditor, ViewerEditor, bring_
 from readymade.ide.linting import Linter
 from readymade.ide.menueditor import MenuEditor
 from readymade.ide import helptext
-from readymade.ide.panels import HelpPanel, ImmediateWindow, ProjectExplorer, PropertiesPanel, Toolbox
+from readymade.ide.panels import HelpPanel, ImmediateWindow, ProblemsPanel, ProjectExplorer, PropertiesPanel, Toolbox
 from readymade.ide.tooldialog import formatting_dialog, linting_dialog
 from readymade.ide.tracebacks import TracebackWatcher
 from readymade.project import Project, ProjectError, describe_python, find_pythons, requirement_name
@@ -83,9 +83,12 @@ class App:
         # Below: the Immediate window, and F1's help.
         self.bottom = ttk.Notebook(outer)
         self.immediate = ImmediateWindow(self.bottom, on_line=self.immediate_line)
+        self.problems = ProblemsPanel(self.bottom, on_open=self.go_to_problem)
         self.help = HelpPanel(self.bottom)
         self.bottom.add(self.immediate, text="Immediate")
+        self.bottom.add(self.problems, text="Problems")
         self.bottom.add(self.help, text="Help")
+        self.problems_changed()
         outer.add(top, weight=1)
         outer.add(self.bottom, weight=0)
 
@@ -194,6 +197,7 @@ class App:
         form = path.stem if path.suffix == ".form" else project.startup
         if form:
             self.open_form(form)
+        self.linter.check_project()
         self.update_title()
         return True
 
@@ -495,6 +499,21 @@ class App:
         self._tab_changed()
         return viewer
 
+    # ----- problems -----
+
+    def problems_changed(self):
+        """The linter found something new: show every problem in the Problems tab."""
+        problems = self.linter.all_problems()
+        self.problems.show(problems, checking=self.linter.busy, linting=bool(self.linter.tools()))
+        self.bottom.tab(self.problems, text=f"Problems ({len(problems)})" if problems else "Problems")
+
+    def go_to_problem(self, path, line, column):
+        """Open the code with a problem, at its place."""
+        editor = self._open_code(Path(path))
+        if editor is not None:
+            editor.code.show_location(line, column)
+            editor.code.text.focus_set()
+
     # ----- F1 help -----
 
     def show_topic(self, topic):
@@ -673,6 +692,8 @@ class App:
         self.documents.forget(editor.frame)
         editor.frame.destroy()
         self._tab_changed()
+        if self.project is not None:
+            self.linter.check_project()  # its problems are now the saved file's
         return True
 
     def _close_all(self):
@@ -696,6 +717,8 @@ class App:
         ok = all([e.save() for e in changed])
         for editor in changed:
             self.linter.check(editor, saved=True)
+        if changed:
+            self.linter.check_project()  # a change in one file can cause problems in another
         self.update_title()
         return ok
 
@@ -1034,6 +1057,7 @@ class App:
             self.close_document(editor, ask=False)  # its unsaved changes go with it
         (self.project.remove_form if kind == "form" else self.project.remove_module)(name)
         self.explorer_refresh()
+        self.linter.check_project()  # forgets its problems
         self.immediate.write(f"--- Deleted {files}. ---\n")
         return True
 

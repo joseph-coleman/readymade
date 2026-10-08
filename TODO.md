@@ -5,7 +5,6 @@ Ideas and gaps noted along the way, roughly by area.
 ## Runtime
 - **Menu item `visible`**: Tk can't hide a menu entry; supporting it means rebuilding the menu.
 - **Break mode**: pause a running program at an error, as VB did (needs a debugger).
-- **macOS shortcuts**: treat "Ctrl" as ⌘ (Command) and "Alt" as Option on macOS, the way Qt and Electron's CmdOrCtrl do, and show native ⌘O labels. Needs a Mac to check how Tk on macOS parses accelerator labels, and whether its native menus already fire the shortcut (which would make readymade's own binding run handlers twice). The IDE's own shortcuts (Ctrl+S, Ctrl+Z, ...) should follow the same rule.
 
 ## IDE
 - **Copy and paste**: optionally bring the controls' event handlers along (renamed to match), which VB never did. Also a selection box inside a Frame (today it only works on the form itself; Ctrl+click works anywhere).
@@ -24,7 +23,7 @@ Ideas and gaps noted along the way, roughly by area.
 - **Help follow-ups**: show help beside the completion list for the chosen entry; help on hover; links between topics (a property's help linking to its control); format reStructuredText and Google-style docstrings instead of showing them as plain text.
   - Color codes get stripped out via PYTHON_COLORS or NO_COLOR because that broke the "jump to error line" feature.  Is there ever a situation where colors in help could be useful?
 - **Formatting follow-ups**: format just the selection; let a project insist on no formatting (today an unset project falls back to each person's default); format in the background instead of briefly waiting with a busy cursor.
-- **Linting follow-ups**: a Problems list next to the Immediate window (every problem in the project, click to jump); quick fixes (`ruff check --fix`); different colors for errors and warnings; pylint/mypy checking as you type via a temporary copy.
+- **Linting follow-ups**: quick fixes (`ruff check --fix`); different colors for errors and warnings; pylint/mypy checking as you type via a temporary copy. The Problems tab: sort by column, filter by file or tool, and notice files added or changed outside the IDE.
 - These libraries would be IDE-only dependencies, like Pygments in the `ide` extra (`pip install -e ".[ide]"`), so programs never need them.
 
 ## Bigger features

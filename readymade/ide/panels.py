@@ -1,4 +1,4 @@
-"""The IDE's side panels: Toolbox, Properties and the Immediate window."""
+"""The IDE's side panels: Toolbox, Properties, and the Immediate, Problems and Help tabs."""
 
 from __future__ import annotations
 
@@ -242,6 +242,9 @@ class PropertiesPanel(ttk.Frame):
         """Drop the rows without committing them, e.g. when another file is opened."""
         for child in self.grid_frame.winfo_children():
             child.destroy()
+        # A frame left with no rows keeps its old size rather than shrinking, so say how big it is now.
+        self.grid_frame.configure(width=1, height=1)
+        self._fit_rows()
         self._rows = {}
         self._editors = {}
         self._swatches = {}
@@ -422,6 +425,56 @@ class ImmediateWindow(ttk.Frame):
         self.entry.delete(0, tk.END)
         if self._history_pos < len(self._history):
             self.entry.insert(0, self._history[self._history_pos])
+
+
+class ProblemsPanel(ttk.Frame):
+    """Every problem the lint tools find in the project, open files or not. Click one
+    (or press Enter) to go to it; on_open(path, line, column) does the going."""
+
+    def __init__(self, master, on_open):
+        super().__init__(master, padding=(4, 2))
+        self._on_open = on_open
+        self.status = ttk.Label(self, foreground="gray40")
+        self.status.pack(anchor="w")
+        body = ttk.Frame(self)
+        body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        self.tree = ttk.Treeview(body, columns=("file", "line", "problem"), show="headings", height=6,
+                                 selectmode="browse")
+        for column, heading, width, stretch in (("file", "File", 140, False), ("line", "Line", 60, False),
+                                                ("problem", "Problem", 600, True)):
+            self.tree.heading(column, text=heading, anchor="w")
+            self.tree.column(column, width=width, stretch=stretch, anchor="w")
+        scroll = ttk.Scrollbar(body, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._places = {}  # row -> (path, line, column)
+        self.tree.bind("<ButtonRelease-1>", lambda e: self._open(self.tree.identify_row(e.y)))
+        self.tree.bind("<Return>", lambda e: self._open(self.tree.focus()))
+
+    def show(self, problems, checking=False, linting=True):
+        """Show [(path, lint.Problem)]. checking: more results are on their way; linting:
+        whether any tools are chosen."""
+        self.tree.delete(*self.tree.get_children())
+        self._places = {}
+        for path, problem in problems:
+            row = self.tree.insert("", tk.END, values=(path.name, problem.line, f"{problem.message}  ({problem.tool})"))
+            self._places[row] = (path, problem.line, problem.column)
+        if not linting:
+            status = "Linting is off: choose tools in Project > Linting..."
+        elif checking:
+            status = "Checking..."
+        elif problems:
+            files = len({path for path, _ in problems})
+            status = f"{len(problems)} problem{'s' * (len(problems) != 1)} in {files} file{'s' * (files != 1)}"
+        else:
+            status = "No problems found."
+        self.status.configure(text=status)
+
+    def _open(self, row):
+        if row in self._places:
+            self._on_open(*self._places[row])
+        return "break"
 
 
 class HelpPanel(ttk.Frame):

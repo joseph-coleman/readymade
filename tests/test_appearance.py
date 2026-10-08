@@ -384,3 +384,9 @@ def test_properties_scroll_when_they_dont_fit(app):
     app.root.geometry("1000x900")
     app.root.update()
     assert not panel._bar.winfo_ismapped()
+    app.root.geometry("1000x360")
+    app.root.update()
+    assert panel._bar.winfo_ismapped()
+    panel.clear()  # nothing to show (say, a module's tab): no scrollbar either
+    app.root.update()
+    assert not panel._bar.winfo_ismapped()
