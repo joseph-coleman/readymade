@@ -712,6 +712,46 @@ def drive(d):
             module and (app.documents.select() == str(module.frame), module.code.text.index("insert")), (True, "5.12"))
     d.shot("problem-opened")
 
+    print("Tools > Options: the Dark theme, with real clicks")
+    from tkinter import ttk
+
+    from readymade.ide import options
+
+    app.show_options()
+    d.pump(0.3)
+    dialog = next(w for w in app.root.winfo_children() if isinstance(w, options.OptionsDialog))
+
+    def find(widget, kind, text):
+        for child in widget.winfo_children():
+            if isinstance(child, kind) and child.cget("text") == text:
+                return child
+            found = find(child, kind, text)
+            if found:
+                return found
+        return None
+
+    d.click(*d.at(find(dialog, ttk.Radiobutton, "Dark")))
+    d.click(*d.at(find(dialog, ttk.Button, "OK")))
+    d.check("the editor is dark", module.code.text.cget("background"), "#1e1e1e")
+    d.click(*d.tab_at(app.documents, editor.frame))
+    editor.show_design()
+    d.click(*d.at(editor.surface.controls["Label1"].widget))
+    d.pump(0.3)
+    d.check("the whole IDE is dark", (app.root.cget("background"), ttk.Style(app.root).theme_use()), ("#252526", "readymade-dark"))
+    d.shot("dark-design")
+    editor.show_code()
+    d.pump(0.3)
+    d.shot("dark-code")
+    app.show_options()
+    d.pump(0.5)
+    d.shot("dark-options")
+    next(w for w in app.root.winfo_children() if isinstance(w, options.OptionsDialog)).destroy()
+    from readymade import usersettings
+
+    usersettings.set("theme", None)  # (in the driver's own settings folder: see main)
+    options.apply(app)
+    d.check("back to light", editor.code.text.cget("background"), "#ffffff")
+
 
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/readymade-ui")
@@ -722,6 +762,8 @@ def main():
 
     server = start_xvfb()
     os.environ["DISPLAY"] = DISPLAY  # also inherited by the program F5 starts
+    # Its own user settings (lint choices, theme...), never the real ones.
+    os.environ["READYMADE_CONFIG_DIR"] = tempfile.mkdtemp(prefix="readymade-drive-settings-")
     try:
         import tkinter as tk
 

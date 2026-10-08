@@ -1070,7 +1070,8 @@ class ComboBox(_ListMixin, _BackColor, _ForeColor, _Font, _Aligned, _TabStop, _C
             style.map(name, **{k: [("readonly", v)] for k, v in (("fieldbackground", bg), ("foreground", fg)) if v})
             self._combo["style"] = name
         else:
-            self._combo["style"] = "TCombobox"
+            # In the designer, the preview style: it stays light in a dark IDE, as the program will be.
+            self._combo["style"] = "Preview.TCombobox" if self.design else "TCombobox"
         self._list_option("background", bg)
         self._list_option("foreground", fg)
 

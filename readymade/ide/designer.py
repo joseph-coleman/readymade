@@ -17,6 +17,7 @@ import tkinter as tk
 from readymade import menus
 from readymade.controls import Button, create, repaint_inside
 from readymade.form import FORM
+from readymade.ide import options
 
 GRID = 8
 HANDLE = 6
@@ -43,6 +44,9 @@ def snap(value):
 class DesignSurface(tk.Frame):
     def __init__(self, master, app):
         super().__init__(master, bg=SURROUND)
+        chrome = options.theme().chrome
+        if chrome is not None:
+            self.configure(bg=chrome.workspace)
         self.app = app
         self.controls = {}
         self._markers = []  # the corner marks of a multiple selection
@@ -90,6 +94,10 @@ class DesignSurface(tk.Frame):
         self.band = [tk.Frame(self.canvas, bg="black") for _ in range(4)]
 
     # ----- building from the design -----
+
+    def apply_chrome(self, chrome):
+        """The workspace around the form (the form itself keeps its own colors: it shows the program)."""
+        self.configure(bg=chrome.workspace if chrome else SURROUND)
 
     def rebuild(self):
         for control in self.controls.values():

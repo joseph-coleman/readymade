@@ -29,6 +29,7 @@ from readymade.ide.linting import Linter
 from readymade.ide.menueditor import MenuEditor
 from readymade.ide import helptext
 from readymade.ide.panels import HelpPanel, ImmediateWindow, ProblemsPanel, ProjectExplorer, PropertiesPanel, Toolbox
+from readymade.ide import options
 from readymade.ide.tooldialog import formatting_dialog, linting_dialog
 from readymade.ide.tracebacks import TracebackWatcher
 from readymade.project import Project, ProjectError, describe_python, find_pythons, requirement_name
@@ -64,6 +65,7 @@ class App:
         root.geometry("1180x740")
         if "clam" in ttk.Style().theme_names():
             ttk.Style().theme_use("clam")
+        self.light_theme = ttk.Style().theme_use()  # the Light option's look; Dark is its own theme (options.py)
         self._build_menu()
 
         outer = ttk.PanedWindow(root, orient=tk.VERTICAL)
@@ -89,6 +91,9 @@ class App:
         self.bottom.add(self.problems, text="Problems")
         self.bottom.add(self.help, text="Help")
         self.problems_changed()
+        options.apply(self)  # the font, indent and colors chosen in Tools > Options
+        if root.tk.call("tk", "windowingsystem") == "aqua":  # a Mac's app menu has Preferences... (⌘,)
+            root.createcommand("::tk::mac::ShowPreferences", self.show_options)
         outer.add(top, weight=1)
         outer.add(self.bottom, weight=0)
 
@@ -158,6 +163,8 @@ class App:
         view.add_command(label="Object", accelerator=menus.accelerator("Shift+F7"), command=lambda: self.form and self.form.show_design())
         tools = tk.Menu(menubar, tearoff=False)
         tools.add_command(label="Menu Editor...", accelerator=menus.accelerator("Ctrl+E"), command=self.menu_editor)
+        tools.add_separator()
+        tools.add_command(label="Options...", command=self.show_options)
         run = tk.Menu(menubar, tearoff=False)
         run.add_command(label="Start", accelerator=menus.accelerator("F5"), command=self.run)
         run.add_command(label="End", command=self.stop)
@@ -498,6 +505,10 @@ class App:
         self.documents.select(viewer.frame)
         self._tab_changed()
         return viewer
+
+    def show_options(self):
+        """Tools > Options...: the code font, indent width and theme."""
+        options.OptionsDialog(self).grab_set()
 
     # ----- problems -----
 

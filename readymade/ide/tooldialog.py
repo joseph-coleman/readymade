@@ -36,7 +36,7 @@ class ToolDialog(tk.Toplevel):
         row = 1
         for row, (name, tool) in enumerate(tools.items(), start=2):
             ttk.Label(body, text=name).grid(row=row, column=0, sticky="w", padx=4, pady=2)
-            ttk.Label(body, text=tool.about, foreground="gray40").grid(row=row, column=1, sticky="w", padx=4)
+            ttk.Label(body, text=tool.about, style="Note.TLabel").grid(row=row, column=1, sticky="w", padx=4)
             self.shared[name] = tk.BooleanVar(value=name in shared)
             self.mine[name] = tk.BooleanVar(value=name in mine)
             ttk.Checkbutton(body, variable=self.shared[name]).grid(row=row, column=2)
@@ -55,7 +55,7 @@ class ToolDialog(tk.Toplevel):
             ttk.Checkbutton(body, variable=self.switch[0]).grid(row=row, column=2)
             ttk.Checkbutton(body, variable=self.switch[1]).grid(row=row, column=3)
 
-        self.where = ttk.Label(body, foreground="gray40")
+        self.where = ttk.Label(body, style="Note.TLabel")
         self.where.grid(row=row + 1, column=0, columnspan=5, sticky="w", pady=(8, 0))
         buttons = ttk.Frame(self, padding=(10, 0, 10, 10))
         buttons.pack(fill=tk.X)

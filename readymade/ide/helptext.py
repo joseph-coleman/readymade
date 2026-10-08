@@ -140,6 +140,7 @@ def home(platform=sys.platform):
         f"  F12 or {click} goes to a definition; {complete} completes a name.",
         f"  Tab and Shift+Tab indent and outdent; {keys('Ctrl+/')} comments lines out and in.",
         f"  {keys('Shift+Alt+F')} formats the code (choose a formatter in Project > Formatting).",
+        f"  {'Preferences' if mac else 'Tools > Options'}: the code font, indent width and a dark theme.",
         "",
         "Running",
         "  F5 runs the program. The Immediate window runs Python inside it while it runs;",

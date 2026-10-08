@@ -15,8 +15,8 @@ Ideas and gaps noted along the way, roughly by area.
 - **Renaming a form**: also update references to it in other files (like `forms.OldName`).
 
 ## Code editor
-- **Settings**: indent width (4 spaces today, a constant in `readymade/ide/codeview.py`), font, theme. Needs an IDE settings dialog.
-- **Themes**: a dark theme; the colors are all in `readymade/ide/highlight.py`. Also mark a run-time error's line in the line numbers.
+- **Options follow-ups**: more themes; mark a run-time error's line in the line numbers; let a project ask for an indent width (today it's each person's, and generated handlers always use 4). Dark gaps: the menu bar on Windows and macOS (the system draws it), dialogs' title bars on Windows (only the main window's is dark), and the font chooser's family list.
+- **A modern look**: the Sun Valley ttk theme (`sv-ttk`, MIT, pip-installable) gives ttk widgets a Windows 11 look in light and dark. It could go in the `ide` extra, used when installed and falling back to today's clam-based look. Tabs, buttons, fields, scrollbars and lists would change; the Toolbox buttons (plain Tk), the code area and the menus keep their own colors, and Windows still draws its menu bar white (darkening it needs undocumented Windows calls).
 - **Folding** and an outline, from an error-tolerant parser (parso, MIT). The same parsing would let Enter see past the current line: today, after a call spread over several lines, the next line keeps the continuation indent instead of returning to the statement's level.
 - **A language server option (LSP)**: completion and definitions use Jedi today. An LSP client would let people choose Pyright (or basedpyright, which pip-installs with its own Node.js), python-lsp-server, jedi-language-server or Ruff's server, configured like linting, and would also bring hover info, signature help and rename. Pylance can't be used outside Microsoft's VS Code. The form-control declarations (assist.py) carry over, as the IDE chooses the text it sends.
 - **Completion follow-ups**: `forms.<name>` (forms are found by name at run time), signatures and docstrings beside the list, Back after Go to Definition (Alt+Left).

@@ -7,8 +7,9 @@ from tkinter import ttk
 
 from readymade import menus
 from readymade.controls import REGISTRY
+from readymade.ide import options
 
-MONO = "TkFixedFont"
+MONO = options.CODE_FONT  # code and output: Tools > Options chooses it
 
 
 class Toolbox(ttk.Frame):
@@ -20,6 +21,7 @@ class Toolbox(ttk.Frame):
         self._var = tk.StringVar(value="")
         self._on_double_click = on_double_click
         self._pending_drop = ""
+        self._usual = {}  # button -> its colors before a theme changed them
         # The release that ends a double-click selects the button again, so the drop
         # waits for it: the ToolboxDrop tag runs after the Radiobutton class bindings.
         self.bind_class("ToolboxDrop", "<ButtonRelease-1>", self._drop)
@@ -33,6 +35,21 @@ class Toolbox(ttk.Frame):
                 tags = button.bindtags()
                 button.bindtags((tags[0], tags[1], "ToolboxDrop", *tags[2:]))
                 button.bind("<Double-Button-1>", lambda e, v=value: setattr(self, "_pending_drop", v))
+
+    def apply_chrome(self, chrome):
+        """Color the tool buttons (plain Tk widgets) for a theme; None: their usual colors."""
+        for button in self.winfo_children():
+            if not isinstance(button, tk.Radiobutton):
+                continue
+            if button not in self._usual:
+                self._usual[button] = {key: button.cget(key) for key in
+                                       ("background", "foreground", "selectcolor", "activebackground",
+                                        "activeforeground", "highlightbackground")}
+            colors = self._usual[button] if chrome is None else {
+                "background": chrome.button, "foreground": chrome.text, "selectcolor": chrome.field,
+                "activebackground": chrome.button_active, "activeforeground": chrome.text,
+                "highlightbackground": chrome.window}
+            button.configure(**colors)
 
     def _drop(self, _):
         value, self._pending_drop = self._pending_drop, ""
@@ -182,6 +199,10 @@ class PropertiesPanel(ttk.Frame):
         self._rows_window = self._scroller.create_window(0, 0, window=self.grid_frame, anchor="nw")
         self.grid_frame.bind("<Configure>", lambda e: self._fit_rows())
         self._scroller.bind("<Configure>", lambda e: self._fit_rows())
+
+    def apply_chrome(self, chrome):
+        """The rows' scrolling area is a plain Tk canvas: give it the panel's color."""
+        self._scroller.configure(background=ttk.Style(self).lookup("TFrame", "background"))
 
     def _fit_rows(self):
         """Make the rows as wide as the panel, and show the scrollbar only when they don't all fit."""
@@ -356,7 +377,7 @@ class PropertiesPanel(ttk.Frame):
         dialog.transient(self.winfo_toplevel())
         hint = "One item per line:" if isinstance(value, list) else "Text:"
         ttk.Label(dialog, text=hint).pack(anchor="w", padx=8, pady=(8, 2))
-        text = tk.Text(dialog, width=32, height=10, font=MONO, undo=True)
+        text = tk.Text(dialog, width=32, height=10, font=options.ensure_code_font(dialog), undo=True)
         text.pack(fill=tk.BOTH, expand=True, padx=8)
         text.insert("1.0", "\n".join(value) if isinstance(value, list) else value)
 
@@ -390,7 +411,8 @@ class ImmediateWindow(ttk.Frame):
         self._history_pos = 0
         body = ttk.Frame(self)
         body.pack(fill=tk.BOTH, expand=True)
-        self.output = tk.Text(body, height=8, font=MONO, state=tk.DISABLED, wrap="word")
+        options.ensure_code_font(self)
+        self.output = tk.Text(body, height=8, font=MONO, state=tk.DISABLED, wrap="word", highlightthickness=0)
         scroll = ttk.Scrollbar(body, command=self.output.yview)
         self.output.configure(yscrollcommand=scroll.set)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -403,6 +425,10 @@ class ImmediateWindow(ttk.Frame):
         self.entry.bind("<Return>", self._submit)
         self.entry.bind("<Up>", lambda e: self._recall(-1))
         self.entry.bind("<Down>", lambda e: self._recall(1))
+
+    def apply_theme(self, theme):
+        self.output.configure(background=theme.background, foreground=theme.foreground,
+                              insertbackground=theme.cursor, selectbackground=theme.selection)
 
     def write(self, text):
         self.output.configure(state=tk.NORMAL)
@@ -434,12 +460,12 @@ class ProblemsPanel(ttk.Frame):
     def __init__(self, master, on_open):
         super().__init__(master, padding=(4, 2))
         self._on_open = on_open
-        self.status = ttk.Label(self, foreground="gray40")
+        self.status = ttk.Label(self, style="Note.TLabel")
         self.status.pack(anchor="w")
         body = ttk.Frame(self)
         body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
         self.tree = ttk.Treeview(body, columns=("file", "line", "problem"), show="headings", height=6,
-                                 selectmode="browse")
+                                 selectmode="browse", style="Problems.Treeview")
         for column, heading, width, stretch in (("file", "File", 140, False), ("line", "Line", 60, False),
                                                 ("problem", "Problem", 600, True)):
             self.tree.heading(column, text=heading, anchor="w")
@@ -451,6 +477,13 @@ class ProblemsPanel(ttk.Frame):
         self._places = {}  # row -> (path, line, column)
         self.tree.bind("<ButtonRelease-1>", lambda e: self._open(self.tree.identify_row(e.y)))
         self.tree.bind("<Return>", lambda e: self._open(self.tree.focus()))
+
+    def apply_theme(self, theme):
+        style = ttk.Style(self)
+        style.configure("Problems.Treeview", background=theme.background, fieldbackground=theme.background,
+                        foreground=theme.foreground)
+        style.map("Problems.Treeview", background=[("selected", theme.selection)],
+                  foreground=[("selected", theme.foreground)])
 
     def show(self, problems, checking=False, linting=True):
         """Show [(path, lint.Problem)]. checking: more results are on their way; linting:
@@ -487,17 +520,22 @@ class HelpPanel(ttk.Frame):
         top.pack(fill=tk.X)
         self.title = ttk.Label(top, font=("TkDefaultFont", 11, "bold"))
         self.title.pack(side=tk.LEFT)
-        self.subtitle = ttk.Label(top, foreground="gray40")
+        self.subtitle = ttk.Label(top, style="Note.TLabel")
         self.subtitle.pack(side=tk.LEFT, padx=8)
         self.docs = ttk.Button(top, text="Python documentation")
         body = ttk.Frame(self)
         body.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
-        self.text = tk.Text(body, height=8, font=MONO, wrap="word", state=tk.DISABLED, padx=4)
+        options.ensure_code_font(self)
+        self.text = tk.Text(body, height=8, font=MONO, wrap="word", state=tk.DISABLED, padx=4, highlightthickness=0)
         scroll = ttk.Scrollbar(body, command=self.text.yview)
         self.text.configure(yscrollcommand=scroll.set)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.url = ""
+
+    def apply_theme(self, theme):
+        self.text.configure(background=theme.background, foreground=theme.foreground,
+                            selectbackground=theme.selection)
 
     def show(self, topic):
         self.title.configure(text=topic.title)

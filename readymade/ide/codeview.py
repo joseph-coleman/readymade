@@ -13,13 +13,16 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 from readymade import codegen, menus
-from readymade.ide import highlight
+from readymade.ide import highlight, options
 from readymade.ide.panels import MONO
 
-INDENT = codegen.INDENT  # four spaces; Tab never inserts a tab character
-_ERROR_COLOR = "#fff59d"
-_GUTTER, _NUMBER, _NUMBER_CURRENT = "#f0f0f0", "#999999", "#333333"
-_PROBLEM, _PROBLEM_BG = "#e51400", "#fdecea"
+INDENT = codegen.INDENT  # the spaces Tab inserts (Tools > Options: indent width); never a tab character
+
+
+def set_indent(width):
+    """Make Tab, Shift+Tab, Backspace and Enter work in steps of width spaces."""
+    global INDENT
+    INDENT = " " * width
 _PAIRS = {"(": ")", "[": "]", "{": "}"}
 _QUOTES = ("'", '"')
 _CLOSE_BEFORE = set(")]}:;,.")  # a pair closes itself only before one of these, a space or the line's end
@@ -68,8 +71,11 @@ class CompletionList:
         if self.window is None:
             self.window = tk.Toplevel(self.code)
             self.window.overrideredirect(True)
+            theme = self.code.theme
             self.listbox = tk.Listbox(self.window, font=MONO, activestyle="none", exportselection=False,
-                                      height=8, width=44, bg="white", highlightthickness=1)
+                                      height=8, width=44, bg=theme.background, fg=theme.foreground,
+                                      selectbackground=theme.selection, selectforeground=theme.foreground,
+                                      highlightthickness=1)
             self.listbox.pack(fill=tk.BOTH, expand=True)
             self.listbox.bind("<Double-Button-1>", lambda e: self.accept())
         self.refresh()
@@ -189,30 +195,25 @@ class CodeView(ttk.Frame):
         self.events.bind("<<ComboboxSelected>>", self._event_chosen)
 
         # Shown above the code while a run-time error is being pointed out.
-        self.error_bar = tk.Label(self, bg=_ERROR_COLOR, anchor="w", padx=6, pady=2)
+        options.ensure_code_font(self)
+        self.error_bar = tk.Label(self, anchor="w", padx=6, pady=2)
         body = ttk.Frame(self)
         self._body = body
         body.pack(fill=tk.BOTH, expand=True)
-        self.text = tk.Text(body, font=MONO, undo=True, wrap="none")
+        self.text = tk.Text(body, font=MONO, undo=True, wrap="none", highlightthickness=0)  # the cursor shows the focus
         yscroll = ttk.Scrollbar(body, command=self.text.yview)
         xscroll = ttk.Scrollbar(body, orient=tk.HORIZONTAL, command=self.text.xview)
         # Scrolling also moves the line numbers.
         self.text.configure(yscrollcommand=lambda *a: (yscroll.set(*a), self._show_numbers()), xscrollcommand=xscroll.set)
         yscroll.pack(side=tk.RIGHT, fill=tk.Y)
         xscroll.pack(side=tk.BOTTOM, fill=tk.X)
-        self.gutter = tk.Canvas(body, width=1, highlightthickness=0, bd=0, bg=_GUTTER)
+        self.gutter = tk.Canvas(body, width=1, highlightthickness=0, bd=0)
         self.gutter.pack(side=tk.LEFT, fill=tk.Y)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        for tag, color in highlight.COLORS.items():
-            self.text.tag_configure(tag, foreground=color)
-        self.text.tag_configure("error", background=_ERROR_COLOR)
         # Messages for problems on the cursor's line, under the code.
-        self.problem_bar = tk.Label(self, anchor="w", padx=6, pady=1, bg=_PROBLEM_BG, fg=_PROBLEM)
-        try:
-            self.text.tag_configure("problem", underline=True, underlinefg=_PROBLEM)
-            self._underline = {"underline": True, "underlinefg": _PROBLEM}
-        except tk.TclError:  # a Tk before 8.6.6 can't color underlines
-            self._underline = {"underline": True}
+        self.problem_bar = tk.Label(self, anchor="w", padx=6, pady=1)
+        self._underline = {"underline": True}
+        self.apply_theme(options.theme())
         self.text.tag_raise("sel")
 
         # Let the window's shortcuts (Ctrl+O, F5, ...) run before Text's own key bindings.
@@ -591,7 +592,7 @@ class CodeView(ttk.Frame):
         self._numbers_job = None
         self.gutter.delete("all")
         lines = int(self.text.index("end-1c").split(".")[0])
-        width = tkfont.nametofont(MONO).measure("0" * max(2, len(str(lines)))) + 18  # room for a problem mark
+        width = tkfont.nametofont(MONO, root=self).measure("0" * max(2, len(str(lines)))) + 18  # room for a problem mark
         if int(self.gutter.cget("width")) != width:
             self.gutter.configure(width=width)
         current = int(self.text.index("insert").split(".")[0])
@@ -601,10 +602,10 @@ class CodeView(ttk.Frame):
         while (place := self.text.dlineinfo(index)) is not None:
             n = int(index.split(".")[0])
             self.gutter.create_text(width - 6, place[1], anchor="ne", text=str(n), font=MONO,
-                                    fill=_NUMBER_CURRENT if n == current else _NUMBER)
+                                    fill=self.theme.number_current if n == current else self.theme.number)
             if n in problem_lines:
                 middle = place[1] + place[3] // 2
-                self.gutter.create_oval(3, middle - 3, 9, middle + 3, fill=_PROBLEM, outline="", tags="problem")
+                self.gutter.create_oval(3, middle - 3, 9, middle + 3, fill=self.theme.problem, outline="", tags="problem")
             following = self.text.index(f"{index} +1line")
             if following == index:
                 break  # the last line
@@ -658,6 +659,30 @@ class CodeView(ttk.Frame):
         self._one_step(change)
         self.text.see("insert")
         return "break"
+
+    def apply_theme(self, theme):
+        """Show the code in a theme's colors (see themes.py)."""
+        self.theme = theme
+        self.text.configure(background=theme.background, foreground=theme.foreground,
+                            insertbackground=theme.cursor, selectbackground=theme.selection,
+                            selectforeground=theme.foreground, inactiveselectbackground=theme.selection)
+        self.gutter.configure(background=theme.gutter)
+        for tag, color in theme.tokens.items():
+            self.text.tag_configure(tag, foreground=color)
+        self.text.tag_configure("error", background=theme.error)
+        self.error_bar.configure(background=theme.error, foreground=theme.error_text)
+        self.problem_bar.configure(background=theme.problem_bg, foreground=theme.problem)
+        try:
+            self.text.tag_configure("problem", underline=True, underlinefg=theme.problem)
+            self._underline = {"underline": True, "underlinefg": theme.problem}
+        except tk.TclError:  # a Tk before 8.6.6 can't color underlines
+            self._underline = {"underline": True}
+        for tag in self._problem_tags:
+            self.text.tag_configure(tag, **self._underline)
+        completions = getattr(self, "completions", None)  # (made after the first apply_theme)
+        if completions is not None and completions.is_open():
+            completions.close()  # it opens again in the new colors
+        self._show_numbers()
 
     def show_error(self, line, message):
         """Highlight the line where a run-time error happened, with its message above the code."""

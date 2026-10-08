@@ -69,7 +69,7 @@ class MenuEditor(tk.Toplevel):
             box = ttk.Checkbutton(fields, text=label, variable=var)
             box.grid(row=row, column=1, sticky="w")
             self.fields.append(box)
-        ttk.Label(fields, text="Use & before the access key: &File", foreground="gray40").grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(fields, text="Use & before the access key: &File", style="Note.TLabel").grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
         for var in (self.text_var, self.name_var, self.key_var, *self.modifier_vars.values(), self.checked_var, self.enabled_var):
             var.trace_add("write", lambda *_, v=var: self._field_changed(v))
 
