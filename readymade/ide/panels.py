@@ -697,9 +697,10 @@ class WatchesPanel(LocalsPanel):
 
     def _values(self, info):
         path = info["path"]
+        value = f"{info['value']}  ({info['note']})" if info.get("note") else info["value"]  # e.g. as total left it
         if len(path) == 2 and path[0] == "#watch" and path[1] < len(self._watches):
-            return info["value"], info["type"], describe_watch(self._watches[path[1]])
-        return info["value"], info["type"], ""
+            return value, info["type"], describe_watch(self._watches[path[1]])
+        return value, info["type"], ""
 
     def index(self, row=None):
         """The watch at a row (default: the chosen one), or None."""

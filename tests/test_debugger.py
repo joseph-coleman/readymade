@@ -221,7 +221,8 @@ def test_break_when_true(tmp_path, shop):
     dbg.set_watches([watch("count > 4", kind="true", function="total", file="shop.py")])
     module.checkout([1, 2, 3])
     stop, = ide.paused()  # once, when it became true (not again while it stays true)
-    assert stop["reason"] == "watch" and stop["message"] == "count > 4 is true"
+    assert stop["reason"] == "watch" and stop["message"] == f"count > 4 became true on line {LINE['count += price']}"
+    assert stop["changed_line"] == LINE["count += price"]  # the line that did it, before where it paused
     assert where(stop) == ("total", LINE["for price in prices:"]) and names(stop)["count"] == "6"
 
 
@@ -232,8 +233,34 @@ def test_break_when_it_changes(tmp_path, shop):
     dbg.set_watches([watch("count", kind="changes", function="total")])
     module.total([5, 0, 7])
     stops = ide.paused()
-    assert [s["message"] for s in stops] == ["count changed from 0 to 5", "count changed from 5 to 12"]
+    assert [s["message"] for s in stops] == [
+        f"count was set to 0 on line {LINE['count = 0']}",  # (it didn't exist before)
+        f"count changed from 0 to 5 on line {LINE['count += price']}",
+        f"count changed from 5 to 12 on line {LINE['count += price']}",
+    ]
     assert all(where(s)[0] == "total" for s in stops)  # (adding 0 changed nothing)
+
+
+def test_a_change_on_the_last_line(tmp_path, shop):
+    module, _ = shop
+    ide = PretendIDE()
+    dbg = make(tmp_path, ide)
+    dbg.set_watches([watch("self._secret", kind="changes", function="__init__")])
+    module.Basket()
+    stop, = ide.paused()  # as __init__ returns: no line comes after
+    assert stop["message"] == f"self._secret was set to 1 on line {LINE['self._secret = 1']}"
+    assert where(stop) == ("__init__", LINE["self._secret = 1"])
+
+
+def test_a_function_watch_as_the_function_left_it(tmp_path, shop):
+    module, _ = shop
+    dbg = make(tmp_path, PretendIDE())
+    dbg.set_watches([watch("count", function="total"), watch("prices", function="total")])
+    assert [w["value"] for w in dbg._watch_values()] == ["<out of context>"] * 2  # (it hasn't run)
+    module.total([1, 2])
+    count, prices = dbg._watch_values()
+    assert (count["value"], count["note"]) == ("3", "as total left it")
+    assert prices["expandable"] and [c["value"] for c in dbg._expand(["#watch", 1])] == ["1", "2"]
 
 
 def test_expanding_a_watch(tmp_path, shop):

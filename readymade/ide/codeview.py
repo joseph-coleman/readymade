@@ -688,6 +688,7 @@ class CodeView(ttk.Frame):
             self.text.tag_configure(tag, foreground=color)
         self.text.tag_configure("error", background=theme.error)
         self.text.tag_configure("breakpoint", background=theme.breakpoint_bg)
+        self.text.tag_configure("changed", background=theme.changed)
         self.text.tag_configure("current", background=theme.current)
         self.error_bar.configure(background=theme.error, foreground=theme.error_text)
         self.problem_bar.configure(background=theme.problem_bg, foreground=theme.problem)
@@ -733,7 +734,12 @@ class CodeView(ttk.Frame):
         if "paused" in self.text.mark_names():
             self.text.mark_unset("paused")
         self.text.tag_remove("current", "1.0", tk.END)
+        self.text.tag_remove("changed", "1.0", tk.END)
         self._show_numbers()
+
+    def show_changed(self, line):
+        """While paused by a watch: the line that changed its value (it pauses on a later one)."""
+        self.text.tag_add("changed", f"{line}.0", f"{line}.0 lineend +1c")
 
     def paused_line(self):
         if "paused" not in self.text.mark_names():

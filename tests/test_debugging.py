@@ -241,18 +241,24 @@ def test_watches(app, shop):
 
     shop.toggle_breakpoint(LINES["tax = price // 10"])
     app.run()
+    assert paused_at(app, LINES["price = add_tax(price)"])  # price didn't exist, then it did
+    assert app.session.paused["message"] == f"price was set to 100 on line {LINES['price = 100']}"
+    assert app.watches_panel.value_of("#watch", 0)[0] == "<out of context>"  # add_tax hasn't run
+    app.run()
     assert paused_at(app, LINES["tax = price // 10"])
     assert app.watches_panel.value_of("#watch", 0)[:2] == ("200", "int")
-    assert app.watches_panel.value_of("#watch", 1)[0] == "<out of context>"  # only in Form_load
+    assert app.watches_panel.value_of("#watch", 1)[0] == "100  (in Form_load)"  # (waiting for add_tax)
     app.session.choose_frame(0)  # Form_load
-    assert wait_for(app, lambda: app.watches_panel.value_of("#watch", 0)[0] == "<out of context>")
+    assert wait_for(app, lambda: app.watches_panel.value_of("#watch", 0)[0] == "200  (in add_tax)")
     assert app.watches_panel.value_of("#watch", 1)[:2] == ("100", "int")
     app.delete_watch(0)  # while paused: the program hears at once
     assert wait_for(app, lambda: len(app.watches_panel.tree.get_children()) == 1)
     app.run()
     assert paused_at(app, LINES["self.text = str(price)"])  # the line after price changed
     assert app.session.paused["reason"] == "watch"
-    assert "--- Watch: price changed from 100 to 110 ---" in output(app)
+    changed = LINES["price = add_tax(price)"]
+    assert f"--- Watch: price changed from 100 to 110 on line {changed} ---" in output(app)
+    assert str(shop.text.tag_ranges("changed")[0]) == f"{changed}.0"  # the line that changed it is marked
     app.quick_watch()  # the word at the cursor, which is on the paused line: "self"
     assert wait_for(app, lambda: any(isinstance(w, debugging.QuickWatch) for w in app.root.winfo_children()))
     quick = next(w for w in app.root.winfo_children() if isinstance(w, debugging.QuickWatch))
@@ -275,10 +281,14 @@ def test_watches_while_running(app, shop):
                      {"expression": "[1, 2]", "kind": "watch", "file": "", "function": ""}])
     app.run()
     assert wait_for(app, lambda: app.watches_panel.value_of("#watch", 0)[0] == "'110'")  # live, from Form_load
-    assert app.watches_panel.value_of("#watch", 1)[0] == "<out of context>"  # only while paused in that function
+    assert app.watches_panel.value_of("#watch", 1)[0] == "<out of context>"  # Button1_click hasn't run
     assert app.watches_panel.value_of("#watch", 2)[0] == "55"  # the file's own names
     app.immediate_line("form.text = 'Shop'")
     assert wait_for(app, lambda: app.watches_panel.value_of("#watch", 0)[0] == "'Shop'")
+    app.immediate_line("_ = Button1.widget.invoke()")  # (it fails, and pauses at the error)
+    assert wait_for(app, lambda: app.in_break_mode)
+    app.run()
+    assert wait_for(app, lambda: app.watches_panel.value_of("#watch", 1)[0] == "2  (as Button1_click left it)")
     row = app.watches_panel._rows[("#watch", 3)]
     app.watches_panel.tree.focus(row)
     app.watches_panel.tree.item(row, open=True)

@@ -14,8 +14,13 @@ Watches, as in VB: an expression with a context (a function, a file, or anywhere
 project) and a kind: "watch" shows its value whenever the program is paused; "true" breaks
 when it becomes true; "changes" breaks on the line after its value changes. Those two are
 checked after every line run in their context, so a narrow context keeps the program fast.
-While the program runs, the IDE is told the values of watches not tied to a function twice
-a second, when they change (see tick).
+A watch of a function is noted after each of its lines too, as its variables only exist
+while it runs: between events the IDE shows it as the function left it. While the program
+runs, the IDE is told the watches' values twice a second, when they change (see tick).
+
+Python tells a debugger about a line just before it runs, so a change is noticed as the
+next line starts (where the program pauses); the line that made it is named and marked.
+A change made by a function's last line is noticed as the function returns.
 """
 
 from __future__ import annotations
@@ -142,6 +147,7 @@ class Debugger(bdb.Bdb):
         self.watches = []  # [Watch]
         self._why = None  # (reason, message) for the stop being made
         self.last_running = None  # the watches' values the IDE was last told while running
+        self._ran = {}  # frame -> the line it last started, while watches are traced
 
     # ----- which frames count -----
 
@@ -163,7 +169,7 @@ class Debugger(bdb.Bdb):
     # ----- starting and stopping tracing -----
 
     def _must_trace(self):
-        return bool(self.breaks) or any(w.breaks for w in self.watches)
+        return bool(self.breaks) or any(w.traced for w in self.watches)
 
     def trace_if_needed(self):
         """Trace (on this thread) only while something could make it stop."""
@@ -186,6 +192,7 @@ class Debugger(bdb.Bdb):
         else:
             super().set_continue()
             self._tracing = False  # (bdb has turned tracing off)
+            self._ran.clear()
 
     def set_breakpoints(self, breakpoints):
         """{file: [line, ...]}: the IDE's breakpoints, all of them."""
@@ -212,32 +219,52 @@ class Debugger(bdb.Bdb):
         self.trace_if_needed()
 
     def break_anywhere(self, frame):
-        return super().break_anywhere(frame) or any(w.breaks and w.in_context(frame, self) for w in self.watches)
+        return super().break_anywhere(frame) or any(w.traced and w.in_context(frame, self) for w in self.watches)
 
     def break_here(self, frame):
         fired = self._check_watches(frame)  # (first, so they always see each line)
         if super().break_here(frame):
-            self._why = ("breakpoint", "")
-        elif fired:
-            self._why = ("watch", fired)
+            self._why = ("breakpoint", "", None)
+        elif fired[0]:
+            self._why = ("watch", *fired)
         return self._why is not None
 
-    def _check_watches(self, frame):
-        """Check the watches that break, after a line: what made them fire, or ""."""
+    def _check_watches(self, frame, returning=False):
+        """Check the traced watches in context, after a line ran (or as frame returns):
+        (what made those that break fire, or "", the line that ran)."""
         if not self.in_project(frame):
-            return ""
-        fired = [w.fired(frame, self.extra_names) for w in self.watches if w.breaks and w.in_context(frame, self)]
-        return "; ".join(filter(None, fired))
+            return "", None
+        if returning:
+            ran = frame.f_lineno  # (still the last line it ran)
+            self._ran.pop(frame, None)
+        else:
+            ran = self._ran.get(frame)
+            self._ran[frame] = frame.f_lineno
+        fired = "; ".join(filter(None, (w.check(frame, self.extra_names) for w in self.watches
+                                         if w.traced and w.in_context(frame, self))))
+        if returning:
+            for watch in self.watches:
+                watch.left(frame)
+        if fired and ran is not None:
+            fired += f" on line {ran}"
+        return fired, ran
 
     def user_line(self, frame):
         if self.post_mortem_mode:
             return
         if self._why is None:  # stepping (bdb didn't ask break_here)
             fired = self._check_watches(frame)
-            self._why = ("watch", fired) if fired else ("step", "")
-        reason, message = self._why
+            self._why = ("watch", *fired) if fired[0] else ("step", "", None)
+        reason, message, changed = self._why
         self._why = None
-        self.interaction([(f, f.f_lineno) for f in self._stack(frame)], reason, message)
+        self.interaction([(f, f.f_lineno) for f in self._stack(frame)], reason, message, changed)
+
+    def dispatch_return(self, frame, arg):
+        if not self.post_mortem_mode and any(w.traced for w in self.watches):
+            fired, ran = self._check_watches(frame, returning=True)  # (a change on its last line)
+            if fired:
+                self.interaction([(f, f.f_lineno) for f in self._stack(frame)], "watch", fired, ran)
+        return super().dispatch_return(frame, arg)
 
     def user_call(self, frame, argument_list):
         pass  # it stops at the first line instead
@@ -288,13 +315,15 @@ class Debugger(bdb.Bdb):
 
     # ----- paused: the IDE's commands -----
 
-    def interaction(self, frames, reason, message=""):
+    def interaction(self, frames, reason, message="", changed_line=None):
+        """Paused: tell the IDE, and do what it says until it says go on. changed_line: for a
+        watch that broke, the line that made the change (in the innermost frame)."""
         self.frames = frames
         self.selected = len(frames) - 1
         self.consoles = {}
         self.channel.send(event="paused", reason=reason, message=message, stack=self._stack_info(),
                           selected=self.selected, locals=self._locals(), watches=self._watch_values(),
-                          stepping=not self.post_mortem_mode)
+                          stepping=not self.post_mortem_mode, changed_line=changed_line)
         while True:
             command = self.channel.receive()
             kind = command.get("cmd")
@@ -353,7 +382,7 @@ class Debugger(bdb.Bdb):
     def _expand(self, path):
         try:
             if path[0] == WATCH:
-                value, steps = self._watch_value(self.watches[int(path[1])]), path[2:]
+                value, steps = self._watch_value(self.watches[int(path[1])])[0], path[2:]
             else:
                 value, steps = self._frame().f_locals[path[0]], path[1:]
             for step in steps:
@@ -385,26 +414,39 @@ class Debugger(bdb.Bdb):
     def _watch_info(self, index, watch):
         path = [WATCH, index]
         try:
-            value = self._watch_value(watch)
+            value, note = self._watch_value(watch)
         except OutOfContext:
             return {"name": watch.expression, "value": "<out of context>", "type": "", "path": path,
                     "expandable": False}
         except Exception as error:  # noqa: BLE001 - whatever the expression raises is its value here
             return {"name": watch.expression, "value": f"<{type(error).__name__}: {error}>", "type": "",
                     "path": path, "expandable": False}
-        return value_info(watch.expression, value, path)
+        info = value_info(watch.expression, value, path)
+        if note:
+            info["note"] = note
+        return info
 
     def _watch_value(self, watch):
-        """A watch's value: in the chosen frame while paused, else as the program runs. Raises
-        OutOfContext, or whatever the expression raises."""
-        if self.frames:
-            if not watch.in_context(self._frame(), self):
+        """(A watch's value, a note on it): in the chosen frame while paused (or another on the
+        call stack, the innermost, if that one's out of context), else as the program runs; a
+        function's watch elsewhere, as the function left it. Raises OutOfContext, or whatever
+        the expression raises."""
+        if self.frames and watch.in_context(self._frame(), self):
+            return watch.evaluate(self._frame(), self.extra_names), ""
+        if self.frames and watch.function:
+            frame = next((f for f, _ in reversed(self.frames) if watch.in_context(f, self)), None)
+            if frame is not None:
+                return watch.evaluate(frame, self.extra_names), f"in {watch.function}"
+        if watch.function:
+            if watch.seen is None:
                 raise OutOfContext
-            return watch.evaluate(self._frame(), self.extra_names)
+            return watch.seen[0], f"as {watch.function} left it"
+        if self.frames:
+            raise OutOfContext
         scope = watch.running_scope(self)
         if scope is None:
             raise OutOfContext
-        return eval(watch.code, scope.maps[0], scope)
+        return eval(watch.code, scope.maps[0], scope), ""
 
     def _quick(self, expression):
         """Quick Watch: an expression's value in the chosen frame."""
@@ -439,8 +481,12 @@ class Watch:
         except SyntaxError:
             self.code = compile(repr(f"<can't read: {self.expression}>"), "<watch>", "eval")
             self.breaks = False
+        # Checked after each line in its context: those that break, and those of a function.
+        self.traced = self.breaks or bool(self.function)
         self.last = None  # "changes": the value's repr when last checked (None: not yet)
+        self.undefined_in = None  # the frame where it last couldn't be worked out (a variable not set yet)
         self.was_true = False
+        self.seen = None  # (value,): a function's watch, as the function last had it
 
     def in_context(self, frame, debugger):
         if self.function and frame.f_code.co_name != self.function:
@@ -470,22 +516,36 @@ class Watch:
             module = sys.modules.get(type(form).__module__) if form is not None else None
         return ChainMap(vars(module) if module is not None else {"__builtins__": __builtins__}, names)
 
-    def fired(self, frame, extra_names):
-        """Checked after a line: what happened if this watch breaks now, else ""."""
+    def check(self, frame, extra_names):
+        """After a line in its context: note the value, and say what happened if this watch
+        breaks now (else "")."""
         try:
             value = self.evaluate(frame, extra_names)
-        except Exception:  # noqa: BLE001 - not there (yet): no break, and nothing to compare later
+        except Exception:  # noqa: BLE001 - not there (yet): no break
             self.was_true = False
+            self.undefined_in = frame
             return ""
+        if self.function:
+            self.seen = (value,)
         if self.kind == "true":
             true = bool(value)
             fired, self.was_true = true and not self.was_true, true
-            return f"{self.expression} is true" if fired else ""
+            return f"{self.expression} became true" if fired else ""
+        if self.kind != "changes":
+            return ""
         shown = repr(value)
         before, self.last = self.last, shown
+        set_here, self.undefined_in = self.undefined_in is frame, None
+        if set_here:  # it didn't exist a line ago, in this same function: a variable was set
+            return f"{self.expression} was set to {_short(shown)}"
         if before is None or before == shown:
             return ""
         return f"{self.expression} changed from {_short(before)} to {_short(shown)}"
+
+    def left(self, frame):
+        """frame is returning (no frame is kept)."""
+        if self.undefined_in is frame:
+            self.undefined_in = None
 
 
 def _short(text, most=60):

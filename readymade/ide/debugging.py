@@ -124,6 +124,8 @@ class DebugSession:
         editor = self.show_place()
         if editor is not None and message.get("reason") == "error":
             editor.code.show_error(self.where()["line"], message.get("message", ""))
+        if editor is not None and message.get("changed_line"):
+            editor.code.show_changed(message["changed_line"])
         app.root.deiconify()
         app.root.lift()  # (the program's window was in front)
 
