@@ -183,6 +183,9 @@ class CodeView(ttk.Frame):
         self._change_job = None
         self._problems = {}  # tool name -> [lint.Problem]
         self._problem_tags = {}  # Text tag -> the Problem it underlines
+        self.on_breakpoints = None  # called when breakpoints are added or removed (None: none allowed here)
+        self._breakpoints = []  # Text marks at the start of lines with breakpoints, so they move with edits
+        self._next_breakpoint = 0
 
         bar = ttk.Frame(self, padding=(0, 2))
         if objects:
@@ -209,11 +212,13 @@ class CodeView(ttk.Frame):
         xscroll.pack(side=tk.BOTTOM, fill=tk.X)
         self.gutter = tk.Canvas(body, width=1, highlightthickness=0, bd=0)
         self.gutter.pack(side=tk.LEFT, fill=tk.Y)
+        self.gutter.bind("<Button-1>", self._gutter_click)  # sets or clears a breakpoint, as F9 does
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         # Messages for problems on the cursor's line, under the code.
         self.problem_bar = tk.Label(self, anchor="w", padx=6, pady=1)
         self._underline = {"underline": True}
         self.apply_theme(options.theme())
+        self.text.tag_raise("current")
         self.text.tag_raise("sel")
 
         # Let the window's shortcuts (Ctrl+O, F5, ...) run before Text's own key bindings.
@@ -592,20 +597,32 @@ class CodeView(ttk.Frame):
         self._numbers_job = None
         self.gutter.delete("all")
         lines = int(self.text.index("end-1c").split(".")[0])
-        width = tkfont.nametofont(MONO, root=self).measure("0" * max(2, len(str(lines)))) + 18  # room for a problem mark
+        width = tkfont.nametofont(MONO, root=self).measure("0" * max(2, len(str(lines)))) + 30  # room for the marks
         if int(self.gutter.cget("width")) != width:
             self.gutter.configure(width=width)
         current = int(self.text.index("insert").split(".")[0])
         problem_lines = set(self._problem_lines().values())
+        breakpoints = set(self.breakpoint_lines())
+        self.text.tag_remove("breakpoint", "1.0", tk.END)
+        for n in breakpoints:
+            self.text.tag_add("breakpoint", f"{n}.0", f"{n}.0 lineend +1c")
+        paused = self.paused_line()
         self._show_problems_here(current)
         index = self.text.index("@0,0")  # the first line in view
         while (place := self.text.dlineinfo(index)) is not None:
             n = int(index.split(".")[0])
             self.gutter.create_text(width - 6, place[1], anchor="ne", text=str(n), font=MONO,
                                     fill=self.theme.number_current if n == current else self.theme.number)
+            middle = place[1] + place[3] // 2
+            if n in breakpoints:
+                self.gutter.create_oval(2, middle - 5, 12, middle + 5, fill=self.theme.breakpoint, outline="",
+                                        tags="breakpoint")
+            if n == paused:
+                self.gutter.create_polygon(2, middle - 4, 8, middle - 4, 8, middle - 7, 14, middle, 8, middle + 7,
+                                           8, middle + 4, 2, middle + 4, fill=self.theme.arrow,
+                                           outline=self.theme.foreground if n in breakpoints else "", tags="arrow")
             if n in problem_lines:
-                middle = place[1] + place[3] // 2
-                self.gutter.create_oval(3, middle - 3, 9, middle + 3, fill=self.theme.problem, outline="", tags="problem")
+                self.gutter.create_oval(16, middle - 3, 22, middle + 3, fill=self.theme.problem, outline="", tags="problem")
             following = self.text.index(f"{index} +1line")
             if following == index:
                 break  # the last line
@@ -670,6 +687,8 @@ class CodeView(ttk.Frame):
         for tag, color in theme.tokens.items():
             self.text.tag_configure(tag, foreground=color)
         self.text.tag_configure("error", background=theme.error)
+        self.text.tag_configure("breakpoint", background=theme.breakpoint_bg)
+        self.text.tag_configure("current", background=theme.current)
         self.error_bar.configure(background=theme.error, foreground=theme.error_text)
         self.problem_bar.configure(background=theme.problem_bg, foreground=theme.problem)
         try:
@@ -696,6 +715,85 @@ class CodeView(ttk.Frame):
     def clear_error(self):
         self.text.tag_remove("error", "1.0", tk.END)
         self.error_bar.pack_forget()
+
+    # ----- debugging -----
+
+    def show_paused(self, line):
+        """While the program is paused: the line it's at, in yellow with an arrow (as in VB)."""
+        self.clear_paused()
+        self.text.mark_set("paused", f"{line}.0")
+        self.text.mark_gravity("paused", tk.LEFT)
+        self.text.tag_add("current", f"{line}.0", f"{line}.0 lineend +1c")
+        code = self.text.get(f"{line}.0", f"{line}.0 lineend")
+        self.text.mark_set("insert", f"{line}.{len(code) - len(code.lstrip())}")  # at its first word
+        self.text.see(f"{line}.0")
+        self._show_numbers()
+
+    def clear_paused(self):
+        if "paused" in self.text.mark_names():
+            self.text.mark_unset("paused")
+        self.text.tag_remove("current", "1.0", tk.END)
+        self._show_numbers()
+
+    def paused_line(self):
+        if "paused" not in self.text.mark_names():
+            return None
+        return int(self.text.index("paused").split(".")[0])
+
+    def breakpoint_lines(self):
+        """The lines with breakpoints, in order."""
+        return sorted({int(self.text.index(mark).split(".")[0]) for mark in self._breakpoints})
+
+    def can_break_at(self, line):
+        """Whether a breakpoint can go on a line: one with code (not blank, nor only a comment)."""
+        if not 1 <= line <= int(self.text.index("end-1c").split(".")[0]):
+            return False
+        code = self.text.get(f"{line}.0", f"{line}.0 lineend").strip()
+        return bool(code) and not code.startswith("#")
+
+    def set_breakpoints(self, lines):
+        """Put breakpoints on these lines (and remove any others), skipping lines that can't have one."""
+        for mark in self._breakpoints:
+            self.text.mark_unset(mark)
+        self._breakpoints = []
+        for line in lines:
+            if self.can_break_at(line):
+                self._add_breakpoint(line)
+        self._show_numbers()
+
+    def _add_breakpoint(self, line):
+        self._next_breakpoint += 1
+        mark = f"breakpoint{self._next_breakpoint}"
+        self.text.mark_set(mark, f"{line}.0")
+        self.text.mark_gravity(mark, tk.LEFT)
+        self._breakpoints.append(mark)
+
+    def toggle_breakpoint(self, line=None):
+        """F9: set or clear a breakpoint on a line (the cursor's). Returns whether one was set or cleared."""
+        if line is None:
+            line = int(self.text.index("insert").split(".")[0])
+        if self.on_breakpoints is None:
+            self.bell()  # code from outside the project
+            return False
+        on_line = [mark for mark in self._breakpoints if int(self.text.index(mark).split(".")[0]) == line]
+        if on_line:
+            for mark in on_line:
+                self.text.mark_unset(mark)
+                self._breakpoints.remove(mark)
+        elif self.can_break_at(line):
+            self._add_breakpoint(line)
+        else:
+            self.bell()
+            return False
+        self._show_numbers()
+        self.on_breakpoints()
+        return True
+
+    def _gutter_click(self, e):
+        index = self.text.index(f"@0,{e.y}")
+        place = self.text.dlineinfo(index)
+        if place is not None and place[1] <= e.y < place[1] + place[3]:  # (not below the last line)
+            self.toggle_breakpoint(int(index.split(".")[0]))
 
     def _on_modified(self, _):
         if not self.text.edit_modified():

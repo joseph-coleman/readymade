@@ -35,6 +35,7 @@ import asyncio
 import collections
 import gc
 import inspect
+import sys
 import threading
 import time
 import tkinter as tk
@@ -139,10 +140,17 @@ class Handler:
             _keep_pumping()
             return None
         _running.append(self)
+        debugger = _debugger()
+        if debugger is not None:
+            debugger.break_into_event()  # Pause (F6) stops at the next event's first line
         try:
             return self.func(*args)
         except FormClosed:
             return None
+        except Exception as error:
+            if debugger is not None and debugger_module().event_failed(error):
+                return None  # the IDE showed it in break mode; the rest of this event is skipped
+            raise
         finally:
             _running.pop()
             self._done()
@@ -152,8 +160,9 @@ class Handler:
             await self.func(*args)
         except (FormClosed, asyncio.CancelledError):
             pass
-        except Exception:
-            traceback.print_exc()  # as Tk does for other handlers, so the IDE can point at the line
+        except Exception as error:
+            if not debugger_module().event_failed(error):
+                traceback.print_exc()  # as Tk does for other handlers, so the IDE can point at the line
         finally:
             self._done()
 
@@ -162,6 +171,18 @@ class Handler:
         if self.pending and not self.busy and self.form.loaded:
             args = self.pending.popleft()
             self.form.root.after_idle(lambda: self(*args))
+
+
+def debugger_module():
+    from readymade import debugger
+
+    return debugger
+
+
+def _debugger():
+    """The IDE's debugger, when it's debugging this program (see readymade.debugger)."""
+    module = sys.modules.get("readymade.debugger")
+    return module.current() if module is not None else None
 
 
 _loop: asyncio.AbstractEventLoop | None = None

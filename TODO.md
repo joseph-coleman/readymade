@@ -4,7 +4,7 @@ Ideas and gaps noted along the way, roughly by area.
 
 ## Runtime
 - **Menu item `visible`**: Tk can't hide a menu entry; supporting it means rebuilding the menu.
-- **Break mode**: pause a running program at an error, as VB did (needs a debugger).
+- **Break mode follow-ups**: edit and continue (VB let you change code while paused; Python can't swap a running function's code, so today edits take effect next run); Set Next Statement (bdb can jump lines within a function); start in step mode (F11 when stopped, breaking at the first event); conditional breakpoints and hit counts (bdb has both); breaking in threads started with `in_thread` (tracing is only on the program's main thread); errors outside event handlers (at startup) still just end the program.
 
 ## IDE
 - **Copy and paste**: optionally bring the controls' event handlers along (renamed to match), which VB never did. Also a selection box inside a Frame (today it only works on the form itself; Ctrl+click works anywhere).

@@ -5,6 +5,7 @@ your user settings (see readymade.usersettings):
     "code-font": "Consolas, 11"    ("" for the system's usual fixed-width font)
     "indent-width": 4              (spaces for Tab; generated handlers always use 4)
     "theme": "light"               (or "dark")
+    "break-on-errors": true        (an error in an event handler pauses the program there)
 """
 
 from __future__ import annotations
@@ -33,6 +34,10 @@ def code_font():
 def indent_width():
     width = usersettings.get("indent-width", 4)
     return width if width in INDENTS else 4
+
+
+def break_on_errors():
+    return usersettings.get("break-on-errors", True) is not False
 
 
 def theme():
@@ -65,7 +70,7 @@ def apply(app):
     apply_chrome(app, chosen.chrome)
     for editor in app.editors:
         editor.code.apply_theme(chosen)
-    for panel in (app.immediate, app.help, app.problems):
+    for panel in (app.immediate, app.help, app.problems, app.locals, app.watches_panel, app.call_stack):
         panel.apply_theme(chosen)
 
 
@@ -189,7 +194,8 @@ def dark_title_bar(window, dark):
 
 
 class OptionsDialog(tk.Toplevel):
-    """Tools > Options...: choose the code font, indent width and theme. OK saves and applies them."""
+    """Tools > Options...: choose the code font, indent width, theme and whether to break on
+    errors. OK saves and applies them."""
 
     def __init__(self, app):
         super().__init__(app.root)
@@ -200,6 +206,7 @@ class OptionsDialog(tk.Toplevel):
         self.font = tk.StringVar(self, code_font())
         self.indent = tk.StringVar(self, str(indent_width()))
         self.theme = tk.StringVar(self, theme().name)
+        self.break_on_errors = tk.BooleanVar(self, break_on_errors())
 
         body = ttk.Frame(self, padding=12)
         body.pack(fill=tk.BOTH, expand=True)
@@ -221,10 +228,12 @@ class OptionsDialog(tk.Toplevel):
         choices.grid(row=2, column=1, columnspan=3, sticky="w", padx=(8, 0))
         for name, label in (("light", "Light"), ("dark", "Dark")):
             ttk.Radiobutton(choices, text=label, value=name, variable=self.theme).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Checkbutton(body, text="Break on errors in event handlers (when run from here)",
+                        variable=self.break_on_errors).grid(row=3, column=0, columnspan=4, sticky="w", pady=4)
         ttk.Label(body, text="These are yours, for all your projects.", style="Note.TLabel").grid(
-            row=3, column=0, columnspan=4, sticky="w", pady=(8, 0))
+            row=4, column=0, columnspan=4, sticky="w", pady=(8, 0))
         buttons = ttk.Frame(body)
-        buttons.grid(row=4, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        buttons.grid(row=5, column=0, columnspan=4, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
         self.bind("<Return>", lambda e: self.ok())
@@ -241,5 +250,8 @@ class OptionsDialog(tk.Toplevel):
         usersettings.set("code-font", self.font.get())
         usersettings.set("indent-width", int(self.indent.get()))
         usersettings.set("theme", self.theme.get())
+        usersettings.set("break-on-errors", self.break_on_errors.get())
         apply(self.app)
+        if self.app.session is not None:  # the running program too
+            self.app.session.send(cmd="break_on_errors", on=self.break_on_errors.get())
         self.destroy()

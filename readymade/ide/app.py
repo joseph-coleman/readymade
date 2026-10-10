@@ -21,16 +21,18 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from readymade import events, formatting, menus, package
+from readymade import events, formatting, menus, package, remote, usersettings
 from readymade.formfile import FormFileError
 from readymade.ide import assist
 from readymade.ide.editors import FormEditor, ModuleEditor, ViewerEditor, bring_in
 from readymade.ide.linting import Linter
 from readymade.ide.menueditor import MenuEditor
 from readymade.ide import helptext
-from readymade.ide.panels import HelpPanel, ImmediateWindow, ProblemsPanel, ProjectExplorer, PropertiesPanel, Toolbox
+from readymade.ide.panels import (CallStackPanel, HelpPanel, ImmediateWindow, LocalsPanel, ProblemsPanel,
+                                  ProjectExplorer, PropertiesPanel, Toolbox, WatchesPanel)
 from readymade.ide import options
 from readymade.ide.tooldialog import formatting_dialog, linting_dialog
+from readymade.ide.debugging import STEPS, DebugSession, WatchDialog, function_at
 from readymade.ide.tracebacks import TracebackWatcher
 from readymade.project import Project, ProjectError, describe_python, find_pythons, requirement_name
 
@@ -46,6 +48,12 @@ class App:
         self.editors: list[FormEditor | ModuleEditor] = []
         self.form: FormEditor | None = None  # the form whose tab is showing
         self.process: subprocess.Popen | None = None  # the running program, or venv/pip
+        self.session: DebugSession | None = None  # the link with the running program (debugging.py)
+        self.in_break_mode = False  # the program is paused (at a breakpoint, a step or an error)
+        self._break_split = 0.5  # with the debug windows showing, the Immediate window's share of the bottom's width
+        self._debug_windows_shown = False
+        # View > Debug Windows: Locals, Watches and Call Stack show while running or stopped too (always in break mode).
+        self.keep_debug_windows = tk.BooleanVar(root, usersettings.get("debug-windows", False) is True)
         self._on_exit = None
         self._watcher: TracebackWatcher | None = None  # finds errors in the running program's output
         self._output: queue.Queue = queue.Queue()
@@ -82,8 +90,18 @@ class App:
         top.add(self.toolbox, weight=0)
         top.add(self.documents, weight=1)
         top.add(side, weight=0)
-        # Below: the Immediate window, and F1's help.
-        self.bottom = ttk.Notebook(outer)
+        # Below: the Immediate window, and F1's help. In break mode Locals, Watches and Call Stack show beside them.
+        self.bottom_area = ttk.PanedWindow(outer, orient=tk.HORIZONTAL)
+        self.bottom = ttk.Notebook(self.bottom_area)
+        self.bottom_area.add(self.bottom, weight=1)
+        self.debug_tabs = ttk.Notebook(self.bottom_area)
+        self.locals = LocalsPanel(self.debug_tabs, on_expand=lambda path: self.session and self.session.expand(path))
+        self.call_stack = CallStackPanel(self.debug_tabs, on_select=lambda i: self.session and self.session.choose_frame(i))
+        self.watches_panel = WatchesPanel(self.debug_tabs, on_expand=lambda path: self.session and self.session.expand(path),
+                                          on_edit=self.edit_watch, on_delete=self.delete_watch)
+        self.debug_tabs.add(self.locals, text="Locals")
+        self.debug_tabs.add(self.watches_panel, text="Watches")
+        self.debug_tabs.add(self.call_stack, text="Call Stack")
         self.immediate = ImmediateWindow(self.bottom, on_line=self.immediate_line)
         self.problems = ProblemsPanel(self.bottom, on_open=self.go_to_problem)
         self.help = HelpPanel(self.bottom)
@@ -95,7 +113,8 @@ class App:
         if root.tk.call("tk", "windowingsystem") == "aqua":  # a Mac's app menu has Preferences... (⌘,)
             root.createcommand("::tk::mac::ShowPreferences", self.show_options)
         outer.add(top, weight=1)
-        outer.add(self.bottom, weight=0)
+        outer.add(self.bottom_area, weight=0)
+        self._update_debug_windows()
 
         # Shortcuts are written as on Windows and Linux; on a Mac, Ctrl is ⌘ and Alt is Option (see menus).
         for shortcut, command in (
@@ -105,6 +124,15 @@ class App:
             ("Ctrl+W", self.close_document),
             ("Ctrl+E", self.menu_editor),
             ("F5", self.run),
+            ("Shift+F5", self.stop),
+            ("F6", self.pause),
+            ("F9", self.toggle_breakpoint),
+            ("Ctrl+Shift+F9", self.clear_breakpoints),
+            ("F10", lambda: self.debug_go("next")),
+            ("Ctrl+F10", self.run_to_cursor),
+            ("F11", lambda: self.debug_go("step")),
+            ("Shift+F11", lambda: self.debug_go("return")),
+            ("Shift+F9", self.quick_watch),
             ("F7", lambda: self.form and self.form.show_code()),
             ("Shift+F7", lambda: self.form and self.form.show_design()),
             ("Shift+Alt+F", self.format_document),
@@ -161,19 +189,45 @@ class App:
         view = tk.Menu(menubar, tearoff=False)
         view.add_command(label="Code", accelerator=menus.accelerator("F7"), command=lambda: self.form and self.form.show_code())
         view.add_command(label="Object", accelerator=menus.accelerator("Shift+F7"), command=lambda: self.form and self.form.show_design())
+        view.add_separator()
+        view.add_checkbutton(label="Debug Windows", variable=self.keep_debug_windows, command=self._debug_windows_toggled)
+        view.add_command(label="Locals", command=lambda: self.show_debug_window(self.locals))
+        view.add_command(label="Watches", command=lambda: self.show_debug_window(self.watches_panel))
+        view.add_command(label="Call Stack", command=lambda: self.show_debug_window(self.call_stack))
         tools = tk.Menu(menubar, tearoff=False)
         tools.add_command(label="Menu Editor...", accelerator=menus.accelerator("Ctrl+E"), command=self.menu_editor)
         tools.add_separator()
         tools.add_command(label="Options...", command=self.show_options)
+        debug = tk.Menu(menubar, tearoff=False, postcommand=lambda: self._update_debug_menu(debug))
+        for item in (
+            ("Continue", "F5", lambda: self.debug_go("continue")),
+            ("Step Into", "F11", lambda: self.debug_go("step")),
+            ("Step Over", "F10", lambda: self.debug_go("next")),
+            ("Step Out", "Shift+F11", lambda: self.debug_go("return")),
+            ("Run to Cursor", "Ctrl+F10", self.run_to_cursor),
+            ("Pause", "F6", self.pause),
+            None,
+            ("Toggle Breakpoint", "F9", self.toggle_breakpoint),
+            ("Clear All Breakpoints", "Ctrl+Shift+F9", self.clear_breakpoints),
+            None,
+            ("Add Watch...", None, self.add_watch),
+            ("Quick Watch...", "Shift+F9", self.quick_watch),
+        ):
+            if item is None:
+                debug.add_separator()
+            else:
+                label, key, command = item
+                debug.add_command(label=label, accelerator=menus.accelerator(key) if key else "", command=command)
         run = tk.Menu(menubar, tearoff=False)
         run.add_command(label="Start", accelerator=menus.accelerator("F5"), command=self.run)
-        run.add_command(label="End", command=self.stop)
+        run.add_command(label="End", accelerator=menus.accelerator("Shift+F5"), command=self.stop)
         menubar.add_cascade(label="File", menu=file)
         menubar.add_cascade(label="Edit", menu=edit)
         menubar.add_cascade(label="Format", menu=format_menu)
         menubar.add_cascade(label="Project", menu=project)
         menubar.add_cascade(label="View", menu=view)
         menubar.add_cascade(label="Tools", menu=tools)
+        menubar.add_cascade(label="Debug", menu=debug)
         menubar.add_cascade(label="Run", menu=run)
         help_menu = tk.Menu(menubar, tearoff=False)
         help_menu.add_command(label="Help on This", accelerator=menus.accelerator("F1"), command=self.show_help)
@@ -205,6 +259,7 @@ class App:
         if form:
             self.open_form(form)
         self.linter.check_project()
+        self.watches_panel.show(self.watches())
         self.update_title()
         return True
 
@@ -476,7 +531,7 @@ class App:
         elif found.kind == "builtin":
             self.immediate.write(f"({found.name} is built into Python, so there's no source to show.)\n")
         else:
-            target = self._open_code(found.path)
+            target = self.open_code(found.path)
             if target is not None:
                 target.code.show_location(found.line, found.column, len(found.name))
 
@@ -488,7 +543,7 @@ class App:
                 dialog.tree.selection_set(str(id(item)))
                 dialog.tree.see(str(id(item)))
 
-    def _open_code(self, path):
+    def open_code(self, path):
         """Open a .py file: a form's code or a module of the project, else read-only."""
         if self.project and path.parent.resolve() == self.project.folder.resolve() and path.suffix == ".py":
             if path.with_suffix(".form").exists():
@@ -520,7 +575,7 @@ class App:
 
     def go_to_problem(self, path, line, column):
         """Open the code with a problem, at its place."""
-        editor = self._open_code(Path(path))
+        editor = self.open_code(Path(path))
         if editor is not None:
             editor.code.show_location(line, column)
             editor.code.text.focus_set()
@@ -674,6 +729,8 @@ class App:
         if not getattr(editor, "read_only", False):
             editor.code.on_change = lambda: self.linter.check(editor)  # soon after typing stops
             self.linter.check(editor, saved=True)
+            editor.code.on_breakpoints = self.breakpoints_changed
+            editor.code.set_breakpoints(self._saved_breakpoints().get(self._relative(editor.code_path), []))
 
     def _current_editor(self):
         try:
@@ -699,6 +756,7 @@ class App:
                 return False
         if self.properties.app is editor:
             self.properties.attach(None)
+        self._store_breakpoints()
         self.editors.remove(editor)
         self.documents.forget(editor.frame)
         editor.frame.destroy()
@@ -726,6 +784,7 @@ class App:
             for editor in changed:
                 self.format_code(editor)  # if it can't, the save still goes ahead
         ok = all([e.save() for e in changed])
+        self._store_breakpoints()  # where they are now that lines have moved
         for editor in changed:
             self.linter.check(editor, saved=True)
         if changed:
@@ -737,7 +796,8 @@ class App:
         for editor in self.editors:
             self.documents.tab(editor.frame, text=editor.title())
         name = self.project.name if self.project else "No project"
-        self.root.title(f"{name}{'*' if self.is_dirty() else ''} - readymade")
+        state = " [break]" if self.in_break_mode else " [run]" if self.session is not None else ""  # as VB showed
+        self.root.title(f"{name}{'*' if self.is_dirty() else ''} - readymade{state}")
 
     def exit(self):
         if self._close_all():
@@ -747,6 +807,9 @@ class App:
     # ----- running -----
 
     def run(self):
+        if self.in_break_mode:
+            self.debug_go("continue")  # F5 continues a paused program
+            return
         if self.project is None or not self._idle():
             return
         if not self.save():
@@ -762,8 +825,13 @@ class App:
         for editor in self.editors:
             editor.code.clear_error()
         self.immediate.write(f"--- Running {self.project.name} ({startup}, Python: {where}). Type Python below to inspect it. ---\n")
-        self._start([str(python), "-m", "readymade.run", "--immediate", "--startup", startup, str(folder)], interactive=True)
+        self.session = DebugSession(self)  # Immediate lines, input() and the debugger go through it
+        self.session.send(cmd="start", breakpoints=self._breakpoint_files(), watches=self.watches(),
+                          break_on_errors=options.break_on_errors())
+        self._start([str(python), "-m", "readymade.run", "--debug", str(self.session.port), "--startup", startup,
+                     str(folder)], interactive=True)
         self._watcher = TracebackWatcher(folder, self.show_error)
+        self.update_title()
 
     def show_error(self, path, line, message):
         """Point out a run-time error: open the code where it happened and highlight the line."""
@@ -831,6 +899,7 @@ class App:
                 code = self.process.wait() if self.process else None
                 self.process = None
                 self._watcher = None
+                self._end_session()
                 if self._on_exit:
                     self._on_exit(code)
                 else:
@@ -840,7 +909,215 @@ class App:
             self.immediate.write(item)
             if self._watcher:
                 self._watcher.feed(item)
+        if self.session is not None:
+            self.session.poll()  # (after the output, so a prompt comes after what was printed before it)
         self.root.after(50, self._poll_output)
+
+    def _end_session(self):
+        if self.session is not None:
+            self.session.handle({"event": "running"})  # out of break mode, if it was paused
+            self.session.close()
+            self.session = None
+        self.immediate.input_done()
+        self.update_title()
+
+    # ----- debugging -----
+
+    def show_break_mode(self, on):
+        """Break mode: the bottom area splits, with Locals, Watches and Call Stack beside the Immediate window."""
+        if on and not self.in_break_mode:
+            self.bottom.select(self.immediate)
+        self.in_break_mode = on
+        self._update_debug_windows()
+        self.update_title()
+
+    def show_debug_window(self, panel):
+        """View > Locals, Watches or Call Stack: show the debug windows, with that one in front."""
+        if not self.keep_debug_windows.get():
+            self.keep_debug_windows.set(True)
+            self._debug_windows_toggled()
+        self.debug_tabs.select(panel)
+
+    def _debug_windows_toggled(self):
+        usersettings.set("debug-windows", self.keep_debug_windows.get())
+        self._update_debug_windows()
+
+    def _update_debug_windows(self):
+        """The debug windows show in break mode, and whenever View > Debug Windows is ticked."""
+        show = self.in_break_mode or self.keep_debug_windows.get()
+        if show and not self._debug_windows_shown:
+            self.bottom_area.add(self.debug_tabs, weight=1)
+            self._place_split()
+        elif not show and self._debug_windows_shown:
+            width = self.bottom_area.winfo_width()
+            if width > 1:
+                self._break_split = min(0.85, max(0.15, self.bottom_area.sashpos(0) / width))  # as it was dragged
+            self.bottom_area.forget(self.debug_tabs)
+        self._debug_windows_shown = show
+
+    def _place_split(self, tries=25):
+        self.bottom_area.update_idletasks()  # (laid out first, or the new pane stays squeezed shut)
+        width = self.bottom_area.winfo_width()
+        if width < 50:  # the window isn't showing yet
+            if tries:
+                self.root.after(200, lambda: self._place_split(tries - 1))
+            return
+        if self._debug_windows_shown:
+            self.bottom_area.sashpos(0, int(width * self._break_split))
+
+    def debug_go(self, how, **extra):
+        """Continue (F5), Step Into (F11), Step Over (F10) or Step Out (Shift+F11) while paused."""
+        session = self.session
+        if session is None or session.paused is None:
+            return
+        if how in STEPS and not session.can_step():
+            self.immediate.write("(After an error the program can't step on: Continue skips the rest of the event.)\n")
+            return
+        session.go(how, **extra)
+
+    def run_to_cursor(self):
+        """Ctrl+F10: go on until the line with the cursor."""
+        editor = self._code_editor()
+        if editor is not None:
+            self.debug_go("until", file=str(editor.code_path), line=int(editor.code.text.index("insert").split(".")[0]))
+
+    def pause(self):
+        """F6: break into the running program. It's idle between events, so it breaks as the next one starts."""
+        if self.session is None or self.in_break_mode:
+            return
+        self.session.send(cmd="pause")
+        self.immediate.write("--- Pausing: the program breaks when its next event starts (a click, a key, a timer). ---\n")
+
+    def _update_debug_menu(self, menu):
+        paused = self.in_break_mode and self.session is not None and self.session.paused is not None
+        stepping = paused and self.session.can_step()
+        for label, on in (("Continue", paused), ("Step Into", stepping), ("Step Over", stepping),
+                          ("Step Out", stepping), ("Run to Cursor", stepping), ("Quick Watch...", paused),
+                          ("Pause", self.session is not None and not self.in_break_mode)):
+            menu.entryconfigure(label, state=tk.NORMAL if on else tk.DISABLED)
+
+    def _code_editor(self):
+        """The editor whose code is showing, or None (a form's design, or nothing)."""
+        editor = self._current_editor()
+        if isinstance(editor, FormEditor) and editor.frame.select() != str(editor.code):
+            return None
+        return editor
+
+    def toggle_breakpoint(self):
+        """F9: set or clear a breakpoint on the cursor's line."""
+        editor = self._code_editor()
+        if editor is not None:
+            editor.code.toggle_breakpoint()
+
+    def clear_breakpoints(self):
+        for editor in self.editors:
+            editor.code.set_breakpoints([])
+        if self.project is not None:
+            self.project.set_local_setting("breakpoints", None)
+        self.breakpoints_changed()
+
+    def breakpoints_changed(self):
+        """A breakpoint was set or cleared: remember it, and tell the running program."""
+        self._store_breakpoints()
+        if self.session is not None:
+            self.session.send(cmd="breakpoints", breakpoints=self._breakpoint_files())
+
+    def breakpoints(self):
+        """Every breakpoint in the project: {file name (relative to the project): [line, ...]}."""
+        if self.project is None:
+            return {}
+        found = dict(self._saved_breakpoints())
+        for editor in self.editors:
+            if editor.code.on_breakpoints is not None:
+                found[self._relative(editor.code_path)] = editor.code.breakpoint_lines()
+        return {name: lines for name, lines in found.items() if lines and (self.project.folder / name).exists()}
+
+    def _saved_breakpoints(self):
+        return self.project.local_settings().get("breakpoints", {}) if self.project else {}
+
+    def _store_breakpoints(self):
+        """Remember the breakpoints, on this machine (in the project's .readymade/local.json)."""
+        if self.project is not None:
+            found = self.breakpoints()
+            if found != self._saved_breakpoints():
+                self.project.set_local_setting("breakpoints", found or None)
+
+    def _breakpoint_files(self):
+        """The breakpoints as the program wants them: {full path: [line, ...]}."""
+        return {str(self.project.folder / name): lines for name, lines in self.breakpoints().items()}
+
+    def watches(self):
+        """The project's watches (remembered on this machine): [{expression, function, file, kind}]."""
+        return self.project.local_settings().get("watches", []) if self.project else []
+
+    def set_watches(self, watches):
+        if self.project is None:
+            return
+        self.project.set_local_setting("watches", watches or None)
+        if self.session is not None:
+            self.session.send(cmd="watches", watches=watches)  # paused, it answers with their values
+        if not self.in_break_mode:
+            self.watches_panel.show(watches)
+
+    def add_watch(self, expression=None):
+        """Debug > Add Watch: for the selected text (or the name at the cursor), in the function there."""
+        if self.project is None:
+            return
+        watch = {"expression": expression or ""}
+        editor = self._code_editor()
+        if editor is not None and editor.code.on_breakpoints is not None:
+            text = editor.code.text
+            line = int(text.index("insert").split(".")[0])
+            if not expression:
+                watch["expression"] = (text.get("sel.first", "sel.last") if text.tag_ranges("sel")
+                                       else text.get("insert wordstart", "insert wordend")).strip()
+            watch["file"] = self._relative(editor.code_path)
+            watch["function"] = function_at(editor.code.get_source(), line)
+
+        def added(new):
+            self.set_watches([*self.watches(), new])
+            self.show_debug_window(self.watches_panel)
+        return WatchDialog(self, watch, added)
+
+    def edit_watch(self, index):
+        if index is None:
+            return self.add_watch()
+        watches = self.watches()
+
+        def edited(new):
+            self.set_watches([new if i == index else w for i, w in enumerate(watches)])
+        return WatchDialog(self, watches[index], edited, title="Edit Watch")
+
+    def delete_watch(self, index):
+        self.set_watches([w for i, w in enumerate(self.watches()) if i != index])
+
+    def quick_watch(self):
+        """Shift+F9, while paused: the value of the selected text (or the name at the cursor)."""
+        editor = self._code_editor()
+        if self.session is None or self.session.paused is None or editor is None:
+            return
+        text = editor.code.text
+        expression = (text.get("sel.first", "sel.last") if text.tag_ranges("sel")
+                      else text.get("insert wordstart", "insert wordend")).strip()
+        if expression:
+            self.session.send(cmd="quick", expression=expression)
+
+    def code_files(self):
+        """The project's code: {file name relative to the project: source}, open files as edited."""
+        if self.project is None:
+            return {}
+        files = {path.name: path.read_text(encoding="utf-8", errors="replace")
+                 for path in sorted(self.project.folder.glob("*.py"))}
+        for editor in self.editors:
+            if editor.code.on_breakpoints is not None:
+                files[self._relative(editor.code_path)] = editor.code.get_source()
+        return files
+
+    def _relative(self, path):
+        try:
+            return Path(path).resolve().relative_to(self.project.folder.resolve()).as_posix()
+        except ValueError:
+            return str(path)
 
     # ----- environments and libraries -----
 
@@ -1103,11 +1380,18 @@ class App:
         self.immediate.write(f"--- Added {requirement} to the project. ---\n")
 
     def immediate_line(self, line):
+        if self.session is not None and self.session.prompt is not None:
+            self.immediate.write(line + "\n")  # the answer to the program's input()
+            self.session.answer(line)
+            return
         self.immediate.write(f">>> {line}\n")
         if line.lstrip().startswith("?"):  # VB's `? expr` prints the expression
             line = f"print({line.lstrip()[1:].strip()})"
         if self.process is None or self.process.stdin is None:
             self._console.push(line)
+            return
+        if self.session is not None:
+            self.session.send(cmd="eval", line=line)
             return
         try:
             self.process.stdin.write(line + "\n")
@@ -1131,11 +1415,20 @@ class _ImmediateStream:
 
 
 class _DesignTimeConsole(code.InteractiveConsole):
-    """Runs Immediate window lines inside the IDE when no program is running."""
+    """Runs Immediate window lines inside the IDE when no program is running. input() asks
+    in a small dialog (the IDE has no console to read), and help() writes its text."""
 
     def __init__(self, app):
-        super().__init__({"__name__": "__immediate__"})
+        super().__init__({"__name__": "__immediate__", "input": self._input, "help": remote.Help()})
+        self.app = app
         self.stream = _ImmediateStream(app)
+
+    def _input(self, prompt=""):
+        answer = simpledialog.askstring("input()", str(prompt) or "Input:", parent=self.app.root)
+        if answer is None:
+            raise EOFError
+        self.stream.write(f"{prompt}{answer}\n")
+        return answer
 
     def write(self, data):
         self.stream.write(data)

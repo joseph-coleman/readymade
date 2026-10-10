@@ -804,6 +804,62 @@ def drive(d):
     d.check("dragged to the top-right cell", (spec["row"], spec["column"]), (0, 2))
     d.shot("grid-designer")
 
+    print("Break mode: a breakpoint by clicking the gutter, F5, F10, the Immediate window while paused")
+    app.close_document(gridded, ask=False)
+    editor = app.open_form("Form1", "code")
+    code = editor.code
+    d.pump(0.3)
+    line = next(n for n, text in enumerate(code.get_source().splitlines(), 1) if "name = self.TextBox1" in text)
+    _, y, _, height, _ = code.text.dlineinfo(f"{line}.0")
+    d.click(code.gutter.winfo_rootx() + 7, code.gutter.winfo_rooty() + y + height // 2)
+    d.check("gutter click sets a breakpoint", code.breakpoint_lines(), [line])
+    code.text.focus_force()
+    d.key("F5")
+    d.ask("1")  # (running)
+    app.immediate_line("_ = Button1.widget.invoke()")
+    deadline = time.time() + 10
+    while code.paused_line() != line and time.time() < deadline:
+        d.pump(0.05)
+    d.check("paused at the breakpoint", (app.in_break_mode, code.paused_line()), (True, line))
+    d.check("title says so", app.root.title().endswith("[break]"), True)
+    code.text.focus_force()
+    d.pump(0.2)
+    d.key("F10")
+    deadline = time.time() + 10
+    while code.paused_line() != line + 1 and time.time() < deadline:
+        d.pump(0.05)
+    d.check("F10 steps over", code.paused_line(), line + 1)
+    d.check("Locals shows name", app.locals.value_of("name"), ("'World'", "str"))
+    d.click(*d.at(app.immediate.entry))
+    d.type("? name.upper()")
+    d.key("Return")
+    d.pump(0.5)
+    d.check("Immediate runs in the paused function", "\nWORLD\n" in app.immediate.output.get("1.0", "end"), True)
+    d.shot("break-mode")
+    d.click(*d.tab_at(app.debug_tabs, app.call_stack))
+    d.shot("break-mode-call-stack")
+    code.text.focus_force()
+    d.pump(0.2)
+    d.key("F5")
+    deadline = time.time() + 10
+    while app.in_break_mode and time.time() < deadline:
+        d.pump(0.05)
+    d.check("F5 continues", (app.in_break_mode, d.ask("Label2.text")), (False, "Hello, World!"))
+    print("Watches while running (View > Watches)")
+    app.show_debug_window(app.watches_panel)
+    app.set_watches([{"expression": "Label2.text", "kind": "watch", "file": "", "function": ""},
+                     {"expression": "name", "kind": "watch", "file": "Form1.py", "function": "Button1_click"}])
+    deadline = time.time() + 10
+    while app.watches_panel.value_of("#watch", 0)[0] != "'Hello, World!'" and time.time() < deadline:
+        d.pump(0.05)
+    d.check("a watch's value while running", app.watches_panel.value_of("#watch", 0)[:2], ("'Hello, World!'", "str"))
+    d.shot("watches-running")
+    d.key("shift+F5")
+    deadline = time.time() + 10
+    while app.process is not None and time.time() < deadline:
+        d.pump(0.05)
+    d.check("Shift+F5 ends it", app.process, None)
+
 
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/readymade-ui")

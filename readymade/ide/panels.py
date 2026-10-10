@@ -1,4 +1,5 @@
-"""The IDE's side panels: Toolbox, Properties, and the Immediate, Problems and Help tabs."""
+"""The IDE's side panels: Toolbox, Properties, and the Immediate, Problems and Help tabs,
+and while a program is paused, Locals, Watches and Call Stack."""
 
 from __future__ import annotations
 
@@ -419,7 +420,8 @@ class ImmediateWindow(ttk.Frame):
         self.output.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         prompt = ttk.Frame(self)
         prompt.pack(fill=tk.X, pady=(2, 0))
-        ttk.Label(prompt, text=">>>", font=MONO).pack(side=tk.LEFT)
+        self.prompt = ttk.Label(prompt, text=">>>", font=MONO)  # "input:" while the program waits for input()
+        self.prompt.pack(side=tk.LEFT)
         self.entry = ttk.Entry(prompt, font=MONO)
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
         self.entry.bind("<Return>", self._submit)
@@ -429,6 +431,14 @@ class ImmediateWindow(ttk.Frame):
     def apply_theme(self, theme):
         self.output.configure(background=theme.background, foreground=theme.foreground,
                               insertbackground=theme.cursor, selectbackground=theme.selection)
+
+    def ask_for_input(self):
+        """The program is waiting for input(): the next line answers it."""
+        self.prompt.configure(text="input:")
+        self.entry.focus_set()
+
+    def input_done(self):
+        self.prompt.configure(text=">>>")
 
     def write(self, text):
         self.output.configure(state=tk.NORMAL)
@@ -550,3 +560,210 @@ class HelpPanel(ttk.Frame):
             self.docs.pack(side=tk.RIGHT)
         else:
             self.docs.pack_forget()
+
+
+def _style_tree(widget, style_name, theme):
+    style = ttk.Style(widget)
+    style.configure(style_name, background=theme.background, fieldbackground=theme.background,
+                    foreground=theme.foreground)
+    style.map(style_name, background=[("selected", theme.selection)], foreground=[("selected", theme.foreground)])
+
+
+def _tree(master, columns, style_name, show="headings"):
+    body = ttk.Frame(master)
+    body.pack(fill=tk.BOTH, expand=True)
+    tree = ttk.Treeview(body, columns=[name for name, *_ in columns if name != "#0"], show=show, height=6,
+                        selectmode="browse", style=style_name)
+    for column, heading, width, stretch in columns:
+        tree.heading(column, text=heading, anchor="w")
+        tree.column(column, width=width, stretch=stretch, anchor="w")
+    scroll = ttk.Scrollbar(body, command=tree.yview)
+    tree.configure(yscrollcommand=scroll.set)
+    scroll.pack(side=tk.RIGHT, fill=tk.Y)
+    tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    return tree
+
+
+class LocalsPanel(ttk.Frame):
+    """While the program is paused: the variables of the function it's in, with their values
+    and types. Objects, lists and dicts open to show their parts; on_expand(path) asks the
+    program for them, which answer with add_children(path, items)."""
+
+    COLUMNS = (("#0", "Name", 160, False), ("value", "Value", 360, True), ("type", "Type", 100, False))
+
+    def __init__(self, master, on_expand):
+        super().__init__(master, padding=(4, 2))
+        self._on_expand = on_expand
+        self.tree = _tree(self, self.COLUMNS, "Debug.Treeview", show="tree headings")
+        self._rows = {}  # path (a tuple of names) -> row
+        self._paths = {}  # row -> path
+        self._opened = set()  # the paths opened, opened again after the next step
+        self.tree.bind("<<TreeviewOpen>>", self._open)
+        self.tree.bind("<<TreeviewClose>>", lambda e: self._opened.discard(self._paths.get(self.tree.focus())))
+
+    def apply_theme(self, theme):
+        _style_tree(self, "Debug.Treeview", theme)
+
+    def clear(self):
+        self.tree.delete(*self.tree.get_children())
+        self._rows = {}
+        self._paths = {}
+
+    def show(self, variables):
+        """Show [{name, value, type, path, expandable}] (see readymade.debugger.value_info)."""
+        chosen = self._paths.get(self.tree.focus())
+        self.clear()
+        for info in variables:
+            self._insert("", info)
+        if chosen in self._rows:  # the same one stays chosen as values change
+            self.tree.focus(self._rows[chosen])
+            self.tree.selection_set(self._rows[chosen])
+
+    def add_children(self, path, items):
+        row = self._rows.get(tuple(path))
+        if row is None:
+            return
+        self.tree.delete(*self.tree.get_children(row))
+        for info in items:
+            self._insert(row, info)
+
+    def _insert(self, parent, info):
+        path = tuple(info["path"])
+        row = self.tree.insert(parent, tk.END, text=info["name"], values=self._values(info))
+        self._rows[path] = row
+        self._paths[row] = path
+        if info["expandable"]:
+            self.tree.insert(row, tk.END, text="...", tags=("waiting",))  # so it has an opener
+            if path in self._opened:
+                self.tree.item(row, open=True)
+                self._on_expand(list(path))
+
+    def _values(self, info):
+        return info["value"], info["type"]
+
+    def _open(self, _):
+        row = self.tree.focus()
+        path = self._paths.get(row)
+        if path is None:
+            return
+        self._opened.add(path)
+        children = self.tree.get_children(row)
+        if len(children) == 1 and "waiting" in self.tree.item(children[0], "tags"):
+            self._on_expand(list(path))
+
+    def value_of(self, *path):
+        """(value, type) shown for a variable, or one of its parts: for tests."""
+        return tuple(self.tree.item(self._rows[path], "values"))
+
+
+def describe_watch(watch):
+    """Where a watch applies and what it does, for the Watches window."""
+    where = " in ".join(filter(None, (watch.get("function"), watch.get("file")))) or "anywhere"
+    does = {"true": ", breaks when true", "changes": ", breaks when it changes"}.get(watch.get("kind"), "")
+    return where + does
+
+
+class WatchesPanel(LocalsPanel):
+    """The watches (see readymade.debugger.Watch), with their values while the program is
+    paused. Right-click, Enter or Delete to change them: on_edit(index, or None to add one),
+    on_delete(index)."""
+
+    COLUMNS = (("#0", "Expression", 120, False), ("value", "Value", 180, True), ("type", "Type", 70, False),
+               ("context", "Context", 150, True))
+
+    def __init__(self, master, on_expand, on_edit, on_delete):
+        super().__init__(master, on_expand)
+        self._on_edit = on_edit
+        self._on_delete = on_delete
+        self._watches = []
+        self.menu = tk.Menu(self, tearoff=False)
+        self.menu.add_command(label="Add Watch...", command=lambda: self._on_edit(None))
+        self.menu.add_command(label="Edit Watch...", command=lambda: self._edit(self.index()))
+        self.menu.add_command(label="Delete Watch", command=lambda: self._delete(self.index()))
+        for sequence in menus.context_clicks(self.tree):
+            self.tree.bind(sequence, self._popup)
+        self.tree.bind("<Double-Button-1>", lambda e: self._edit(self.index(self.tree.identify_row(e.y))))
+        self.tree.bind("<Return>", lambda e: self._edit(self.index()))
+        self.tree.bind("<Delete>", lambda e: self._delete(self.index()))
+
+    def show(self, watches, values=None):
+        """watches: [{expression, function, file, kind}]; values: what the paused program said
+        about them (None while it isn't paused)."""
+        self._watches = watches
+        if values is None:
+            values = [{"name": w["expression"], "value": "", "type": "", "path": ["#watch", i], "expandable": False}
+                      for i, w in enumerate(watches)]
+        super().show(values)
+
+    def _values(self, info):
+        path = info["path"]
+        if len(path) == 2 and path[0] == "#watch" and path[1] < len(self._watches):
+            return info["value"], info["type"], describe_watch(self._watches[path[1]])
+        return info["value"], info["type"], ""
+
+    def index(self, row=None):
+        """The watch at a row (default: the chosen one), or None."""
+        path = self._paths.get(row if row is not None else self.tree.focus())
+        return path[1] if path and len(path) >= 2 else None
+
+    def _popup(self, e):
+        row = self.tree.identify_row(e.y)
+        if row:
+            self.tree.selection_set(row)
+            self.tree.focus(row)
+        on = tk.NORMAL if self.index(row) is not None else tk.DISABLED
+        self.menu.entryconfigure("Edit Watch...", state=on)
+        self.menu.entryconfigure("Delete Watch", state=on)
+        self.menu.tk_popup(e.x_root, e.y_root)
+
+    def _edit(self, index):
+        if index is not None:
+            self._on_edit(index)
+        return "break"
+
+    def _delete(self, index):
+        if index is not None:
+            self._on_delete(index)
+        return "break"
+
+
+class CallStackPanel(ttk.Frame):
+    """While the program is paused: the functions it's in, the one it stopped in at the top.
+    Choosing one (on_select(index)) shows its place, its variables, and runs Immediate lines there."""
+
+    def __init__(self, master, on_select):
+        super().__init__(master, padding=(4, 2))
+        self._on_select = on_select
+        self.tree = _tree(self, (("function", "Function", 200, False), ("place", "File and line", 400, True)),
+                          "Debug.Treeview")
+        self._indexes = {}  # row -> index in the stack (outermost first)
+        self.tree.bind("<ButtonRelease-1>", lambda e: self._choose(self.tree.identify_row(e.y)))
+        self.tree.bind("<Return>", lambda e: self._choose(self.tree.focus()))
+
+    def apply_theme(self, theme):
+        _style_tree(self, "Debug.Treeview", theme)
+
+    def clear(self):
+        self.tree.delete(*self.tree.get_children())
+        self._indexes = {}
+
+    def show(self, stack, selected):
+        """stack: [{file, line, function}], outermost first, as the program sends it."""
+        self.clear()
+        for index in reversed(range(len(stack))):
+            frame = stack[index]
+            name = frame["file"].replace("\\", "/").rsplit("/", 1)[-1]
+            row = self.tree.insert("", tk.END, values=(frame["function"], f"{name}, line {frame['line']}"))
+            self._indexes[row] = index
+        self.select(selected)
+
+    def select(self, index):
+        for row, i in self._indexes.items():
+            if i == index:
+                self.tree.selection_set(row)
+                self.tree.focus(row)
+
+    def _choose(self, row):
+        if row in self._indexes:
+            self._on_select(self._indexes[row])
+        return "break"

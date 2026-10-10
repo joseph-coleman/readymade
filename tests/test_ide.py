@@ -403,7 +403,10 @@ def test_run_time_error_is_shown_at_its_line(app):
     assert code.error_bar.cget("text") == "Line 7: ZeroDivisionError: division by zero"
     assert code.text.tag_ranges("error") and str(code.text.tag_ranges("error")[0]) == "7.0"
     assert "--- ZeroDivisionError: division by zero  (Form1.py, line 7) ---" in app.immediate.output.get("1.0", "end")
-    app.immediate_line("form.close()")  # the program kept running after the error
+    assert wait_for(app, lambda: app.in_break_mode)  # paused at the error (see test_debugging.py)
+    app.run()  # continue: the program goes on without the rest of the event
+    assert wait_for(app, lambda: not app.in_break_mode)
+    app.immediate_line("form.close()")
     assert "--- Ended (exit code 0) ---" in wait_for_exit(app)
 
     code.text.insert("7.0", "# ")  # editing clears the highlight
