@@ -32,6 +32,7 @@ import os
 import reprlib
 import sys
 import traceback
+import warnings
 from collections import ChainMap
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -148,6 +149,9 @@ class Debugger(bdb.Bdb):
         self._why = None  # (reason, message) for the stop being made
         self.last_running = None  # the watches' values the IDE was last told while running
         self._ran = {}  # frame -> the line it last started, while watches are traced
+        self.conditions = {}  # (file, line) -> BreakCondition, for breakpoints with a condition or hit count
+        self._paused = {}  # while paused: what the IDE was told (sent again after Set Next Statement)
+        self._at_line = False  # paused at a line event: the only time the line can be changed
 
     # ----- which frames count -----
 
@@ -195,11 +199,19 @@ class Debugger(bdb.Bdb):
             self._ran.clear()
 
     def set_breakpoints(self, breakpoints):
-        """{file: [line, ...]}: the IDE's breakpoints, all of them."""
+        """{file: [line, ...]}: the IDE's breakpoints, all of them. A line can be
+        {line, condition, hit_mode, hits} instead (see BreakCondition). Those that were already
+        there keep their hit counts."""
         self.clear_all_breaks()
-        for file, lines in breakpoints.items():
-            for line in lines:
-                self.set_break(self.canonic(file), int(line))
+        old, self.conditions = self.conditions, {}
+        for file, items in breakpoints.items():
+            for item in items:
+                spec = item if isinstance(item, dict) else {"line": item}
+                key = (self.canonic(file), int(spec["line"]))
+                self.set_break(*key)
+                if spec.get("condition") or spec.get("hit_mode"):
+                    same = old.get(key)
+                    self.conditions[key] = same if same is not None and same.spec == spec else BreakCondition(spec)
         self.trace_if_needed()
 
     # ----- where it stops -----
@@ -223,11 +235,19 @@ class Debugger(bdb.Bdb):
 
     def break_here(self, frame):
         fired = self._check_watches(frame)  # (first, so they always see each line)
-        if super().break_here(frame):
-            self._why = ("breakpoint", "", None)
+        stop, said = self._breakpoint_says(frame) if super().break_here(frame) else (False, "")
+        if stop:
+            self._why = ("breakpoint", said, None)
         elif fired[0]:
             self._why = ("watch", *fired)
         return self._why is not None
+
+    def _breakpoint_says(self, frame):
+        """At a breakpoint: (whether to stop, why), for one with a condition or hit count."""
+        condition = self.conditions.get((self.canonic(frame.f_code.co_filename), frame.f_lineno))
+        if condition is None:
+            return True, ""
+        return condition.check(frame, self.extra_names)
 
     def _check_watches(self, frame, returning=False):
         """Check the traced watches in context, after a line ran (or as frame returns):
@@ -257,7 +277,11 @@ class Debugger(bdb.Bdb):
             self._why = ("watch", *fired) if fired[0] else ("step", "", None)
         reason, message, changed = self._why
         self._why = None
-        self.interaction([(f, f.f_lineno) for f in self._stack(frame)], reason, message, changed)
+        self._at_line = True
+        try:
+            self.interaction([(f, f.f_lineno) for f in self._stack(frame)], reason, message, changed)
+        finally:
+            self._at_line = False
 
     def dispatch_return(self, frame, arg):
         if not self.post_mortem_mode and any(w.traced for w in self.watches):
@@ -297,8 +321,9 @@ class Debugger(bdb.Bdb):
             sys.settrace(self.trace_dispatch)
             self._tracing = True
 
-    def post_mortem(self, error):
-        """Break where an error happened in an event handler. The error's traceback has been printed."""
+    def post_mortem(self, error, starting=False):
+        """Break where an error happened in an event handler (or with starting, as the program
+        started, when going on ends it). The error's traceback has been printed."""
         tb = error.__traceback__
         frames = []
         while tb is not None:
@@ -309,21 +334,22 @@ class Debugger(bdb.Bdb):
             return
         self.post_mortem_mode = True
         try:
-            self.interaction(frames, "error", f"{type(error).__name__}: {error}")
+            self.interaction(frames, "error", f"{type(error).__name__}: {error}", ends=starting)
         finally:
             self.post_mortem_mode = False
 
     # ----- paused: the IDE's commands -----
 
-    def interaction(self, frames, reason, message="", changed_line=None):
+    def interaction(self, frames, reason, message="", changed_line=None, ends=False):
         """Paused: tell the IDE, and do what it says until it says go on. changed_line: for a
-        watch that broke, the line that made the change (in the innermost frame)."""
+        watch that broke, the line that made the change (in the innermost frame); ends: going
+        on ends the program (it failed as it started)."""
         self.frames = frames
         self.selected = len(frames) - 1
         self.consoles = {}
-        self.channel.send(event="paused", reason=reason, message=message, stack=self._stack_info(),
-                          selected=self.selected, locals=self._locals(), watches=self._watch_values(),
-                          stepping=not self.post_mortem_mode, changed_line=changed_line)
+        self._paused = {"reason": reason, "message": message, "changed_line": changed_line, "ends": ends,
+                        "stepping": not self.post_mortem_mode}
+        self._send_paused()
         while True:
             command = self.channel.receive()
             kind = command.get("cmd")
@@ -340,10 +366,9 @@ class Debugger(bdb.Bdb):
             elif kind == "expand":
                 self.channel.send(event="children", path=command.get("path"), items=self._expand(command.get("path")))
             elif kind == "breakpoints":
-                self.clear_all_breaks()
-                for file, lines in command.get("breakpoints", {}).items():
-                    for line in lines:
-                        self.set_break(self.canonic(file), int(line))
+                self.set_breakpoints(command.get("breakpoints", {}))
+            elif kind == "jump":
+                self._jump(command.get("file", ""), int(command.get("line", 0)))
             elif kind == "closed":
                 os._exit(0)  # the IDE has gone
             elif kind in ("continue", "step", "next", "return", "until"):
@@ -366,6 +391,35 @@ class Debugger(bdb.Bdb):
         self.consoles = {}
         self.last_running = None
         self.channel.send(event="running")
+
+    def _send_paused(self):
+        self.channel.send(event="paused", **self._paused, stack=self._stack_info(), selected=self.selected,
+                          locals=self._locals(), watches=self._watch_values())
+
+    def _jump(self, file, line):
+        """Set Next Statement: the paused function goes on from another of its lines."""
+        frame = self.frames[-1][0]
+        if not self._at_line:
+            problem = ("after an error the program can't go on from another line" if self.post_mortem_mode
+                       else "the program can only go on from another line when it's paused at one")
+        elif self.canonic(file) != self.canonic(frame.f_code.co_filename):
+            problem = f"it has to be in {frame.f_code.co_name}, where the program is paused"
+        else:
+            try:
+                with warnings.catch_warnings(record=True) as warned:
+                    warnings.simplefilter("always")
+                    frame.f_lineno = line  # (allowed here, in the trace function's own frame event)
+            except ValueError as error:
+                problem = str(error)
+            else:
+                self.frames[-1] = (frame, line)
+                self.selected = len(self.frames) - 1
+                self._paused["changed_line"] = None
+                self._send_paused()
+                for warning in warned:  # e.g. a variable skipped over is None (Python 3.13+)
+                    self.channel.send(event="note", text=f"Going on from line {line}: {warning.message}.")
+                return
+        self.channel.send(event="note", text=f"Can't go on from line {line}: {problem}.")
 
     def _stack_info(self):
         return [{"file": frame.f_code.co_filename, "line": line, "function": frame.f_code.co_name}
@@ -463,6 +517,48 @@ WATCH = "#watch"  # a path starting [WATCH, index] is a watch's value, or its pa
 
 class OutOfContext(Exception):
     """A watch asked for where it doesn't apply."""
+
+
+class BreakCondition:
+    """A breakpoint's condition and hit count, from the IDE: {line, condition (an expression,
+    "" for none), hit_mode ("" for none, "=" for the nth hit only, ">=" from the nth hit on,
+    "%" every nth hit), hits (n)}. Hits are counted when the condition is true (or there's none)."""
+
+    def __init__(self, spec):
+        self.spec = spec
+        self.condition = spec.get("condition", "")
+        self.mode = spec.get("hit_mode", "")
+        self.wanted = max(1, int(spec.get("hits") or 1))
+        self.hits = 0
+        try:
+            self.code = compile(self.condition, "<condition>", "eval") if self.condition else None
+        except SyntaxError:
+            self.code = None
+            self.problem = f"the breakpoint's condition isn't an expression Python can read: {self.condition}"
+        else:
+            self.problem = ""
+
+    def check(self, frame, extra_names):
+        """(Whether to stop, why)."""
+        if self.problem:
+            return True, self.problem[0].upper() + self.problem[1:]
+        if self.code is not None:
+            try:
+                if not eval(self.code, frame.f_globals, FrameScope(frame, extra_names())):
+                    return False, ""
+            except Exception as error:  # noqa: BLE001 - stop and say, as the condition is wrong
+                return True, f"The breakpoint's condition {self.condition} failed: {type(error).__name__}: {error}"
+        self.hits += 1
+        if self.mode == "=" and self.hits != self.wanted:
+            return False, ""
+        if self.mode == ">=" and self.hits < self.wanted:
+            return False, ""
+        if self.mode == "%" and self.hits % self.wanted:
+            return False, ""
+        said = [f"{self.condition} is true"] if self.code is not None else []
+        if self.mode:
+            said.append(f"hit {self.hits} time{'s' * (self.hits != 1)}")
+        return True, ", ".join(said)
 
 
 class Watch:
@@ -567,6 +663,8 @@ def start(channel, folder, settings):
     _debugger.break_on_errors = settings.get("break_on_errors", True)
     _debugger.watches = [Watch(w, _debugger.folder) for w in settings.get("watches", [])]
     _debugger.set_breakpoints(settings.get("breakpoints", {}))
+    if settings.get("step"):
+        _debugger.pause_at_next_event()  # F10 or F11 to start: paused as the first event (Form_load) starts
     return _debugger
 
 
@@ -597,12 +695,13 @@ def tick():
         _debugger.channel.send(event="watch_values", watches=values)
 
 
-def event_failed(error):
-    """An event handler raised error: with the IDE debugging, break there. Returns whether it did."""
+def event_failed(error, starting=False):
+    """An event handler raised error (or with starting, the program as it started): with the
+    IDE debugging, break there. Returns whether it did."""
     if _debugger is None or not _debugger.break_on_errors:
         return False
     traceback.print_exception(error)
     sys.stderr.flush()
-    _debugger.post_mortem(error)
+    _debugger.post_mortem(error, starting=starting)
     return True
 

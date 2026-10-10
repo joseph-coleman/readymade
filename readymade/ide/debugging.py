@@ -35,6 +35,7 @@ class DebugSession:
         self.prompt = None  # while the program waits for input(): its prompt
         self.paused = None  # while the program is paused: what it said ({reason, message, stack, stepping, ...})
         self.selected = 0  # the call stack frame chosen (0 is the outermost)
+        self._said_ends = False
         threading.Thread(target=self._serve, daemon=True).start()
 
     def _serve(self):
@@ -106,6 +107,8 @@ class DebugSession:
             values = message.get("watches", [])
             if [v["name"] for v in values] == [w["expression"] for w in watches]:  # (not from before a change)
                 self.app.watches_panel.show(watches, values)
+        elif event == "note":  # e.g. why Set Next Statement couldn't
+            self.app.immediate.write(f"--- {message.get('text', '')} ---\n")
         elif event == "quick":
             QuickWatch(self.app, message.get("info", {}))
 
@@ -126,6 +129,9 @@ class DebugSession:
             editor.code.show_error(self.where()["line"], message.get("message", ""))
         if editor is not None and message.get("changed_line"):
             editor.code.show_changed(message["changed_line"])
+        if message.get("ends") and not self._said_ends:
+            self._said_ends = True
+            app.immediate.write("--- The program failed as it started, so it can't go on: Continue or End ends it. ---\n")
         app.root.deiconify()
         app.root.lift()  # (the program's window was in front)
 
@@ -340,3 +346,76 @@ class QuickWatch(tk.Toplevel):
         ttk.Button(buttons, text="Close", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
         self.bind("<Escape>", lambda e: self.destroy())
         self.focus_set()
+
+
+# ----- breakpoint conditions -----
+
+HIT_MODES = (("", "Always"), ("=", "When the hit count is"), (">=", "When the hit count is at least"),
+             ("%", "When the hit count is a multiple of"))
+
+
+class BreakpointDialog(tk.Toplevel):
+    """Breakpoint Condition: stop at a breakpoint only when an expression is true, and/or on
+    some of the times it's reached (counted when the condition is true). on_ok(settings)."""
+
+    def __init__(self, app, line, settings, on_ok):
+        super().__init__(app.root)
+        self.on_ok = on_ok
+        self.title("Breakpoint Condition")
+        self.transient(app.root)
+        self.resizable(False, False)
+        self.condition = tk.StringVar(self, settings.get("condition", ""))
+        labels = dict(HIT_MODES)
+        self.mode = tk.StringVar(self, labels.get(settings.get("hit_mode", ""), labels[""]))
+        self.hits = tk.StringVar(self, str(settings.get("hits") or 1))
+
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(body, text=f"Stop at line {line}...").grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(body, text="When this is true:").grid(row=1, column=0, sticky="w", pady=(8, 4))
+        entry = ttk.Entry(body, textvariable=self.condition, width=40)
+        entry.grid(row=1, column=1, columnspan=2, sticky="we", padx=(8, 0), pady=(8, 4))
+        ttk.Label(body, text="An expression, like total > 100. Empty: whenever it's reached.",
+                  style="Note.TLabel").grid(row=2, column=1, columnspan=2, sticky="w", padx=(8, 0))
+        ttk.Label(body, text="Hit count:").grid(row=3, column=0, sticky="w", pady=(8, 4))
+        ttk.Combobox(body, textvariable=self.mode, values=[label for _, label in HIT_MODES], state="readonly",
+                     width=32).grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(8, 4))
+        self.count = ttk.Spinbox(body, from_=1, to=1_000_000, textvariable=self.hits, width=7)
+        self.count.grid(row=3, column=2, sticky="w", padx=(4, 0), pady=(8, 4))
+        self.mode.trace_add("write", lambda *_: self._mode_chosen())
+        self._mode_chosen()
+        self.note = ttk.Label(body, style="Note.TLabel", wraplength=420)
+        self.note.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        buttons = ttk.Frame(body)
+        buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
+        self.bind("<Return>", lambda e: self.ok())
+        self.bind("<Escape>", lambda e: self.destroy())
+        entry.focus_set()
+
+    def _mode_chosen(self):
+        self.count.configure(state="disabled" if self.hit_mode() == "" else "normal")
+
+    def hit_mode(self):
+        return next(mode for mode, label in HIT_MODES if label == self.mode.get())
+
+    def settings(self):
+        mode = self.hit_mode()
+        try:
+            hits = max(1, int(self.hits.get()))
+        except ValueError:
+            hits = 1
+        return {"condition": self.condition.get().strip(), "hit_mode": mode, "hits": hits if mode else 0}
+
+    def ok(self):
+        settings = self.settings()
+        if settings["condition"]:
+            try:
+                compile(settings["condition"], "<condition>", "eval")
+            except SyntaxError:
+                self.note.configure(text=f"{settings['condition']} isn't an expression Python can read.")
+                self.bell()
+                return
+        self.destroy()
+        self.on_ok(settings)

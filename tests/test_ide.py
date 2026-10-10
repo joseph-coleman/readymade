@@ -420,10 +420,14 @@ def test_startup_errors_in_modules_open_the_module(app):
     write_code(app, "Form1", "from readymade import Form\nimport helpers\n\n\nclass Form1(Form):\n"
                "    def Form_load(self):\n        self.text = helpers.greeting()\n")
     app.run()
-    wait_for_exit(app)
+    assert wait_for(app, lambda: app.in_break_mode)  # paused at the error in Form_load (see test_debugging.py)
     module = next(e for e in app.editors if e.name == "helpers")
     assert app.documents.select() == str(module.frame)
     assert module.code.error_bar.cget("text") == "Line 2: NameError: name 'GREETING' is not defined"
+    app.run()  # continue: the rest of Form_load is skipped
+    assert wait_for(app, lambda: not app.in_break_mode)
+    app.immediate_line("form.close()")
+    assert "--- Ended (exit code 0) ---" in wait_for_exit(app)
 
 
 def test_menu_editor_builds_a_menu(app):

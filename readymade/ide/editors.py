@@ -391,6 +391,7 @@ class FormEditor:
         self.code.replace_source(codegen.rename_control(source, obj, new, events))
         self.surface.rename(obj, new)
         self.selected = new
+        self.properties.renamed(obj, new)
         self.properties.refresh_objects()
         self.code.refresh_objects()
         return new

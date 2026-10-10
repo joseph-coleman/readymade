@@ -4,9 +4,11 @@ Ideas and gaps noted along the way, roughly by area.
 
 ## Runtime
 - **Menu item `visible`**: Tk can't hide a menu entry; supporting it means rebuilding the menu.
-- **Break mode follow-ups**: edit and continue (VB let you change code while paused; Python can't swap a running function's code, so today edits take effect next run); Set Next Statement (bdb can jump lines within a function); start in step mode (F11 when stopped, breaking at the first event); conditional breakpoints and hit counts (bdb has both); breaking in threads started with `in_thread` (tracing is only on the program's main thread); errors outside event handlers (at startup) still just end the program.
+- **Break mode follow-ups**: edit and continue (VB let you change code while paused; Python can't swap a running function's code, so today edits take effect next run); dragging the yellow arrow to set the next statement (today Ctrl+Shift+F10 or the line numbers' right-click menu); breaking in threads started with `in_thread` (tracing is only on the program's main thread); logpoints (a breakpoint that prints a message instead of stopping, as in VS Code).
 
 ## IDE
+- **Project Files**: A project may have extra files associated with it, such as a README or other non-code files.  Should those need to be explicitly added to the project for packaging?  Images get copied to a dedicated subfolder.  That folder's contents are not visible in the IDE.  Having other non-code text files, the README for example, editable and viewable in the IDE could be useful.
+- **Search and Replace**:  The ability to search for a term in a code file and optionally replace occurrences of it.
 - **Copy and paste**: optionally bring the controls' event handlers along (renamed to match), which VB never did. Also a selection box inside a Frame (today it only works on the form itself; Ctrl+click works anywhere).
 - **Project Explorer**: send removed forms and modules to the Recycle Bin / Trash instead of deleting them (`send2trash`); rename a module; when a form is removed, point out code that still uses it (`forms.Name`, imports).
 - **Environments**: create conda/mamba environments (existing ones work via Choose Python Interpreter).

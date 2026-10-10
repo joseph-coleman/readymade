@@ -32,12 +32,17 @@ from readymade.ide.panels import (CallStackPanel, HelpPanel, ImmediateWindow, Lo
                                   ProjectExplorer, PropertiesPanel, Toolbox, WatchesPanel)
 from readymade.ide import options
 from readymade.ide.tooldialog import formatting_dialog, linting_dialog
-from readymade.ide.debugging import STEPS, DebugSession, WatchDialog, function_at
+from readymade.ide.debugging import STEPS, BreakpointDialog, DebugSession, WatchDialog, function_at
 from readymade.ide.tracebacks import TracebackWatcher
 from readymade.project import Project, ProjectError, describe_python, find_pythons, requirement_name
 
 _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containing readymade/
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")  # terminal color and cursor codes
+
+
+# Step Into is F11, as in VS Code; macOS takes F11 for Show Desktop, so a Mac's menu shows
+# ⌘F11 (both work everywhere, and F11 does on a Mac with that system shortcut turned off).
+STEP_INTO = "Ctrl+F11" if sys.platform == "darwin" else "F11"
 
 
 class App:
@@ -130,7 +135,9 @@ class App:
             ("Ctrl+Shift+F9", self.clear_breakpoints),
             ("F10", lambda: self.debug_go("next")),
             ("Ctrl+F10", self.run_to_cursor),
+            ("Ctrl+Shift+F10", self.set_next_statement),
             ("F11", lambda: self.debug_go("step")),
+            ("Ctrl+F11", lambda: self.debug_go("step")),  # ⌘F11: macOS keeps F11 for Show Desktop
             ("Shift+F11", lambda: self.debug_go("return")),
             ("Shift+F9", self.quick_watch),
             ("F7", lambda: self.form and self.form.show_code()),
@@ -201,13 +208,15 @@ class App:
         debug = tk.Menu(menubar, tearoff=False, postcommand=lambda: self._update_debug_menu(debug))
         for item in (
             ("Continue", "F5", lambda: self.debug_go("continue")),
-            ("Step Into", "F11", lambda: self.debug_go("step")),
+            ("Step Into", STEP_INTO, lambda: self.debug_go("step")),
             ("Step Over", "F10", lambda: self.debug_go("next")),
             ("Step Out", "Shift+F11", lambda: self.debug_go("return")),
             ("Run to Cursor", "Ctrl+F10", self.run_to_cursor),
+            ("Set Next Statement", "Ctrl+Shift+F10", self.set_next_statement),
             ("Pause", "F6", self.pause),
             None,
             ("Toggle Breakpoint", "F9", self.toggle_breakpoint),
+            ("Breakpoint Condition...", None, self.breakpoint_condition),
             ("Clear All Breakpoints", "Ctrl+Shift+F9", self.clear_breakpoints),
             None,
             ("Add Watch...", None, self.add_watch),
@@ -730,6 +739,7 @@ class App:
             editor.code.on_change = lambda: self.linter.check(editor)  # soon after typing stops
             self.linter.check(editor, saved=True)
             editor.code.on_breakpoints = self.breakpoints_changed
+            editor.code.on_gutter_menu = lambda line, e, editor=editor: self._gutter_menu(editor, line, e)
             editor.code.set_breakpoints(self._saved_breakpoints().get(self._relative(editor.code_path), []))
 
     def _current_editor(self):
@@ -806,7 +816,8 @@ class App:
 
     # ----- running -----
 
-    def run(self):
+    def run(self, step=False):
+        """F5: run the program (with step, pausing as its first event starts), or continue it."""
         if self.in_break_mode:
             self.debug_go("continue")  # F5 continues a paused program
             return
@@ -827,7 +838,9 @@ class App:
         self.immediate.write(f"--- Running {self.project.name} ({startup}, Python: {where}). Type Python below to inspect it. ---\n")
         self.session = DebugSession(self)  # Immediate lines, input() and the debugger go through it
         self.session.send(cmd="start", breakpoints=self._breakpoint_files(), watches=self.watches(),
-                          break_on_errors=options.break_on_errors())
+                          break_on_errors=options.break_on_errors(), step=step)
+        if step:
+            self.immediate.write("--- Stepping: the program pauses as its first event (like Form_load) starts. ---\n")
         self._start([str(python), "-m", "readymade.run", "--debug", str(self.session.port), "--startup", startup,
                      str(folder)], interactive=True)
         self._watcher = TracebackWatcher(folder, self.show_error)
@@ -968,6 +981,9 @@ class App:
     def debug_go(self, how, **extra):
         """Continue (F5), Step Into (F11), Step Over (F10) or Step Out (Shift+F11) while paused."""
         session = self.session
+        if session is None and how in ("step", "next") and self.project is not None:
+            self.run(step=True)  # F10 or F11 starts the program, stepping (as VB's F8 did)
+            return
         if session is None or session.paused is None:
             return
         if how in STEPS and not session.can_step():
@@ -991,8 +1007,10 @@ class App:
     def _update_debug_menu(self, menu):
         paused = self.in_break_mode and self.session is not None and self.session.paused is not None
         stepping = paused and self.session.can_step()
-        for label, on in (("Continue", paused), ("Step Into", stepping), ("Step Over", stepping),
-                          ("Step Out", stepping), ("Run to Cursor", stepping), ("Quick Watch...", paused),
+        stopped = self.session is None and self.process is None and self.project is not None
+        for label, on in (("Continue", paused), ("Step Into", stepping or stopped), ("Step Over", stepping or stopped),
+                          ("Step Out", stepping), ("Run to Cursor", stepping), ("Set Next Statement", stepping),
+                          ("Quick Watch...", paused),
                           ("Pause", self.session is not None and not self.in_break_mode)):
             menu.entryconfigure(label, state=tk.NORMAL if on else tk.DISABLED)
 
@@ -1008,6 +1026,48 @@ class App:
         editor = self._code_editor()
         if editor is not None:
             editor.code.toggle_breakpoint()
+
+    def breakpoint_condition(self, editor=None, line=None):
+        """Debug > Breakpoint Condition: a condition and hit count for the breakpoint on a line
+        (the cursor's), which gets one if it hasn't."""
+        editor = editor or self._code_editor()
+        if editor is None or editor.code.on_breakpoints is None:
+            return None
+        if line is None:
+            line = int(editor.code.text.index("insert").split(".")[0])
+        if not editor.code.can_break_at(line):
+            self.root.bell()
+            return None
+        return BreakpointDialog(self, line, editor.code.breakpoint_settings(line) or {},
+                                lambda settings: editor.code.set_breakpoint_settings(line, settings))
+
+    def set_next_statement(self, editor=None, line=None):
+        """Ctrl+Shift+F10, while paused: go on from another line (the cursor's) of the paused function."""
+        editor = editor or self._code_editor()
+        if editor is None or self.session is None or self.session.paused is None:
+            return
+        if line is None:
+            line = int(editor.code.text.index("insert").split(".")[0])
+        self.session.send(cmd="jump", file=str(editor.code_path), line=line)
+
+    def _gutter_menu(self, editor, line, e):
+        """A right-click in the line numbers."""
+        menu = getattr(self, "_gutter_popup", None)
+        if menu is None:
+            menu = self._gutter_popup = tk.Menu(self.root, tearoff=False)
+        menu.delete(0, tk.END)
+        has = editor.code.breakpoint_settings(line) is not None
+        menu.add_command(label="Remove Breakpoint" if has else "Add Breakpoint",
+                         command=lambda: editor.code.toggle_breakpoint(line))
+        menu.add_command(label="Breakpoint Condition...", command=lambda: self.breakpoint_condition(editor, line))
+        if self.session is not None and self.session.paused is not None and self.session.can_step():
+            menu.add_separator()
+            menu.add_command(label="Run to Here",
+                             command=lambda: self.debug_go("until", file=str(editor.code_path), line=line))
+            menu.add_command(label="Set Next Statement", command=lambda: self.set_next_statement(editor, line))
+        options.color_menus(menu, options.theme().chrome)
+        menu.tk_popup(e.x_root, e.y_root)
+        return menu
 
     def clear_breakpoints(self):
         for editor in self.editors:
@@ -1029,7 +1089,7 @@ class App:
         found = dict(self._saved_breakpoints())
         for editor in self.editors:
             if editor.code.on_breakpoints is not None:
-                found[self._relative(editor.code_path)] = editor.code.breakpoint_lines()
+                found[self._relative(editor.code_path)] = editor.code.breakpoints()
         return {name: lines for name, lines in found.items() if lines and (self.project.folder / name).exists()}
 
     def _saved_breakpoints(self):

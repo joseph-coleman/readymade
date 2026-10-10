@@ -74,14 +74,21 @@ def main(argv=None):
         # The IDE starts with its breakpoints, before any form loads (Form_load can have them too).
         settings = channel.receive(timeout=30) or {}
         debugger.start(channel, project.folder, settings if settings.get("cmd") == "start" else {})
-    form = getattr(forms, startup)
-    if channel is not None:
-        immediate = remote.Immediate(form, channel, handle=debugger.handle, tick=debugger.tick)
-        debugger.current().extra_names = immediate.names  # paused, Immediate lines can use the forms too
-        immediate.start(app_root())
-    elif args.immediate:
-        attach_immediate(form)
-    form.show()
+    try:
+        form = getattr(forms, startup)
+        if channel is not None:
+            immediate = remote.Immediate(form, channel, handle=debugger.handle, tick=debugger.tick)
+            debugger.current().extra_names = immediate.names  # paused, Immediate lines can use the forms too
+            immediate.start(app_root())
+        elif args.immediate:
+            attach_immediate(form)
+        form.show()
+    except Exception as error:
+        # An error as the program starts (in a module's own code, say): debugging, break there
+        # first. Either way the program can't go on.
+        if channel is not None and debugger.event_failed(error, starting=True):
+            raise SystemExit(1) from None
+        raise
     main_loop()
 
 

@@ -344,6 +344,13 @@ class PropertiesPanel(ttk.Frame):
         for prop in list(self._rows):
             self.commit(prop)
 
+    def renamed(self, old, new):
+        """A control was renamed (by this panel or not): its rows now belong to the new name,
+        or a new control given the old name would later get their values."""
+        if self.current == old:
+            self.current = new
+            self.objects.set(new)
+
     def update_values(self):
         """Show the current values, e.g. after a control is dragged."""
         if self.app is None or self.current is None:

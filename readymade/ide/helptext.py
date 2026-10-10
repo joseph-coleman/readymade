@@ -124,6 +124,7 @@ def home(platform=sys.platform):
     ctrl = "\u2318" if mac else "Ctrl"
     redo = "Ctrl+Shift+Z" if mac else "Ctrl+Y"
     complete = "\u2303Space" if mac else "Ctrl+Space"  # the Control key on a Mac too
+    step_into = keys("Ctrl+F11") if mac else "F11"  # (macOS keeps F11 for Show Desktop)
     return Topic("readymade", "Visual Basic style forms for Python", "\n".join([
         "Press F1 for help on whatever you're working on: a name in the code, the control",
         "selected in the designer, or a property in the Properties panel.",
@@ -155,8 +156,12 @@ def home(platform=sys.platform):
         "  can turn that off). F9 or a click in the line numbers sets a breakpoint.",
         "  While paused: Locals shows the function's variables, Call Stack how it got there, and",
         "  the Immediate window runs Python in that function. F5 continues, F10 steps over,",
-        f"  F11 steps into, Shift+F11 steps out, {keys('Ctrl+F10')} runs to the cursor; F6 pauses at the",
+        f"  {step_into} steps into, {keys('Shift+F11')} steps out, {keys('Ctrl+F10')} runs to the cursor; F6 pauses at the",
         "  next event. After an error, Continue skips the rest of that event.",
+        f"  {keys('Ctrl+Shift+F10')} (Set Next Statement) goes on from the cursor's line instead, in the",
+        f"  same function. F10 or {step_into} with nothing running starts it, pausing as its first event starts.",
+        "  Right-click a line number for a breakpoint's condition (stop when total > 100) or hit",
+        "  count (stop on the 5th time); those breakpoints show a +.",
         "  Debug > Add Watch: an expression to watch in a function or file, which can break the",
         "  program when it becomes true or changes. Shift+F9 shows a value at once.",
         "  View > Watches shows them while the program runs too; a function's watch shows its",

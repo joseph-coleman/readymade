@@ -275,3 +275,85 @@ def test_expanding_a_watch(tmp_path, shop):
     assert [(c["name"], c["value"], c["path"]) for c in children["items"]] == [("'n'", "[3]", ["#watch", 0, "'n'"])]
     quick = next(m for m in ide.told if m["event"] == "quick")
     assert quick["info"]["value"] == "2"
+
+
+# ----- breakpoint conditions, hit counts, Set Next Statement, starting -----
+
+def test_a_breakpoint_with_a_condition(tmp_path, shop):
+    module, path = shop
+    ide = PretendIDE()
+    dbg = make(tmp_path, ide)
+    dbg.set_breakpoints({path: [{"line": LINE["count += price"], "condition": "price > 4"}]})
+    module.total([1, 5, 2, 9])
+    assert [names(s)["price"] for s in ide.paused()] == ["5", "9"]
+    assert ide.paused()[0]["message"] == "price > 4 is true"
+
+
+def test_hit_counts(tmp_path, shop):
+    module, path = shop
+    for mode, hits, wanted in (("=", 3, ["3"]), (">=", 3, ["3", "4", "5"]), ("%", 2, ["2", "4"])):
+        ide = PretendIDE()
+        dbg = make(tmp_path, ide)
+        dbg.set_breakpoints({path: [{"line": LINE["count += price"], "hit_mode": mode, "hits": hits}]})
+        module.total([1, 2, 3, 4, 5])
+        assert [names(s)["price"] for s in ide.paused()] == wanted, mode
+        sys.settrace(None)
+    assert ide.paused()[0]["message"] == "hit 2 times"
+
+
+def test_hit_counts_survive_other_breakpoint_changes(tmp_path, shop):
+    module, path = shop
+    counted = {"line": LINE["count += price"], "hit_mode": "=", "hits": 3}
+    ide = PretendIDE()
+    dbg = make(tmp_path, ide)
+    dbg.set_breakpoints({path: [counted]})
+    module.total([1, 2])  # two hits
+    dbg.set_breakpoints({path: [counted, LINE["return result"]]})  # (another one added)
+    module.total([3])  # the third
+    assert [names(s)["price"] for s in ide.paused()] == ["3"]
+
+
+def test_a_broken_condition_stops_and_says(tmp_path, shop):
+    module, path = shop
+    ide = PretendIDE()
+    dbg = make(tmp_path, ide)
+    dbg.set_breakpoints({path: [{"line": LINE["count = 0"], "condition": "nonsense > 1"}]})
+    module.total([1])
+    assert ide.paused()[0]["message"] == ("The breakpoint's condition nonsense > 1 failed: "
+                                          "NameError: name 'nonsense' is not defined")
+
+
+def test_set_next_statement(tmp_path, shop):
+    module, path = shop
+    ide = PretendIDE({"cmd": "jump", "file": path, "line": LINE["return count"]},  # skip the loop
+                     {"cmd": "jump", "file": path, "line": LINE["tax = 2"]},  # another function
+                     "continue")
+    dbg = make(tmp_path, ide)
+    dbg.set_breakpoints({path: [LINE["for price in prices:"]]})
+    assert module.total([1, 2]) == 0
+    first, moved = ide.paused()
+    assert where(moved) == ("total", LINE["return count"]) and moved["reason"] == first["reason"]
+    notes = [m["text"] for m in ide.told if m["event"] == "note"]
+    assert notes[-1].startswith(f"Can't go on from line {LINE['tax = 2']}: ")
+
+
+def test_no_set_next_statement_after_an_error(tmp_path, shop):
+    module, path = shop
+    ide = PretendIDE({"cmd": "jump", "file": path, "line": LINE['name = order["name"]']}, "continue")
+    dbg = make(tmp_path, ide)
+    try:
+        module.broken({"name": "tea"})
+    except KeyError as error:
+        dbg.post_mortem(error, starting=True)
+    assert ide.paused()[0]["ends"] is True
+    note, = [m for m in ide.told if m["event"] == "note"]
+    assert "after an error" in note["text"]
+
+
+def test_starting_in_step_mode(tmp_path, shop):
+    module, path = shop
+    ide = PretendIDE()
+    dbg = debugger.start(ide, tmp_path, {"step": True})
+    dbg.break_into_event()  # the first event
+    module.total([1])
+    assert where(ide.paused()[0]) == ("total", LINE["count = 0"])

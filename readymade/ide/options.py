@@ -96,9 +96,9 @@ def apply_chrome(app, chrome):
         surface = getattr(editor, "surface", None)
         if surface is not None:
             surface.apply_chrome(chrome)
-    _color_menus(app.root.nametowidget(app.root["menu"]), chrome)
+    color_menus(app.root.nametowidget(app.root["menu"]), chrome)
     for menu in (app.explorer.menu, app.explorer.python_menu, app.explorer.libraries_menu):
-        _color_menus(menu, chrome)
+        color_menus(menu, chrome)
     dark_title_bar(app.root, chrome is not None)
 
 
@@ -160,7 +160,7 @@ def _create_dark_theme(style, c, light):
 _usual_menu_colors: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()  # menu -> its colors before Dark
 
 
-def _color_menus(menu, chrome):
+def color_menus(menu, chrome):
     """Menus, where the system lets Tk color them (Linux; Windows and macOS draw their own)."""
     if menu not in _usual_menu_colors:
         _usual_menu_colors[menu] = {key: menu.cget(key) for key in
@@ -172,7 +172,7 @@ def _color_menus(menu, chrome):
     end = menu.index("end")
     for index in range(end + 1 if end is not None else 0):
         if menu.type(index) == "cascade":
-            _color_menus(menu.nametowidget(menu.entrycget(index, "menu")), chrome)
+            color_menus(menu.nametowidget(menu.entrycget(index, "menu")), chrome)
 
 
 def dark_title_bar(window, dark):

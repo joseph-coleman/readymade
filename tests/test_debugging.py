@@ -298,3 +298,87 @@ def test_watches_while_running(app, shop):
     app.keep_debug_windows.set(False)  # View > Debug Windows, unticked
     app._debug_windows_toggled()
     assert str(app.debug_tabs) not in [str(pane) for pane in app.bottom_area.panes()]
+
+
+# ----- starting errors, stepping from the start, Set Next Statement, breakpoint conditions -----
+
+def test_an_error_as_the_program_starts(app):
+    from test_ide import write_code
+
+    app.project.add_module("prices")
+    write_code(app, "prices", "TAX = 10\nRATE = TAX / MISSING\n")
+    write_code(app, "Form1", "from readymade import Form\nimport prices\n\n\nclass Form1(Form):\n    pass\n")
+    app.run()
+    assert wait_for(app, lambda: app.in_break_mode)
+    module = next(e for e in app.editors if e.name == "prices")
+    assert module.code.paused_line() == 2
+    assert app.locals.value_of("TAX") == ("10", "int")  # the module's own names
+    assert "it can't go on: Continue or End ends it" in output(app)
+    app.run()
+    assert "--- Ended (exit code 1) ---" in wait_for_exit(app)
+
+
+def test_f11_starts_stepping(app, shop):
+    app.debug_go("step")  # F11, with nothing running
+    assert paused_at(app, LINES["price = 100"])  # Form_load's first line
+    app.debug_go("next")
+    assert paused_at(app, LINES["price = add_tax(price)"])
+    assert "--- Ended (exit code 0) ---" in finish(app)
+
+
+def test_set_next_statement(app, shop):
+    shop.toggle_breakpoint(LINES["price = 100"])
+    app.run()
+    assert paused_at(app, LINES["price = 100"])
+    shop.text.mark_set("insert", f"{LINES['tax = price // 10']}.0")  # in another function: refused
+    app.set_next_statement()
+    assert wait_for(app, lambda: "Can't go on from line" in output(app))
+    shop.text.mark_set("insert", f"{LINES['self.text = str(price)']}.0")
+    app.set_next_statement()  # skip the rest: price is never set
+    assert paused_at(app, LINES["self.text = str(price)"])
+    assert app.in_break_mode and app.session.paused is not None
+    app.run()
+    assert wait_for(app, lambda: not app.in_break_mode)
+    app.immediate_line("? form.text")
+    assert wait_for(app, lambda: "\nNone\n" in output(app))  # (Python 3.13: a variable skipped over is None)
+    assert "--- Ended (exit code 0) ---" in finish(app)
+
+
+def test_breakpoint_conditions(app, shop):
+    from readymade.ide import debugging
+
+    line = LINES["tax = price // 10"]
+    dialog = app.breakpoint_condition(app.form, line)
+    dialog.condition.set("price >")
+    dialog.ok()
+    assert "isn't an expression" in dialog.note.cget("text") and shop.breakpoint_settings(line) is None
+    dialog.condition.set("price > 50")
+    dialog.mode.set(dict(debugging.HIT_MODES)[">="])
+    dialog.hits.set("1")
+    dialog.ok()
+    assert shop.breakpoints() == [{"line": line, "condition": "price > 50", "hit_mode": ">=", "hits": 1}]
+    assert app.project.local_settings()["breakpoints"] == {"Form1.py": shop.breakpoints()}
+    app.root.update()
+    assert len(shop.gutter.find_withtag("breakpoint")) == 3  # a dot with a + (two lines)
+    menu = app._gutter_menu(app.form, line, type("Click", (), {"x_root": 0, "y_root": 0})())
+    menu.unpost()
+    assert menu.entrycget(0, "label") == "Remove Breakpoint"
+    app.run()
+    assert paused_at(app, line)
+    assert app.session.paused["message"] == "price > 50 is true, hit 1 time"
+    menu = app._gutter_menu(app.form, line, type("Click", (), {"x_root": 0, "y_root": 0})())
+    menu.unpost()
+    labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) != "separator"]
+    assert labels == ["Remove Breakpoint", "Breakpoint Condition...", "Run to Here", "Set Next Statement"]
+    assert "--- Ended (exit code 0) ---" in finish(app)
+    app.close_document(app.form)
+    code = app.open_form("Form1", "code").code  # remembered, condition and all
+    assert code.breakpoints() == [{"line": line, "condition": "price > 50", "hit_mode": ">=", "hits": 1}]
+
+
+def test_step_into_has_a_key_a_mac_leaves_alone(app):
+    from readymade import menus
+
+    for shortcut in ("F11", "Ctrl+F11"):  # macOS takes F11 for Show Desktop; Ctrl is ⌘ there
+        assert app.root.bind(menus.shortcut_sequence(shortcut))
+    assert menus.accelerator("Ctrl+F11", platform="darwin") == "Command-F11"

@@ -304,3 +304,12 @@ def test_textbox_rows_in_the_properties_panel(app):
     assert all(p in rows for p in ("readonly", "password", "maxlength", "tooltip", "tag"))
     app.form.set_property("TextBox1", "maxlength", "8")
     assert app.form.design.control("TextBox1")["maxlength"] == 8
+
+
+def test_renaming_outside_the_panel_keeps_the_panel_on_the_control(app):
+    form = app.form
+    form.add_control("Button", 352, 40, 152, 28)
+    form.set_property(form.selected, "name", "btnFirst")  # not through the panel's rows
+    assert app.properties.current == "btnFirst"
+    form.add_control("Button", 352, 76, 152, 28)  # gets the free name Button1
+    assert (form.design.control("Button1")["top"], form.design.control("btnFirst")["top"]) == (76, 40)

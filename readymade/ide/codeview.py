@@ -184,7 +184,10 @@ class CodeView(ttk.Frame):
         self._problems = {}  # tool name -> [lint.Problem]
         self._problem_tags = {}  # Text tag -> the Problem it underlines
         self.on_breakpoints = None  # called when breakpoints are added or removed (None: none allowed here)
-        self._breakpoints = []  # Text marks at the start of lines with breakpoints, so they move with edits
+        # Text marks at the start of lines with breakpoints, so they move with edits -> the breakpoint's
+        # condition and hit count, if it has them ({condition, hit_mode, hits}, see readymade.debugger.BreakCondition).
+        self._breakpoints = {}
+        self.on_gutter_menu = None  # on_gutter_menu(line, event): a right-click in the line numbers
         self._next_breakpoint = 0
 
         bar = ttk.Frame(self, padding=(0, 2))
@@ -213,6 +216,8 @@ class CodeView(ttk.Frame):
         self.gutter = tk.Canvas(body, width=1, highlightthickness=0, bd=0)
         self.gutter.pack(side=tk.LEFT, fill=tk.Y)
         self.gutter.bind("<Button-1>", self._gutter_click)  # sets or clears a breakpoint, as F9 does
+        for sequence in menus.context_clicks(self.gutter):
+            self.gutter.bind(sequence, self._gutter_menu)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         # Messages for problems on the cursor's line, under the code.
         self.problem_bar = tk.Label(self, anchor="w", padx=6, pady=1)
@@ -603,6 +608,7 @@ class CodeView(ttk.Frame):
         current = int(self.text.index("insert").split(".")[0])
         problem_lines = set(self._problem_lines().values())
         breakpoints = set(self.breakpoint_lines())
+        conditional = {item["line"] for item in self.breakpoints() if isinstance(item, dict)}
         self.text.tag_remove("breakpoint", "1.0", tk.END)
         for n in breakpoints:
             self.text.tag_add("breakpoint", f"{n}.0", f"{n}.0 lineend +1c")
@@ -617,6 +623,9 @@ class CodeView(ttk.Frame):
             if n in breakpoints:
                 self.gutter.create_oval(2, middle - 5, 12, middle + 5, fill=self.theme.breakpoint, outline="",
                                         tags="breakpoint")
+                if n in conditional:  # a + on it, as Visual Studio marks a condition or hit count
+                    self.gutter.create_line(4, middle, 11, middle, fill="#ffffff", width=2, tags="breakpoint")
+                    self.gutter.create_line(7, middle - 3, 7, middle + 4, fill="#ffffff", width=2, tags="breakpoint")
             if n == paused:
                 self.gutter.create_polygon(2, middle - 4, 8, middle - 4, 8, middle - 7, 14, middle, 8, middle + 7,
                                            8, middle + 4, 2, middle + 4, fill=self.theme.arrow,
@@ -757,22 +766,63 @@ class CodeView(ttk.Frame):
         code = self.text.get(f"{line}.0", f"{line}.0 lineend").strip()
         return bool(code) and not code.startswith("#")
 
-    def set_breakpoints(self, lines):
-        """Put breakpoints on these lines (and remove any others), skipping lines that can't have one."""
+    def breakpoints(self):
+        """The breakpoints, in order: a line number, or with a condition or hit count
+        {line, condition, hit_mode, hits}."""
+        found = {}
+        for mark, settings in self._breakpoints.items():
+            line = int(self.text.index(mark).split(".")[0])
+            if line not in found or settings:  # (two on one line, after an edit: the one with settings)
+                found[line] = {"line": line, **settings} if settings else line
+        return [found[line] for line in sorted(found)]
+
+    def breakpoint_settings(self, line):
+        """A breakpoint's {condition, hit_mode, hits} ({} for none), or None if there's no breakpoint."""
+        found = None
+        for mark, settings in self._breakpoints.items():
+            if int(self.text.index(mark).split(".")[0]) == line:
+                found = settings if found is None or settings else found
+        return found
+
+    def set_breakpoints(self, items):
+        """Put breakpoints on these lines (and remove any others), skipping lines that can't have
+        one. An item is a line, or {line, condition, hit_mode, hits}."""
         for mark in self._breakpoints:
             self.text.mark_unset(mark)
-        self._breakpoints = []
-        for line in lines:
+        self._breakpoints = {}
+        for item in items:
+            line = item["line"] if isinstance(item, dict) else item
             if self.can_break_at(line):
-                self._add_breakpoint(line)
+                self._add_breakpoint(line, {k: v for k, v in item.items() if k != "line" and v}
+                                     if isinstance(item, dict) else {})
         self._show_numbers()
 
-    def _add_breakpoint(self, line):
+    def set_breakpoint_settings(self, line, settings):
+        """Give a line's breakpoint (made if needed) a condition and hit count ({} for none).
+        Returns False if the line can't have one."""
+        if self.on_breakpoints is None or not self.can_break_at(line):
+            self.bell()
+            return False
+        self._remove_breakpoints(line)
+        self._add_breakpoint(line, {k: v for k, v in settings.items() if v})
+        self._show_numbers()
+        self.on_breakpoints()
+        return True
+
+    def _add_breakpoint(self, line, settings):
         self._next_breakpoint += 1
         mark = f"breakpoint{self._next_breakpoint}"
         self.text.mark_set(mark, f"{line}.0")
         self.text.mark_gravity(mark, tk.LEFT)
-        self._breakpoints.append(mark)
+        self._breakpoints[mark] = settings
+
+    def _remove_breakpoints(self, line):
+        """Remove the breakpoints on a line. Returns whether there were any."""
+        on_line = [mark for mark in self._breakpoints if int(self.text.index(mark).split(".")[0]) == line]
+        for mark in on_line:
+            self.text.mark_unset(mark)
+            del self._breakpoints[mark]
+        return bool(on_line)
 
     def toggle_breakpoint(self, line=None):
         """F9: set or clear a breakpoint on a line (the cursor's). Returns whether one was set or cleared."""
@@ -781,13 +831,10 @@ class CodeView(ttk.Frame):
         if self.on_breakpoints is None:
             self.bell()  # code from outside the project
             return False
-        on_line = [mark for mark in self._breakpoints if int(self.text.index(mark).split(".")[0]) == line]
-        if on_line:
-            for mark in on_line:
-                self.text.mark_unset(mark)
-                self._breakpoints.remove(mark)
+        if self._remove_breakpoints(line):
+            pass
         elif self.can_break_at(line):
-            self._add_breakpoint(line)
+            self._add_breakpoint(line, {})
         else:
             self.bell()
             return False
@@ -795,11 +842,24 @@ class CodeView(ttk.Frame):
         self.on_breakpoints()
         return True
 
-    def _gutter_click(self, e):
-        index = self.text.index(f"@0,{e.y}")
+    def _gutter_line(self, y):
+        """The line at a height in the line numbers, or None below the last line."""
+        index = self.text.index(f"@0,{y}")
         place = self.text.dlineinfo(index)
-        if place is not None and place[1] <= e.y < place[1] + place[3]:  # (not below the last line)
-            self.toggle_breakpoint(int(index.split(".")[0]))
+        if place is not None and place[1] <= y < place[1] + place[3]:
+            return int(index.split(".")[0])
+        return None
+
+    def _gutter_click(self, e):
+        line = self._gutter_line(e.y)
+        if line is not None:
+            self.toggle_breakpoint(line)
+
+    def _gutter_menu(self, e):
+        line = self._gutter_line(e.y)
+        if line is not None and self.on_gutter_menu is not None:
+            self.on_gutter_menu(line, e)
+        return "break"
 
     def _on_modified(self, _):
         if not self.text.edit_modified():
