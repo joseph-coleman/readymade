@@ -11,7 +11,7 @@ Ideas and gaps noted along the way, roughly by area.
 - **Edit and continue** (tabled): VB let you change code while paused. Python can't swap the code of a function that's running, so today edits take effect next run (a note above the code says so).
 
 ## IDE
-- **Project Files follow-ups**: new files and folders from the Project Explorer; renaming files; noticing files added or changed outside the IDE (today: Project > Refresh); Markdown shown formatted.
+- **Project Files follow-ups**: Markdown shown formatted (a preview beside the text); dragging files into the Project Explorer from the system's file manager.
 - **Search and Replace**:  The ability to search for a term in a code file and optionally replace occurrences of it.
 - **Project Explorer**: when a form is removed, point out code that still uses it (`forms.Name`, imports); rename a form from the Explorer (today: its name in the Properties panel).
 - **Environments**: create conda/mamba environments (existing ones work via Choose Python Interpreter).
@@ -34,14 +34,13 @@ Ideas and gaps noted along the way, roughly by area.
 
 ## Bigger features
 - **Anchor follow-ups**: a visual anchor picker in the Properties panel (four edges to click, as in Visual Studio) instead of the dropdown; a form `minwidth`/`minheight` so anchored controls can't be squeezed together; `dock` (fill an edge of the form, as WinForms' Dock does).
-- **Make EXE options**: one-folder instead of one-file, version details (Windows' file properties); license notices for readymade, Python and the bundled libraries next to the program, for people who give their programs away (MIT and the PSF license ask for the notice to come along). The program's icon is done (Project > Program Icon). (Extra files are bundled: pictures the forms show, and `[tool.readymade] include`; perhaps an Include list in the Project Explorer rather than editing pyproject.toml.) Perhaps a small dialog, with various build options. Options true everywhere (icon, name) belong in `pyproject.toml`'s `[tool.readymade]`; anything tied to one machine (a signing certificate, an interpreter) in `.readymade/local.json`, kept per machine and out of git.
-    - Longer term idea, executables need to be able to be signed. 
+- **Make EXE follow-ups**: signing the program (Windows Authenticode, macOS codesign and notarizing; the certificate is per machine, in `.readymade/local.json`); a Mac app's bundle identifier; an installer (Inno Setup on Windows, a .dmg on the Mac); license notices for libraries that bundle other code of their own (today: each library's own license files).
 - **More controls**: third-party controls from installed libraries appearing in the Toolbox.
 - **Image drawing follow-ups**: flood fill (Pillow's `ImageDraw.floodfill`); mouse coordinates in the picture's pixels when it's scaled (stretch, zoom) or centered; anti-aliased shapes (Pillow draws them jagged; drawing larger and shrinking is the usual trick); undo for paint programs (keep copies of the picture).
 - **Canvas follow-ups**: keyboard events (a Tk canvas takes no focus by default); scrolling and zooming a canvas bigger than the control; saving a canvas as a picture (Tk can only write PostScript, so this needs drawing through Pillow too); dragging shapes with less code (perhaps `shape.draggable = True`).
 - **Appearance follow-ups**: a form `font` that new controls start with (as VB's form Font was); colors for disabled controls (Tk grays them its own way); `selectcolor` for check box and option button indicators. Known limits: macOS buttons keep the system's colors, and Windows' native theme may ignore a ComboBox's field color (both are Tk's).
 - **TextBox follow-ups**: `readonly` on a multi-line box can't be copied from with the keyboard (it's a disabled Text underneath, which takes no focus from a click); `maxlength` doesn't stop a middle-click paste on Linux.
-- **Keyboard follow-ups**: `tabstop` (leave a control out of the Tab order without disabling it); arrow keys moving between the OptionButtons of a group, with only the chosen one a Tab stop (as in Windows); a `keydown`/`keyup` pair for games (keypress repeats while a key is held).
+- **Keyboard follow-ups**: keydown and keyup on controls too (today on the form, which sees every key); which modifier keys are held, for mouse events (Shift+click).
 - **Image follow-ups**: show an Image's outline in the designer when its picture is smaller than the control (sizing normal, center or zoom); offer to delete a copied picture from images/ when nothing uses it any more; animated GIFs; pictures on Buttons and Labels (Tk supports both).
 
 ## Biggest features

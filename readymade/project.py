@@ -84,6 +84,15 @@ class Project:
     def setting(self, key):
         return self.settings().get("tool", {}).get("readymade", {}).get(key)
 
+    @property
+    def version(self):
+        """[project] version: the program's version, like "1.2.0"."""
+        return str(self.settings().get("project", {}).get("version", "") or "")
+
+    def set_version(self, version):
+        text = self.pyproject.read_text(encoding="utf-8") if self.pyproject.exists() else new_pyproject(self.folder.name)
+        self.pyproject.write_text(set_setting(text, "version", version or None, table="project"), encoding="utf-8")
+
     def set_setting(self, key, value):
         """Set (or with None, remove) a [tool.readymade] setting in pyproject.toml."""
         text = self.pyproject.read_text(encoding="utf-8") if self.pyproject.exists() else new_pyproject(self.folder.name)
@@ -182,8 +191,8 @@ class Project:
     def other_files(self, folder=""):
         """The project's other files and folders, in one of its folders ("" for the top):
         [(path relative to the project, whether it's a folder)], folders first. Not its forms
-        and modules (shown on their own), nor hidden things (.venv, .readymade, .git), caches
-        or what builds leave."""
+        and modules (shown on their own), nor hidden folders (.venv, .readymade, .git), caches,
+        what builds leave, or the system's own clutter (.DS_Store). Files like .gitignore show."""
         base = self.folder / folder
         try:
             entries = list(base.iterdir())
@@ -192,12 +201,42 @@ class Project:
         found = []
         for path in entries:
             name = path.name
-            if name.startswith(".") or name in _NOT_SHOWN or name.endswith(".egg-info"):
+            is_folder = path.is_dir()
+            if (name in _NOT_SHOWN or name.endswith(".egg-info") or (is_folder and name.startswith("."))
+                    or (not folder and path.suffix in (".form", ".py") and not is_folder)):
                 continue
-            if not folder and path.suffix in (".form", ".py") and path.is_file():
-                continue
-            found.append((path.relative_to(self.folder).as_posix(), path.is_dir()))
+            found.append((path.relative_to(self.folder).as_posix(), is_folder))
         return sorted(found, key=lambda entry: (not entry[1], entry[0].lower()))
+
+    def snapshot(self, most=5000):
+        """The project's files and folders as the Project Explorer would show them (forms and
+        modules included), to notice changes made outside the IDE: a frozenset of paths."""
+        found, waiting = {p.name for p in self.folder.glob("*.form")} | {p.name for p in self.folder.glob("*.py")}, [""]
+        while waiting and len(found) < most:
+            folder = waiting.pop()
+            for relative, is_folder in self.other_files(folder):
+                found.add(relative + "/" * is_folder)
+                if is_folder:
+                    waiting.append(relative)
+        return frozenset(found)
+
+    def rename_file(self, relative, new_name):
+        """Rename one of the project's other files or folders (relative, like "data/old.csv") to
+        new_name in the same folder. Returns the new relative path. Make EXE's include list
+        follows it."""
+        if not new_name or new_name in (".", "..") or any(c in new_name for c in "/\\:*?\"<>|"):
+            raise ProjectError(f"{new_name!r} isn't a name for a file or folder.")
+        old = self.folder / relative
+        new = old.with_name(new_name)
+        if new.exists() and new.resolve() != old.resolve():
+            raise ProjectError(f"There's already a {new_name} there.")
+        old.rename(new)
+        renamed = new.relative_to(self.folder).as_posix()
+        include = [renamed + entry[len(relative):] if entry == relative or entry.startswith(relative + "/") else entry
+                   for entry in self.include()]
+        if include != self.include():
+            self.set_setting("include", include)
+        return renamed
 
     def include(self):
         """[tool.readymade] include: what Make EXE bundles besides the forms and their pictures."""
@@ -272,7 +311,8 @@ def rename_imports(source, old, new):
     return source
 
 
-_NOT_SHOWN = {"__pycache__", "build", "dist", "venv", "node_modules"}  # (besides hidden ones, like .venv)
+# (Besides hidden folders, like .venv.)
+_NOT_SHOWN = {"__pycache__", "build", "dist", "venv", "node_modules", ".DS_Store", "Thumbs.db", "desktop.ini"}
 
 
 def _machine():
@@ -293,13 +333,13 @@ def new_pyproject(name):
     )
 
 
-def set_setting(text, key, value):
-    """Set (or with None, remove) key in pyproject.toml's [tool.readymade] table,
+def set_setting(text, key, value, table="tool.readymade"):
+    """Set (or with None, remove) key in pyproject.toml's [tool.readymade] table (or another),
     leaving everything else in the text as it was."""
-    line = f"{key} = {json.dumps(value)}"  # JSON strings and lists are also valid TOML
-    header = re.search(r"(?m)^\[tool\.readymade\][ \t]*$", text)
+    line = f"{key} = {json.dumps(value)}"  # JSON strings, lists, true and false are also valid TOML
+    header = re.search(rf"(?m)^\[{re.escape(table)}\][ \t]*$", text)
     if header is None:
-        return text if value is None else text.rstrip("\n") + f"\n\n[tool.readymade]\n{line}\n"
+        return text if value is None else text.rstrip("\n") + f"\n\n[{table}]\n{line}\n"
     start = header.end()
     following = re.search(r"(?m)^\[", text[start:])  # the next table ends this one
     end = start + following.start() if following else len(text)

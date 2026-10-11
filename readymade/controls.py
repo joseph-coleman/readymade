@@ -177,6 +177,7 @@ class Control:
             "enabled": True,
             "visible": True,
             **({"tabindex": 0} if issubclass(cls, _TabIndex) else {}),
+            **({"tabstop": True} if issubclass(cls, _TabStop) else {}),
             **({"cursor": "default"} if issubclass(cls, _Cursor) else {}),
             **({"tooltip": ""} if issubclass(cls, _Tooltip) else {}),
             "tag": "",
@@ -595,7 +596,21 @@ def tab_numbers(specs):
 
 
 class _TabStop(_TabIndex):
-    """A control the keyboard can reach: Tab stops at it."""
+    """A control the keyboard can reach: Tab stops at it (unless its tabstop is False)."""
+
+    _tabstop = True
+
+    @property
+    def tabstop(self):
+        """Whether Tab stops at it. With False it keeps its place in the order, and can still
+        be clicked, or reached with its access key; Tab just passes it by (as VB's TabStop)."""
+        return self._tabstop
+
+    @tabstop.setter
+    def tabstop(self, value):
+        self._tabstop = bool(value)
+        if not self.design:
+            self._focus_widget()["takefocus"] = 1 if self._tabstop else 0  # (Tk's own Tab order too)
 
     def _focus_widget(self):
         """The widget that takes the keyboard focus."""

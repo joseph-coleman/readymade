@@ -38,6 +38,9 @@ EVENTS = {
     "load": "the form is loaded, before it's first shown",
     "unload": "the form is closing; return True to keep it open",
     "resize": "the form changes size",
+    "keydown": "a key goes down anywhere in the form, once (not again as it repeats); key is the key itself, like "
+               "\"A\", \"Left\", \"Space\" or \"Shift\": for games, with keyup",
+    "keyup": "a key held down is let go (or the form loses the keyboard); key names it as keydown did",
 }
 
 
@@ -157,14 +160,16 @@ def home(platform=sys.platform):
         "Running",
         "  F5 runs the program. The Immediate window runs Python inside it while it runs;",
         "  \"? expression\" prints a value. Shift+F5 ends it.",
-        "  File > Make EXE packages the program to run without Python;",
+        "  File > Make EXE packages the program to run without Python: its name, version and",
+        "  details, one file or one folder, with the license notices of what it carries.",
         "  Project > Program Icon gives it, and its windows, an icon.",
         "",
         "The project",
-        "  The Project Explorer: double-click to open; right-click to rename a module or remove",
-        f"  things (they go to the {'Recycle Bin' if platform == 'win32' else 'Trash'}). Files shows the project's other files: text opens",
-        "  here, anything else in its own program. Right-click > Bundle with Make EXE for files",
-        "  the program needs (the pictures forms show are bundled already).",
+        "  The Project Explorer: double-click to open. Right-click for new files and folders, to",
+        f"  rename (F2), or to remove (to the {'Recycle Bin' if platform == 'win32' else 'Trash'}). Files lists the project's other files:",
+        "  text opens here, anything else in its own program. Right-click > Bundle with Make EXE",
+        "  for files the program needs (the pictures forms show are bundled already). Changes",
+        "  made outside readymade show when you come back to it.",
         "",
         "Debugging (break mode)",
         "  An error in an event handler pauses the program at the failed line (Tools > Options",

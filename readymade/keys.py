@@ -70,6 +70,29 @@ def name(char, keysym, state, platform=sys.platform):
     return "+".join([*(m for m in _ORDER if m in held), key])
 
 
+# Keys typed with Shift on a US keyboard, as their unshifted key (keydown and keyup name keys, not characters).
+_SHIFTED = {
+    "exclam": "1", "at": "2", "numbersign": "3", "dollar": "4", "percent": "5", "asciicircum": "6",
+    "ampersand": "7", "asterisk": "8", "parenleft": "9", "parenright": "0", "underscore": "-", "plus": "=",
+    "braceleft": "[", "braceright": "]", "colon": ";", "quotedbl": "'", "less": ",", "greater": ".",
+    "question": "/", "bar": "\\", "asciitilde": "`",
+}
+
+
+def key_name(keysym, platform=sys.platform):
+    """The name of a key itself, whatever else is held and whatever it types, for the form's
+    keydown and keyup events: "A" (not "a"), "1" (not "!"), "Left", "Space", "Shift", "Ctrl"."""
+    if platform == "darwin" and keysym in _MAC_NAMES:
+        return _MAC_NAMES[keysym]
+    if keysym in _NAMES:
+        return _NAMES[keysym]
+    if len(keysym) == 1:
+        return keysym.upper()
+    if keysym.startswith("KP_") and keysym[3:].isdigit():
+        return keysym[3:]
+    return _PUNCTUATION.get(keysym) or _SHIFTED.get(keysym, keysym)
+
+
 def _types(held, platform):
     """Whether a key with these modifiers held types its character, rather than being a shortcut."""
     if platform == "darwin":

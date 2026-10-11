@@ -1,0 +1,77 @@
+"""File > Make EXE...: the program's details, then Make (see readymade.package)."""
+
+from __future__ import annotations
+
+import sys
+import tkinter as tk
+from tkinter import ttk
+
+from readymade import package
+
+
+class MakeExeDialog(tk.Toplevel):
+    """The name, version and details of the program to make, one file or one folder, and
+    license notices. Make saves them (in pyproject.toml, for next time) and calls on_make()."""
+
+    def __init__(self, app, on_make):
+        super().__init__(app.root)
+        self.app = app
+        self.on_make = on_make
+        self.title("Make EXE")
+        self.transient(app.root)
+        self.resizable(False, False)
+        d = package.details(app.project)
+        self.fields = {key: tk.StringVar(self, d[key]) for key in ("name", "version", "company", "description",
+                                                                   "copyright")}
+        self.one_folder = tk.BooleanVar(self, d["one_folder"])
+        self.notices = tk.BooleanVar(self, d["notices"])
+
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill=tk.BOTH, expand=True)
+        first = None
+        for row, (key, label) in enumerate((("name", "Program name:"), ("version", "Version:"),
+                                            ("company", "Company:"), ("description", "Description:"),
+                                            ("copyright", "Copyright:"))):
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=2)
+            entry = ttk.Entry(body, textvariable=self.fields[key], width=40)
+            entry.grid(row=row, column=1, sticky="we", padx=(8, 0), pady=2)
+            first = first or entry
+        ttk.Label(body, text="Windows shows these in the program's Properties; a Mac in Get Info.",
+                  style="Note.TLabel").grid(row=5, column=1, sticky="w", padx=(8, 0))
+        kind = ttk.LabelFrame(body, text="Make it as", padding=8)
+        kind.grid(row=6, column=0, columnspan=2, sticky="we", pady=(10, 0))
+        if sys.platform == "darwin":
+            ttk.Label(kind, text="An .app (on a Mac, a program is always one).").pack(anchor="w")
+        else:
+            ttk.Radiobutton(kind, text="One file, easy to hand to people", value=False,
+                            variable=self.one_folder).pack(anchor="w")
+            ttk.Radiobutton(kind, text="One folder with the program and what it needs (it starts quicker)",
+                            value=True, variable=self.one_folder).pack(anchor="w")
+        ttk.Checkbutton(body, text="Put LICENSES.txt beside it: the notices of Python, readymade and the\n"
+                                   "libraries it carries, which their licenses ask to come along",
+                        variable=self.notices).grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        self.note = ttk.Label(body, style="Note.TLabel", wraplength=440)
+        self.note.grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        buttons = ttk.Frame(body)
+        buttons.grid(row=9, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Make", command=self.make).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
+        self.bind("<Return>", lambda e: self.make())
+        self.bind("<Escape>", lambda e: self.destroy())
+        first.focus_set()
+
+    def chosen(self):
+        return {**{key: var.get().strip() for key, var in self.fields.items()},
+                "one_folder": self.one_folder.get(), "notices": self.notices.get()}
+
+    def make(self):
+        chosen = self.chosen()
+        try:
+            package.check_name(chosen["name"])
+        except ValueError as e:
+            self.note.configure(text=str(e))
+            self.bell()
+            return
+        package.set_details(self.app.project, chosen)
+        self.destroy()
+        self.on_make()

@@ -11,13 +11,19 @@ app_path() finds them as it does unpackaged: pictures the forms show, and
 whatever [tool.readymade] include lists (files, folders or patterns, like
 include = ["data", "sounds/*.wav"]).
 
-The program is one file on Windows and Linux. On macOS it's an .app folder,
-as PyInstaller recommends.
+The program is one file on Windows and Linux, or with one-folder a folder holding it and
+what it needs (it starts quicker). On macOS it's always an .app, as PyInstaller recommends.
+Its details (File > Make EXE's dialog) are [project] version and these [tool.readymade]
+settings: program-name, company, description, copyright, one-folder, and notices (whether
+LICENSES.txt goes beside it: see readymade.notices). Windows shows them in the program
+file's properties; on macOS they go in the app's Info.plist.
 """
 
 from __future__ import annotations
 
 import os
+import plistlib
+import re
 import sys
 from pathlib import Path, PurePath
 
@@ -31,12 +37,100 @@ def build_folder(project):
     return project.folder / "build"
 
 
+def details(project):
+    """The program's details, as File > Make EXE shows them: name, version, company,
+    description, copyright, one_folder, notices."""
+    def setting(key, default=""):
+        value = project.setting(key)
+        return default if value is None else value
+
+    return {"name": setting("program-name") or project.name, "version": project.version,
+            "company": setting("company"), "description": setting("description"),
+            "copyright": setting("copyright"), "one_folder": setting("one-folder", False) is True,
+            "notices": setting("notices", True) is not False}
+
+
+def set_details(project, chosen):
+    """Save details() as chosen in the dialog (what's as the defaults stays out of pyproject.toml)."""
+    project.set_version(chosen["version"])
+    for key, value, default in (("program-name", chosen["name"], project.name), ("company", chosen["company"], ""),
+                                ("description", chosen["description"], ""), ("copyright", chosen["copyright"], ""),
+                                ("one-folder", chosen["one_folder"], False), ("notices", chosen["notices"], True)):
+        project.set_setting(key, None if value == default else value)
+
+
+def check_name(name):
+    """A program's name must be one a file can have. Raises ValueError if not."""
+    if not name.strip() or name.strip() in (".", "..") or re.search(r'[/\\:*?"<>|]', name):
+        raise ValueError(f"{name!r} can't be a program's name: it's made into a file name.")
+
+
 def exe_path(project, platform=sys.platform):
     """Where the finished program will be."""
     dist = project.folder / "dist"
+    name = details(project)["name"]
     if platform == "darwin":
-        return dist / f"{project.name}.app"
-    return dist / (f"{project.name}.exe" if platform == "win32" else project.name)
+        return dist / f"{name}.app"
+    file = f"{name}.exe" if platform == "win32" else name
+    return dist / name / file if details(project)["one_folder"] else dist / file
+
+
+def notices_path(project, platform=sys.platform):
+    """Where LICENSES.txt goes: beside the program (in its folder, with one-folder)."""
+    return exe_path(project, platform).parent / "LICENSES.txt"
+
+
+def version_numbers(version):
+    """A version as Windows wants it, four numbers: "1.2" -> (1, 2, 0, 0), "2.0b1" -> (2, 0, 0, 0)."""
+    numbers = []
+    for part in str(version).split("."):
+        digits = re.match(r"\d+", part)
+        if digits is None:
+            break
+        numbers.append(int(digits.group()))
+    return tuple((numbers + [0, 0, 0, 0])[:4])
+
+
+def windows_version_file(project):
+    """The program file's details for Windows (its Properties > Details), as PyInstaller's
+    --version-file wants them. Returns its path."""
+    d = details(project)
+    numbers = version_numbers(d["version"] or "0")
+    version = d["version"] or "0.0.0"
+    strings = [("CompanyName", d["company"]), ("FileDescription", d["description"] or d["name"]),
+               ("FileVersion", version), ("InternalName", d["name"]), ("LegalCopyright", d["copyright"]),
+               ("OriginalFilename", f"{d['name']}.exe"), ("ProductName", d["name"]), ("ProductVersion", version)]
+    text = (
+        "VSVersionInfo(\n"
+        f"  ffi=FixedFileInfo(filevers={numbers}, prodvers={numbers}, mask=0x3f, flags=0x0, OS=0x40004,\n"
+        "                    fileType=0x1, subtype=0x0, date=(0, 0)),\n"
+        "  kids=[\n"
+        "    StringFileInfo([StringTable('040904B0', [\n"
+        + "".join(f"      StringStruct({key!r}, {value!r}),\n" for key, value in strings if value)
+        + "    ])]),\n"
+        "    VarFileInfo([VarStruct('Translation', [1033, 1200])]),\n"
+        "  ]\n"
+        ")\n"
+    )
+    path = build_folder(project) / "readymade" / "version.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def set_mac_details(project, app=None):
+    """Put the version and copyright in a made Mac app's Info.plist (PyInstaller leaves 0.0.0)."""
+    d = details(project)
+    plist = Path(app or exe_path(project, "darwin")) / "Contents" / "Info.plist"
+    with open(plist, "rb") as file:
+        info = plistlib.load(file)
+    if d["version"]:
+        info["CFBundleShortVersionString"] = info["CFBundleVersion"] = d["version"]
+    if d["copyright"]:
+        info["NSHumanReadableCopyright"] = d["copyright"]
+    info["CFBundleDisplayName"] = d["name"]
+    with open(plist, "wb") as file:
+        plistlib.dump(info, file)
 
 
 def launcher_source(project, startup):
@@ -140,10 +234,11 @@ def bundled_files(project):
 def pyinstaller_args(project, launcher, readymade_root, platform=sys.platform):
     """The arguments after `python`, to run PyInstaller on the launcher."""
     work = build_folder(project) / "pyinstaller"
+    d = details(project)
     args = [
         "-m", "PyInstaller", "--noconfirm", "--windowed",
-        "--onedir" if platform == "darwin" else "--onefile",
-        "--name", project.name,
+        "--onedir" if platform == "darwin" or d["one_folder"] else "--onefile",
+        "--name", d["name"],
         "--distpath", str(project.folder / "dist"),
         "--workpath", str(work), "--specpath", str(work),
         "--paths", str(project.folder), "--paths", str(readymade_root),
@@ -154,5 +249,7 @@ def pyinstaller_args(project, launcher, readymade_root, platform=sys.platform):
     icon = program_icon(project, platform)
     if icon is not None:
         args += ["--icon", str(icon)]  # the program file's own icon
+    if platform == "win32":
+        args += ["--version-file", str(windows_version_file(project))]
     args.append(str(launcher))
     return args

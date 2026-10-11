@@ -407,3 +407,87 @@ def test_forms_from_before_labels_had_a_tab_index():
     assert tab_numbers([{"type": "TextBox", "name": "T", "tabindex": 0}, {"type": "Label", "name": "L"}]) == {
         "T": 0, "L": 1}  # (nothing after it: at the end)
     assert tab_numbers([{"type": "Label", "name": "L", "tabindex": 0}]) is None  # (all numbered already)
+
+
+# ----- tabstop, OptionButton groups, keydown and keyup -----
+
+def test_tabstop_false_is_passed_by(make_form):
+    form = make_form(
+        ("TextBox", "First", {"tabindex": 0}),
+        ("Button", "Help", {"tabindex": 1, "tabstop": False, "text": "&Help"}),
+        ("TextBox", "Last", {"tabindex": 2}),
+    )
+    form.First.widget.focus_force()
+    press(form, "<Tab>")
+    assert focused(form) == "Last"
+    press(form, "<Tab>")
+    assert focused(form) == "First"
+    assert form.Help.tabindex == 1 and form.Help.widget["takefocus"] == 0
+    form.Help.tabstop = True
+    press(form, "<Tab>")
+    assert focused(form) == "Help"
+
+
+def test_arrow_keys_choose_between_option_buttons(make_form):
+    chosen = []
+
+    class Form1(Form):
+        def Medium_click(self):
+            chosen.append("Medium")
+
+    form = make_form(
+        ("TextBox", "Name", {"tabindex": 0}),
+        ("OptionButton", "Small", {"tabindex": 1}),
+        ("OptionButton", "Medium", {"tabindex": 2}),
+        ("OptionButton", "Large", {"tabindex": 3}),
+        ("Button", "OK", {"tabindex": 4}),
+        cls=Form1,
+    )
+    assert [c.name for c in form._tab_order()] == ["Name", "Small", "OK"]  # none chosen: the group's first
+    form.Name.widget.focus_force()
+    press(form, "<Tab>")
+    assert focused(form) == "Small"
+    press(form, "<Down>")  # the next one, chosen (with its click event), as in Windows
+    assert focused(form) == "Medium" and form.Medium.value and chosen == ["Medium"]
+    press(form, "<Right>")
+    press(form, "<Right>")  # around to the first again
+    assert focused(form) == "Small" and form.Small.value
+    press(form, "<Up>")
+    assert focused(form) == "Large" and form.Large.value
+    assert [c.name for c in form._tab_order()] == ["Name", "Large", "OK"]  # only the chosen one stops
+    press(form, "<Tab>")
+    assert focused(form) == "OK"
+    press(form, "<Shift-Tab>")
+    assert focused(form) == "Large"
+    form.Name.widget.focus_force()
+    press(form, "<Down>")  # arrows elsewhere are left alone
+    assert focused(form) == "Name"
+
+
+def test_keydown_and_keyup_once_per_press(make_form):
+    seen = []
+
+    class Form1(Form):
+        def Form_keydown(self, key):
+            seen.append(("down", key))
+
+        def Form_keyup(self, key):
+            seen.append(("up", key))
+
+    form = make_form(("TextBox", "Name", {}), cls=Form1)
+    press(form, "<KeyPress-Left>")
+    press(form, "<KeyRelease-Left>")  # X11 repeats a held key as release and press together
+    press(form, "<KeyPress-Left>")
+    press(form, "<KeyPress-Left>")  # (Windows and macOS: just more presses)
+    press(form, "<KeyPress-exclam>", state=0x1)  # Shift+1: the key is "1"
+    press(form, "<KeyRelease-1>")
+    press(form, "<KeyRelease-Left>")
+    form.root.after(60)
+    form.root.update()
+    assert seen == [("down", "Left"), ("down", "1"), ("up", "1"), ("up", "Left")]
+
+
+def test_key_names_for_keydown():
+    assert [keys.key_name(k, "linux") for k in ("a", "A", "exclam", "KP_7", "space", "Shift_L", "Left", "F5")] == [
+        "A", "A", "1", "7", "Space", "Shift", "Left", "F5"]
+    assert keys.key_name("Meta_L", "darwin") == "Ctrl"  # Command, as everywhere in readymade

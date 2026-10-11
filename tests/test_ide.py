@@ -836,13 +836,16 @@ def test_make_exe_installs_pyinstaller_then_builds(app, tmp_path):
     fake = fake_python(tmp_path / "fake")
     app.set_python(fake)
     (tmp_path / "fake" / "calls").unlink()  # the Explorer asked it for its version; not part of this
-    app.make_exe()
+    app.make_exe(ask=False)
     output = wait_until_idle(app)
     calls = (tmp_path / "fake" / "calls").read_text().splitlines()
-    assert [c.split()[:2] for c in calls] == [["-c", "import"], ["-m", "pip"], ["-m", "PyInstaller"]]
+    assert [c.split()[:2] for c in calls] == [["-c", "import"], ["-m", "pip"], ["-m", "PyInstaller"],
+                                              ["-m", "readymade.notices"]]
     assert "pyinstaller" in calls[1]
     assert "--- Installing pyinstaller ---" in output and "INFO: Build complete!" in output
-    assert f"--- Done: {app.project.folder / 'dist' / 'hello'} ---" in output
+    assert (f"--- Done: {app.project.folder / 'dist' / 'hello'}, with its license notices in LICENSES.txt ---"
+            in output)
+    assert calls[3].split()[2:] == [str(app.project.folder / "dist" / "LICENSES.txt"), "hello"]
     assert (app.project.folder / "build" / "readymade" / "_readymade_launcher.py").exists()
     assert app.project.dependencies == []  # a build tool, not something the program needs
 
@@ -850,7 +853,7 @@ def test_make_exe_installs_pyinstaller_then_builds(app, tmp_path):
 @pytest.mark.skipif(sys.platform == "win32", reason="the stand-in python is a shell script")
 def test_make_exe_reports_a_failed_build(app, tmp_path):
     app.set_python(fake_python(tmp_path / "fake", pyinstaller_installed=True, build_fails=True))
-    app.make_exe()
+    app.make_exe(ask=False)
     output = wait_until_idle(app)
     assert "--- Installing" not in output
     assert "PyInstaller couldn't make the program; its messages are above." in output
@@ -861,13 +864,13 @@ def test_make_exe_offers_an_environment_first(app, monkeypatch):
 
     asked = []
     monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a) or False)
-    app.make_exe()
+    app.make_exe(ask=False)
     assert asked and app.process is None  # declined: nothing runs in the IDE's own Python
 
 
 def test_make_exe_stops_when_the_projects_python_is_missing(app):
     app.set_python("D:/miniforge3/envs/app/python.exe")  # chosen on another machine
-    app.make_exe()
+    app.make_exe(ask=False)
     output = wait_until_idle(app)
     assert "doesn't exist. Choose another in the Project menu." in output
     assert "Installing" not in output and app.process is None
@@ -1227,3 +1230,37 @@ class Form1(Form):
     assert "def Button1_click(self):" in other.code.get_source()
     app.edit("paste_code")  # again: renamed controls, renamed code
     assert "def Button2_click(self):" in other.code.get_source()
+
+
+
+def test_the_make_exe_dialog(app, monkeypatch):
+    from readymade import package
+    from readymade.ide.makeexe import MakeExeDialog
+
+    made = []
+    real = app.make_exe
+    monkeypatch.setattr(app, "make_exe", lambda ask=True: real() if ask else made.append("made"))  # (no build)
+    dialog = real()
+    assert isinstance(dialog, MakeExeDialog) and dialog.fields["name"].get() == "hello"
+    assert dialog.fields["version"].get() == "0.1.0" and dialog.notices.get() is True
+    dialog.fields["name"].set("Hello/World")
+    dialog.make()
+    assert "can't be a program's name" in dialog.note.cget("text") and made == []
+    for key, value in (("name", "Hello World"), ("version", "1.2.0"), ("company", "Tea & Co"),
+                       ("description", "Says hello"), ("copyright", "(c) 2026 Tea & Co")):
+        dialog.fields[key].set(value)
+    dialog.one_folder.set(True)
+    dialog.notices.set(False)
+    dialog.make()
+    assert made == ["made"]  # then it makes the program
+    details = package.details(app.project)
+    assert details == {"name": "Hello World", "version": "1.2.0", "company": "Tea & Co", "description": "Says hello",
+                       "copyright": "(c) 2026 Tea & Co", "one_folder": True, "notices": False}
+    text = (app.project.folder / "pyproject.toml").read_text()
+    assert 'version = "1.2.0"' in text and "one-folder = true" in text and "notices = false" in text
+    assert package.exe_path(app.project, "win32") == app.project.folder / "dist" / "Hello World" / "Hello World.exe"
+    assert package.exe_path(app.project, "darwin") == app.project.folder / "dist" / "Hello World.app"
+    assert package.notices_path(app.project, "linux") == app.project.folder / "dist" / "Hello World" / "LICENSES.txt"
+    dialog = real()  # the choices come back next time
+    assert dialog.fields["company"].get() == "Tea & Co" and dialog.one_folder.get() is True
+    dialog.destroy()

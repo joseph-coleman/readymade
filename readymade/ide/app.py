@@ -21,11 +21,13 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from readymade import events, formatting, menus, package, remote, usersettings
+from readymade import events, formatting, formfile, menus, package, remote, usersettings
+from readymade.controls import REGISTRY
 from readymade.formfile import FormFileError
 from readymade.ide import assist
 from readymade.ide.editors import FileEditor, FormEditor, ModuleEditor, ViewerEditor, bring_in
 from readymade.ide.linting import Linter
+from readymade.ide.makeexe import MakeExeDialog
 from readymade.ide.menueditor import MenuEditor
 from readymade.ide import helptext
 from readymade.ide.panels import (BreakpointsPanel, CallStackPanel, HelpPanel, ImmediateWindow, LocalsPanel,
@@ -163,6 +165,10 @@ class App:
                                  ("Ctrl+Shift+V", "paste_code")):
             menus.bind_shortcut(root, shortcut, lambda e, a=action: self._clipboard_key(a))
         root.protocol("WM_DELETE_WINDOW", self.exit)
+        # Back from another program: look for files changed outside the IDE.
+        self._away = False
+        root.bind("<FocusOut>", lambda e: root.after_idle(self._maybe_away), add="+")
+        root.bind("<FocusIn>", lambda e: self._back(), add="+")
 
     def _build_menu(self):
         menubar = tk.Menu(self.root)
@@ -283,6 +289,7 @@ class App:
         self.linter.check_project()
         self.watches_panel.show(self.watches())
         self.show_breakpoints()
+        self._snapshot = project.snapshot()  # (to notice files changed outside the IDE)
         self.update_title()
         return True
 
@@ -1405,12 +1412,15 @@ class App:
         ):
             self.create_environment(find_pythons()[0], then=install)
 
-    def make_exe(self):
-        """Package the project as a program that runs without Python, using PyInstaller
-        in the project's own environment (creating one, and installing PyInstaller, if needed)."""
+    def make_exe(self, ask=True):
+        """File > Make EXE...: the program's details (a dialog, unless ask is False), then
+        package the project as a program that runs without Python, using PyInstaller in the
+        project's own environment (creating one, and installing PyInstaller, if needed)."""
         project = self.project
         if project is None or not self._idle() or not self.save():
-            return
+            return None
+        if ask:
+            return MakeExeDialog(self, on_make=lambda: self.make_exe(ask=False))
         startup = project.startup
         if startup is None:
             self.immediate.write("(The project has no forms to make a program from.)\n")
@@ -1425,10 +1435,22 @@ class App:
                 self.immediate.write(f"(Not found, so not included: {entry})\n")
 
             def built(code):
-                if code == 0:
-                    self.immediate.write(f"--- Done: {target} ---\n")
-                else:
+                if code != 0:
                     self.immediate.write("--- PyInstaller couldn't make the program; its messages are above. ---\n")
+                    return
+                if sys.platform == "darwin":
+                    try:
+                        package.set_mac_details(project)
+                    except (OSError, ValueError) as e:
+                        self.immediate.write(f"(Couldn't put the version in the app's Info.plist: {e})\n")
+                if not package.details(project)["notices"]:
+                    self.immediate.write(f"--- Done: {target} ---\n")
+                    return
+                notices = package.notices_path(project)
+                self._start([str(python), "-m", "readymade.notices", str(notices), package.details(project)["name"],
+                             *project.dependencies], on_exit=lambda code: self.immediate.write(
+                    f"--- Done: {target}, with its license notices in {notices.name} ---\n" if code == 0 else
+                    f"--- Done: {target} (but its license notices couldn't be written: see above) ---\n"))
 
             try:
                 args = package.pyinstaller_args(project, launcher, _PACKAGE_ROOT)
@@ -1597,6 +1619,132 @@ class App:
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError as e:
             self.immediate.write(f"(Couldn't open {path.name}: {e})\n")
+
+    def new_file(self, folder="", name=None):
+        """Project Explorer > New File...: an empty file in one of the project's folders
+        (relative, "" for the top), opened to type in. Returns its relative path."""
+        return self._new_thing(folder, name, folder_too=False)
+
+    def new_folder(self, folder="", name=None):
+        """Project Explorer > New Folder...: a folder in one of the project's folders."""
+        return self._new_thing(folder, name, folder_too=True)
+
+    def _new_thing(self, folder, name, folder_too):
+        if self.project is None:
+            return None
+        kind = "Folder" if folder_too else "File"
+        where = f" in {folder}" if folder else ""
+        if name is None:
+            name = simpledialog.askstring(f"New {kind}", f"Name of the new {kind.lower()}{where}:", parent=self.root)
+        name = (name or "").strip()
+        if not name:
+            return None
+        path = self.project.folder / folder / name
+        if not name or name in (".", "..") or any(c in name for c in '/\\:*?"<>|') or path.exists():
+            messagebox.showerror(f"New {kind}", f"{name!r} can't be used: " + (
+                "there's one by that name already." if path.exists() else "it isn't a name for a file."), parent=self.root)
+            return None
+        try:
+            path.mkdir() if folder_too else path.touch()
+        except OSError as e:
+            messagebox.showerror(f"New {kind}", str(e), parent=self.root)
+            return None
+        relative = path.relative_to(self.project.folder).as_posix()
+        self.explorer_refresh()
+        if self.explorer.tree.exists(f"file:{folder}"):
+            self.explorer.tree.item(f"file:{folder}", open=True)
+            self.explorer._fill_folder(f"file:{folder}")
+        if self.explorer.tree.exists(f"file:{relative}"):
+            self.explorer.tree.focus(f"file:{relative}")
+            self.explorer.tree.selection_set(f"file:{relative}")
+            self.explorer.tree.see(f"file:{relative}")
+        if not folder_too:
+            self.open_file(relative)
+        return relative
+
+    def rename_file(self, relative, new=None):
+        """Project Explorer > Rename... (F2): one of the project's other files or folders. Open
+        files follow it, and so does Make EXE's include list. Returns the new relative path."""
+        old_name = relative.rpartition("/")[2]
+        if new is None:
+            new = simpledialog.askstring("Rename", f"New name for {old_name}:", initialvalue=old_name, parent=self.root)
+        new = (new or "").strip()
+        if not new or new == old_name:
+            return None
+        old_path = self.project.folder / relative
+        uses = self._forms_using(old_path)
+        try:
+            renamed = self.project.rename_file(relative, new)
+        except (ProjectError, OSError) as e:
+            messagebox.showerror("Rename", str(e), parent=self.root)
+            return None
+        new_path = self.project.folder / renamed
+        for editor in self.editors:  # open files in it follow
+            if isinstance(editor, FileEditor) and (editor.path == old_path or old_path in editor.path.parents):
+                editor.path = new_path / editor.path.relative_to(old_path) if editor.path != old_path else new_path
+        self._rename_in_debug_settings(relative, renamed)
+        self.explorer_refresh()
+        self.update_title()
+        self.immediate.write(f"--- Renamed {relative} to {renamed}. ---\n")
+        if uses:
+            self.immediate.write(f"--- {', '.join(uses)} showed {relative}: choose the picture again in the "
+                                 "Properties panel. ---\n")
+        return renamed
+
+    def _forms_using(self, path):
+        """The controls (Form1.Image1) whose pictures are path, or in it if it's a folder."""
+        found = []
+        for form in self.project.forms():
+            try:
+                design = formfile.load(self.project.folder / f"{form}.form")
+            except (OSError, FormFileError):
+                continue
+            for spec in design.controls:
+                for prop in getattr(REGISTRY.get(spec["type"]), "file_props", {}):
+                    used = self.project.folder / spec[prop] if spec.get(prop) else None
+                    if used is not None and (used == path or path in used.parents):
+                        found.append(f"{form}.{spec['name']}")
+        return found
+
+    def _maybe_away(self):
+        try:
+            self._away = self.root.focus_get() is None  # (None: another program has the keyboard)
+        except (KeyError, tk.TclError):
+            self._away = True
+
+    def _back(self):
+        if self._away:
+            self._away = False
+            self.root.after_idle(self.check_outside_changes)
+
+    def check_outside_changes(self):
+        """The IDE came back to the front: notice files added, removed or changed outside it.
+        The Project Explorer shows what's there; open files changed on disk show it, unless
+        they've been edited here (then the edits are kept, and a note says so)."""
+        if self.project is None:
+            return
+        snapshot = self.project.snapshot()
+        if snapshot != getattr(self, "_snapshot", snapshot):
+            self.explorer_refresh()
+            self.linter.check_project()
+        self._snapshot = snapshot
+        for editor in list(self.editors):
+            if not editor.changed_on_disk():
+                continue
+            name = Path(editor.code_path).name
+            if not Path(editor.code_path).exists():
+                continue  # (removed: its tab stays, to save again or close)
+            if editor.is_dirty():
+                editor.seen_on_disk()  # (said once)
+                self.immediate.write(f"--- {name} was changed outside readymade. Your changes here are kept; "
+                                     "saving writes them over it. ---\n")
+                continue
+            if not editor.reload():
+                self.immediate.write(f"--- {editor.path.name} was changed outside readymade: close it and "
+                                     "open it again to see the new design. ---\n")
+            self.linter.check(editor, saved=True)
+        self.update_title()
+        self.show_breakpoints()
 
     def bundled_paths(self):
         """The files and folders Make EXE bundles: the forms, their pictures, the icon, and include."""

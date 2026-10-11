@@ -79,6 +79,7 @@ class FormEditor:
         self.code.set_source(saved_source if saved_source is not None else codegen.new_module(self.design.name))
         self.code.refresh_objects()
         self._saved = (formfile.dumps(self.design), saved_source)
+        self._disk = self._disk_times()
         # Each entry is (state before, state after, merge key); a state is (design JSON, code).
         self._undo: list[tuple[tuple[str, str], tuple[str, str], object]] = []
         self._redo: list[tuple[tuple[str, str], tuple[str, str], object]] = []
@@ -840,9 +841,31 @@ class FormEditor:
             return False
         self.path = path
         self._saved = (formfile.dumps(self.design), source)
+        self._disk = self._disk_times()
         if path != old:
             self.app.form_renamed(old.stem, path.stem)
         return True
+
+    def _disk_times(self):
+        return _modified(self.path), _modified(self.code_path)
+
+    def changed_on_disk(self):
+        """Whether its files were changed since it opened or saved them (outside the IDE)."""
+        return self._disk_times() != self._disk
+
+    def seen_on_disk(self):
+        """Count the files as they are now as seen (a change kept unsaved has been pointed out)."""
+        self._disk = self._disk_times()
+
+    def reload(self):
+        """Show the code as it is on disk now. Returns False if the .form changed too, which
+        needs the form closed and opened again (a design isn't reloaded in place)."""
+        form_changed = _modified(self.path) != self._disk[0]
+        source = self.code_path.read_text(encoding="utf-8")
+        self.code.replace_keeping_place(source)
+        self._saved = (self._saved[0], source)
+        self._disk = (self._disk[0], _modified(self.code_path))
+        return not form_changed
 
 
 class ModuleEditor:
@@ -854,6 +877,7 @@ class ModuleEditor:
         self.frame = CodeView(app.documents, self, objects=False)
         self._saved = path.read_text(encoding="utf-8")
         self.frame.set_source(self._saved)
+        self._disk = _modified(path)
 
     @property
     def name(self):
@@ -893,6 +917,22 @@ class ModuleEditor:
             messagebox.showerror("Save", str(e), parent=self.app.root)
             return False
         self._saved = source
+        self._disk = _modified(self.path)
+        return True
+
+    def changed_on_disk(self):
+        """Whether its file was changed since it opened or saved it (outside the IDE)."""
+        return not getattr(self, "read_only", False) and _modified(self.path) != self._disk
+
+    def seen_on_disk(self):
+        self._disk = _modified(self.path)
+
+    def reload(self):
+        """Show the file as it is on disk now."""
+        source = self.path.read_text(encoding="utf-8")
+        self.code.replace_keeping_place(source)
+        self._saved = source
+        self._disk = _modified(self.path)
         return True
 
 
@@ -935,6 +975,7 @@ class FileEditor(ModuleEditor):
         self.frame = CodeView(app.documents, self, objects=False, python=not self.plain)
         self._saved = path.read_text(encoding="utf-8")
         self.frame.set_source(self._saved)
+        self._disk = _modified(path)
 
     @property
     def name(self):
@@ -943,6 +984,14 @@ class FileEditor(ModuleEditor):
             return self.path.relative_to(self.app.project.folder).as_posix()
         except (AttributeError, ValueError):
             return self.path.name
+
+
+def _modified(path):
+    """A file's modification time, or None if it's gone."""
+    try:
+        return Path(path).stat().st_mtime_ns
+    except OSError:
+        return None
 
 
 class _DetachedPanel:

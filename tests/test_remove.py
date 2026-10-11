@@ -264,3 +264,61 @@ def test_the_projects_other_files(app, monkeypatch, answer):
     assert asked[-1].startswith("Move the data folder and everything in it to the ")
     assert not (folder / "data").exists() and app.project.include() == []
     assert not tree.exists("file:data")
+
+
+def test_new_and_renamed_files(app, monkeypatch):
+    from readymade.ide.editors import FileEditor
+
+    folder = app.project.folder
+    (folder / ".gitignore").write_text(".venv/\n")
+    (folder / ".hidden").mkdir()
+    assert app.new_folder("", "docs") == "docs" and (folder / "docs").is_dir()
+    notes = app.new_file("docs", "notes.txt")  # opened, to type in
+    assert notes == "docs/notes.txt" and isinstance(app._current_editor(), FileEditor)
+    tree = app.explorer.tree
+    assert tree.exists("file:.gitignore") and not tree.exists("file:.hidden")  # dot-files show; hidden folders don't
+    assert tree.focus() == "file:docs/notes.txt"
+    errors = []
+    monkeypatch.setattr(messagebox, "showerror", lambda title, message, **kw: errors.append(message))
+    assert app.new_file("docs", "notes.txt") is None and "already" in errors[-1]
+    assert app.new_file("", "a/b") is None and "isn't a name" in errors[-1]
+
+    app.set_bundled("docs", True)
+    editor = app._current_editor()
+    assert app.rename_file("docs", "guide") == "guide"  # a folder: what's in it follows
+    assert editor.path == folder / "guide" / "notes.txt" and app.project.include() == ["guide"]
+    assert app.rename_file("guide/notes.txt", "help.txt") == "guide/help.txt"
+    assert editor.path == folder / "guide" / "help.txt" and app.documents.tab(editor.frame, "text") == "help.txt"
+    assert app.rename_file("guide/help.txt", "../x") is None and "isn't a name" in errors[-1]
+
+
+def test_files_changed_outside_the_ide(app):
+    folder = app.project.folder
+    (folder / "README.md").write_text("first\n")
+    (folder / "notes.txt").write_text("notes\n")
+    app.explorer_refresh()
+    app.check_outside_changes()  # (what's there now counts as seen)
+    readme = app.open_file("README.md")
+    notes = app.open_file("notes.txt")
+    import os
+    import time
+
+    def touch(path, text):
+        path.write_text(text)
+        later = time.time() + 5
+        os.utime(path, (later, later))  # (a different time, even on file systems that round it)
+
+    (folder / "added.csv").write_text("x\n")
+    touch(folder / "README.md", "changed outside\n")
+    notes.code.text.insert("1.0", "mine ")
+    touch(folder / "notes.txt", "theirs\n")
+    app.check_outside_changes()
+    assert app.explorer.tree.exists("file:added.csv")  # the Explorer noticed
+    assert readme.code.get_source() == "changed outside\n" and not readme.is_dirty()  # not edited here: shown
+    assert notes.code.get_source().startswith("mine notes") and notes.is_dirty()  # edited here: kept,
+    assert "notes.txt was changed outside readymade. Your changes here are kept" in app.immediate.output.get(
+        "1.0", "end")  # and said once
+    app.immediate.output.configure(state="normal")
+    app.immediate.output.delete("1.0", "end")
+    app.check_outside_changes()
+    assert "changed outside" not in app.immediate.output.get("1.0", "end")

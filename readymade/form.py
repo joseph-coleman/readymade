@@ -23,7 +23,7 @@ import sys
 import tkinter as tk
 from pathlib import Path
 
-from readymade import appearance, events, formfile, forms, menus, pictures
+from readymade import appearance, events, formfile, forms, keys, menus, pictures
 from readymade.controls import (Button, CheckBox, Event, Grid, OptionButton, _TabIndex, _TabStop, _WidgetText,
                                 control_of, create, repaint_inside, tab_numbers)
 
@@ -34,6 +34,8 @@ FORM_EVENTS = (
     Event("resize"),
     Event("click"),
     Event("dblclick"),
+    Event("keydown", ("key",)),
+    Event("keyup", ("key",)),
 )
 
 _app: tk.Tk | None = None  # the hidden root window all forms belong to
@@ -192,6 +194,8 @@ class Form:
                                  ("<Return>", self._enter), ("<KP_Enter>", self._enter), ("<Escape>", self._escape)):
             self.root.bind(sequence, action)  # the form's own bindings see keys pressed in any of its controls
         self.root.bind(_access_sequence(self.root), self._access_key)
+        for sequence, step in (("<Up>", -1), ("<Left>", -1), ("<Down>", 1), ("<Right>", 1)):
+            self.root.bind(sequence, lambda e, s=step: self._arrow(s), add="+")
         self.loaded = True
         _loaded.add(self)
         self._connect_events()
@@ -307,8 +311,39 @@ class Form:
     # ----- the keyboard: Tab order, Enter and Esc -----
 
     def _tab_order(self):
-        """The controls Tab moves through, in order: by tabindex, then as designed."""
-        return [c for c in self._tab_sequence() if isinstance(c, _TabStop)]
+        """The controls Tab moves through, in order: by tabindex, then as designed. Those with
+        tabstop False are passed by, and of a group of OptionButtons only the chosen one stops
+        (or with none chosen, the first): the arrow keys move between them, as in Windows."""
+        stops, groups = [], set()
+        for control in self._tab_sequence():
+            if not isinstance(control, _TabStop) or not control.tabstop:
+                continue
+            if isinstance(control, OptionButton):
+                group = self._option_group(control)
+                chosen = next((c for c in group if c.value), group[0])
+                if control is not chosen or id(control._group) in groups:
+                    continue
+                groups.add(id(control._group))
+            stops.append(control)
+        return stops
+
+    def _option_group(self, option):
+        """The OptionButtons in option's group (the same Frame, or the form), in Tab order, that
+        the keyboard can reach."""
+        return [c for c in self._tab_sequence() if isinstance(c, OptionButton) and c._group is option._group
+                and (c is option or (c.enabled and c.visible and c.tabstop))]
+
+    def _arrow(self, step):
+        """Up/Left and Down/Right in a group of OptionButtons choose the next one, as in Windows."""
+        option = control_of(self._focus_get())
+        if not isinstance(option, OptionButton):
+            return None
+        group = self._option_group(option)
+        target = group[(group.index(option) + step) % len(group)]
+        if target is not option:
+            self._focus(target)
+            target.widget.invoke()  # chosen, and its click event
+        return "break"
 
     def _tab_sequence(self):
         """Every control with a place in the Tab order, Labels and Frames too, in that order."""
@@ -443,6 +478,58 @@ class Form:
         self.root.bind("<ButtonRelease-1>", lambda e: self._on_form_mouse(e, "click"), add="+")
         self.root.bind("<Double-Button-1>", lambda e: self._on_form_mouse(e, "dblclick"), add="+")
         self.root.bind("<Destroy>", self._on_destroy, add="+")
+        if callable(getattr(self, f"{FORM}_keydown", None)) or callable(getattr(self, f"{FORM}_keyup", None)):
+            self._held = set()  # keys down, by key_name
+            self._releasing = {}  # key -> after id: a release that may be the key repeating (on X11)
+            # A bind tag of its own, first on every widget: the form's other key bindings (Tab,
+            # Enter, arrows) would otherwise take those keys, as Tk runs one binding per tag.
+            tag = f"readymade-keys-{id(self)}"
+            self.root.bind_class(tag, "<KeyPress>", self._key_down)
+            self.root.bind_class(tag, "<KeyRelease>", self._key_up)
+            widgets = [self.root]
+            while widgets:
+                widget = widgets.pop()
+                widget.bindtags((tag, *widget.bindtags()))
+                widgets.extend(widget.winfo_children())
+            self.root.bind("<FocusOut>", lambda e: self.root.after_idle(self._focus_left), add="+")
+
+    # ----- keydown and keyup: once per press and release, for games -----
+
+    def _key_down(self, e):
+        key = keys.key_name(e.keysym)
+        job = self._releasing.pop(key, None)
+        if job is not None:  # X11 repeats a held key as release-press pairs: it never went up
+            self.root.after_cancel(job)
+            return
+        if key in self._held:
+            return  # Windows and macOS repeat a held key as more presses
+        self._held.add(key)
+        self._fire("keydown", key)
+
+    def _key_up(self, e):
+        key = keys.key_name(e.keysym)
+        if key in self._held and key not in self._releasing:
+            self._releasing[key] = self.root.after(20, lambda: self._released(key))
+
+    def _released(self, key):
+        self._releasing.pop(key, None)
+        if key in self._held:
+            self._held.discard(key)
+            self._fire("keyup", key)
+
+    def _focus_left(self):
+        """The window lost the keyboard (another window was clicked): its keys count as let go,
+        as their releases will go elsewhere."""
+        try:
+            still_here = self.root.focus_get() is not None
+        except (KeyError, tk.TclError):
+            still_here = False
+        if not still_here and self.loaded:
+            for key in sorted(self._held):
+                job = self._releasing.pop(key, None)
+                if job is not None:
+                    self.root.after_cancel(job)
+                self._released(key)
 
     def _on_configure(self, e):
         # (Compared with the last size seen here: the width and height setters change _size first.)
