@@ -63,6 +63,19 @@ def value_info(name, value, path):
             "path": path, "expandable": bool(_children(value))}
 
 
+def _set_child(parent, name, value):
+    """Set one of a value's parts, named as _children names them."""
+    if isinstance(parent, dict):
+        key = next(key for key in parent if _repr.repr(key) == name)
+        parent[key] = value
+    elif isinstance(parent, list):
+        parent[int(name[1:-1])] = value
+    elif isinstance(parent, (tuple, set, frozenset, str, bytes)):
+        raise TypeError(f"a {type(parent).__name__}'s items can't be changed")
+    else:
+        setattr(parent, name, value)
+
+
 def _children(value):
     """(name, child) pairs for a value's parts: items of lists, tuples, sets and dicts, and an
     object's attributes (not its methods, nor names starting with _)."""
@@ -152,6 +165,7 @@ class Debugger(bdb.Bdb):
         self.conditions = {}  # (file, line) -> BreakCondition, for breakpoints with a condition or hit count
         self._paused = {}  # while paused: what the IDE was told (sent again after Set Next Statement)
         self._at_line = False  # paused at a line event: the only time the line can be changed
+        self.break_on_all = False  # also pause where an error is raised in the project, even if a try catches it
 
     # ----- which frames count -----
 
@@ -173,7 +187,7 @@ class Debugger(bdb.Bdb):
     # ----- starting and stopping tracing -----
 
     def _must_trace(self):
-        return bool(self.breaks) or any(w.traced for w in self.watches)
+        return bool(self.breaks) or self.break_on_all or any(w.traced for w in self.watches)
 
     def trace_if_needed(self):
         """Trace (on this thread) only while something could make it stop."""
@@ -209,7 +223,7 @@ class Debugger(bdb.Bdb):
                 spec = item if isinstance(item, dict) else {"line": item}
                 key = (self.canonic(file), int(spec["line"]))
                 self.set_break(*key)
-                if spec.get("condition") or spec.get("hit_mode"):
+                if spec.get("condition") or spec.get("hit_mode") or spec.get("log"):
                     same = old.get(key)
                     self.conditions[key] = same if same is not None and same.spec == spec else BreakCondition(spec)
         self.trace_if_needed()
@@ -231,7 +245,8 @@ class Debugger(bdb.Bdb):
         self.trace_if_needed()
 
     def break_anywhere(self, frame):
-        return super().break_anywhere(frame) or any(w.traced and w.in_context(frame, self) for w in self.watches)
+        return (super().break_anywhere(frame) or (self.break_on_all and self.in_project(frame))
+                or any(w.traced and w.in_context(frame, self) for w in self.watches))
 
     def break_here(self, frame):
         fired = self._check_watches(frame)  # (first, so they always see each line)
@@ -243,11 +258,35 @@ class Debugger(bdb.Bdb):
         return self._why is not None
 
     def _breakpoint_says(self, frame):
-        """At a breakpoint: (whether to stop, why), for one with a condition or hit count."""
+        """At a breakpoint: (whether to stop, why), for one with a condition, hit count or
+        message. One with a message (a logpoint) sends it to the IDE instead of stopping."""
         condition = self.conditions.get((self.canonic(frame.f_code.co_filename), frame.f_lineno))
         if condition is None:
             return True, ""
-        return condition.check(frame, self.extra_names)
+        stop, said = condition.check(frame, self.extra_names)
+        if stop and condition.log:
+            text = said if condition.failed else condition.message(frame, self.extra_names)
+            self.channel.send(event="log", text=text, file=frame.f_code.co_filename, line=frame.f_lineno)
+            return False, ""
+        return stop, said
+
+    def dispatch_exception(self, frame, arg):
+        """An error is raised in (or passing through) a traced frame: with break_on_all, pause
+        where it first reaches the project's code, before any try catches it."""
+        error = arg[1]
+        if (self.break_on_all and not self.post_mortem_mode and self.in_project(frame)
+                and isinstance(error, Exception) and not isinstance(error, (StopIteration, StopAsyncIteration))
+                and type(error).__name__ != "FormClosed" and not self.raised_here(error)):
+            try:
+                error._readymade_paused = True  # (not again as it travels out, nor when it ends the event)
+            except AttributeError:
+                pass
+            self.interaction([(f, f.f_lineno) for f in self._stack(frame)], "raised", f"{type(error).__name__}: {error}")
+        return super().dispatch_exception(frame, arg)
+
+    def raised_here(self, error):
+        """Whether the program already paused where error was raised."""
+        return getattr(error, "_readymade_paused", False) is True
 
     def _check_watches(self, frame, returning=False):
         """Check the traced watches in context, after a line ran (or as frame returns):
@@ -363,6 +402,8 @@ class Debugger(bdb.Bdb):
                 self._send_frame()
             elif kind == "quick":
                 self.channel.send(event="quick", info=self._quick(command.get("expression", "")))
+            elif kind == "assign":  # a value changed in the Locals window
+                self._assign(command.get("path", []), command.get("value", ""))
             elif kind == "tip":  # the mouse rests on a name in the code
                 self.channel.send(event="tip", id=command.get("id"), info=self._quick(command.get("expression", "")))
             elif kind == "expand":
@@ -446,6 +487,27 @@ class Debugger(bdb.Bdb):
         except Exception:  # noqa: BLE001 - gone, or a watch that now fails: nothing to show
             return []
         return [value_info(name, child, [*path, name]) for name, child in _children(value)]
+
+    def _assign(self, path, text):
+        """Give a variable (or a part of one: an item, an attribute) a new value: text is a
+        Python expression, worked out in the chosen frame."""
+        frame = self._frame()
+        shown = path[0] + "".join(step if step.startswith("[") else f".{step}" if step[0].isalpha() or step[0] == "_"
+                                  else f"[{step}]" for step in path[1:])
+        try:
+            value = eval(compile(text, "<new value>", "eval"), frame.f_globals, FrameScope(frame, self.extra_names()))
+            if len(path) == 1:
+                if frame.f_locals is not frame.f_globals and sys.version_info < (3, 13):
+                    raise ValueError("before Python 3.13 a paused function's variables can't be changed")
+                frame.f_locals[path[0]] = value
+            else:
+                parent = frame.f_locals[path[0]]
+                for step in path[1:-1]:
+                    parent = dict(_children(parent))[step]
+                _set_child(parent, path[-1], value)
+        except Exception as error:  # noqa: BLE001 - say why, and leave it as it was
+            self.channel.send(event="note", text=f"Can't change {shown}: {type(error).__name__}: {error}")
+        self._send_frame()
 
     def _run_line(self, line):
         console = self.consoles.get(self.selected)
@@ -533,6 +595,8 @@ class BreakCondition:
         self.mode = spec.get("hit_mode", "")
         self.wanted = max(1, int(spec.get("hits") or 1))
         self.hits = 0
+        self.log = spec.get("log", "")  # a logpoint's message, an f-string's text: "total is {subtotal}"
+        self.failed = False  # the last check stopped because the condition couldn't be worked out
         try:
             self.code = compile(self.condition, "<condition>", "eval") if self.condition else None
         except SyntaxError:
@@ -540,16 +604,30 @@ class BreakCondition:
             self.problem = f"the breakpoint's condition isn't an expression Python can read: {self.condition}"
         else:
             self.problem = ""
+        try:
+            self.log_code = compile("f" + repr(self.log), "<message>", "eval") if self.log else None
+        except SyntaxError:
+            self.log_code = compile(repr(f"(a message Python can't read: {self.log})"), "<message>", "eval")
+
+    def message(self, frame, extra_names):
+        """A logpoint's message, with the {expressions} in it worked out."""
+        try:
+            return str(eval(self.log_code, frame.f_globals, FrameScope(frame, extra_names())))
+        except Exception as error:  # noqa: BLE001 - the message says what went wrong instead
+            return f"{self.log}  <{type(error).__name__}: {error}>"
 
     def check(self, frame, extra_names):
         """(Whether to stop, why)."""
+        self.failed = False
         if self.problem:
+            self.failed = True
             return True, self.problem[0].upper() + self.problem[1:]
         if self.code is not None:
             try:
                 if not eval(self.code, frame.f_globals, FrameScope(frame, extra_names())):
                     return False, ""
             except Exception as error:  # noqa: BLE001 - stop and say, as the condition is wrong
+                self.failed = True
                 return True, f"The breakpoint's condition {self.condition} failed: {type(error).__name__}: {error}"
         self.hits += 1
         if self.mode == "=" and self.hits != self.wanted:
@@ -664,6 +742,7 @@ def start(channel, folder, settings):
     global _debugger
     _debugger = Debugger(channel, folder)
     _debugger.break_on_errors = settings.get("break_on_errors", True)
+    _debugger.break_on_all = _debugger.break_on_errors and bool(settings.get("break_on_all"))
     _debugger.watches = [Watch(w, _debugger.folder) for w in settings.get("watches", [])]
     _debugger.set_breakpoints(settings.get("breakpoints", {}))
     if settings.get("step"):
@@ -686,6 +765,8 @@ def handle(message):
         _debugger.channel.send(event="children", path=message.get("path"), items=_debugger._expand(message.get("path")))
     elif kind == "break_on_errors":
         _debugger.break_on_errors = bool(message.get("on"))
+        _debugger.break_on_all = _debugger.break_on_errors and bool(message.get("all"))
+        _debugger.trace_if_needed()
 
 
 def tick():
@@ -705,6 +786,7 @@ def event_failed(error, starting=False):
         return False
     traceback.print_exception(error)
     sys.stderr.flush()
-    _debugger.post_mortem(error, starting=starting)
+    if not _debugger.raised_here(error):  # (with break_on_all it paused where it was raised already)
+        _debugger.post_mortem(error, starting=starting)
     return True
 

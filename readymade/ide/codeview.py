@@ -222,7 +222,13 @@ class CodeView(ttk.Frame):
         xscroll.pack(side=tk.BOTTOM, fill=tk.X)
         self.gutter = tk.Canvas(body, width=1, highlightthickness=0, bd=0)
         self.gutter.pack(side=tk.LEFT, fill=tk.Y)
-        self.gutter.bind("<Button-1>", self._gutter_click)  # sets or clears a breakpoint, as F9 does
+        # A click sets or clears a breakpoint, as F9 does; dragging the paused line's arrow sets the next statement.
+        self.gutter.bind("<ButtonPress-1>", self._gutter_press)
+        self.gutter.bind("<B1-Motion>", self._gutter_drag)
+        self.gutter.bind("<ButtonRelease-1>", self._gutter_release)
+        self.on_set_next = None  # on_set_next(line): the arrow was dragged to another line
+        self._pressed = None  # (line pressed on, whether it's the paused line's arrow)
+        self._drag_to = None  # while dragging the arrow: the line it's over
         for sequence in menus.context_clicks(self.gutter):
             self.gutter.bind(sequence, self._gutter_menu)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -622,6 +628,7 @@ class CodeView(ttk.Frame):
         items = [item for item in self.breakpoints() if isinstance(item, dict)]
         disabled = {item["line"] for item in items if item.get("disabled")}
         conditional = {item["line"] for item in items if item.get("condition") or item.get("hit_mode")}
+        logpoints = {item["line"] for item in items if item.get("log")}
         self.text.tag_remove("breakpoint", "1.0", tk.END)
         for n in breakpoints - disabled:
             self.text.tag_add("breakpoint", f"{n}.0", f"{n}.0 lineend +1c")
@@ -635,15 +642,22 @@ class CodeView(ttk.Frame):
             middle = place[1] + place[3] // 2
             if n in breakpoints:
                 off = n in disabled  # switched off in the Breakpoints tab: hollow
-                self.gutter.create_oval(2, middle - 5, 12, middle + 5, fill="" if off else self.theme.breakpoint,
-                                        outline=self.theme.breakpoint, width=2 if off else 1, tags="breakpoint")
-                if n in conditional and not off:  # a + on it, as Visual Studio marks a condition or hit count
+                look = {"fill": "" if off else self.theme.breakpoint, "outline": self.theme.breakpoint,
+                        "width": 2 if off else 1, "tags": "breakpoint"}
+                if n in logpoints:  # a diamond, as VS Code draws a logpoint
+                    self.gutter.create_polygon(7, middle - 6, 13, middle, 7, middle + 6, 1, middle, **look)
+                else:
+                    self.gutter.create_oval(2, middle - 5, 12, middle + 5, **look)
+                if n in conditional and not off and n not in logpoints:  # a + on it, as Visual Studio marks a condition or hit count
                     self.gutter.create_line(4, middle, 11, middle, fill="#ffffff", width=2, tags="breakpoint")
                     self.gutter.create_line(7, middle - 3, 7, middle + 4, fill="#ffffff", width=2, tags="breakpoint")
-            if n == paused:
+            if n == (self._drag_to or paused):
+                dragged = self._drag_to is not None and self._drag_to != paused
                 self.gutter.create_polygon(2, middle - 4, 8, middle - 4, 8, middle - 7, 14, middle, 8, middle + 7,
-                                           8, middle + 4, 2, middle + 4, fill=self.theme.arrow,
-                                           outline=self.theme.foreground if n in breakpoints else "", tags="arrow")
+                                           8, middle + 4, 2, middle + 4, fill="" if dragged else self.theme.arrow,
+                                           outline=self.theme.arrow if dragged else
+                                           self.theme.foreground if n in breakpoints else "",
+                                           width=2 if dragged else 1, tags="arrow")
             if n in problem_lines:
                 self.gutter.create_oval(16, middle - 3, 22, middle + 3, fill=self.theme.problem, outline="", tags="problem")
             following = self.text.index(f"{index} +1line")
@@ -947,9 +961,31 @@ class CodeView(ttk.Frame):
             return int(index.split(".")[0])
         return None
 
-    def _gutter_click(self, e):
+    def _gutter_press(self, e):
         line = self._gutter_line(e.y)
-        if line is not None:
+        on_arrow = line is not None and line == self.paused_line() and self.on_set_next is not None
+        self._pressed = (line, on_arrow) if line is not None else None
+
+    def _gutter_drag(self, e):
+        if self._pressed is None or not self._pressed[1]:
+            return
+        line = self._gutter_line(e.y)
+        if line is not None and line != self._drag_to:
+            self._drag_to = line
+            self.gutter.configure(cursor="sb_v_double_arrow")
+            self._draw_numbers()
+
+    def _gutter_release(self, e):
+        pressed, self._pressed = self._pressed, None
+        target, self._drag_to = self._drag_to, None
+        self.gutter.configure(cursor="")
+        if pressed is None:
+            return
+        line, _ = pressed
+        if target is not None and target != line:
+            self._show_numbers()  # (the arrow moves when the program says it has)
+            self.on_set_next(target)
+        else:
             self.toggle_breakpoint(line)
 
     def _gutter_menu(self, e):

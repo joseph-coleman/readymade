@@ -6,6 +6,7 @@ your user settings (see readymade.usersettings):
     "indent-width": 4              (spaces for Tab; generated handlers always use 4)
     "theme": "light"               (or "dark")
     "break-on-errors": true        (an error in an event handler pauses the program there)
+    "break-on-all-errors": false   (also where an error is raised, even if a try catches it)
 """
 
 from __future__ import annotations
@@ -38,6 +39,10 @@ def indent_width():
 
 def break_on_errors():
     return usersettings.get("break-on-errors", True) is not False
+
+
+def break_on_all_errors():
+    return break_on_errors() and usersettings.get("break-on-all-errors", False) is True
 
 
 def theme():
@@ -208,6 +213,7 @@ class OptionsDialog(tk.Toplevel):
         self.indent = tk.StringVar(self, str(indent_width()))
         self.theme = tk.StringVar(self, theme().name)
         self.break_on_errors = tk.BooleanVar(self, break_on_errors())
+        self.break_on_all = tk.BooleanVar(self, usersettings.get("break-on-all-errors", False) is True)
 
         body = ttk.Frame(self, padding=12)
         body.pack(fill=tk.BOTH, expand=True)
@@ -230,15 +236,23 @@ class OptionsDialog(tk.Toplevel):
         for name, label in (("light", "Light"), ("dark", "Dark")):
             ttk.Radiobutton(choices, text=label, value=name, variable=self.theme).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Checkbutton(body, text="Break on errors in event handlers (when run from here)",
-                        variable=self.break_on_errors).grid(row=3, column=0, columnspan=4, sticky="w", pady=4)
+                        variable=self.break_on_errors, command=self._errors_chosen).grid(
+            row=3, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        self.all_errors = ttk.Checkbutton(
+            body, text="Also where an error is raised, even if a try catches it (slower)", variable=self.break_on_all)
+        self.all_errors.grid(row=4, column=0, columnspan=4, sticky="w", padx=(20, 0), pady=(2, 4))
+        self._errors_chosen()
         ttk.Label(body, text="These are yours, for all your projects.", style="Note.TLabel").grid(
-            row=4, column=0, columnspan=4, sticky="w", pady=(8, 0))
+            row=5, column=0, columnspan=4, sticky="w", pady=(8, 0))
         buttons = ttk.Frame(body)
-        buttons.grid(row=5, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        buttons.grid(row=6, column=0, columnspan=4, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
         self.bind("<Return>", lambda e: self.ok())
         self.bind("<Escape>", lambda e: self.destroy())
+
+    def _errors_chosen(self):
+        self.all_errors.configure(state="normal" if self.break_on_errors.get() else "disabled")
 
     def _choose_font(self):
         from readymade.dialogs import FontChooser
@@ -252,7 +266,8 @@ class OptionsDialog(tk.Toplevel):
         usersettings.set("indent-width", int(self.indent.get()))
         usersettings.set("theme", self.theme.get())
         usersettings.set("break-on-errors", self.break_on_errors.get())
+        usersettings.set("break-on-all-errors", self.break_on_all.get())
         apply(self.app)
         if self.app.session is not None:  # the running program too
-            self.app.session.send(cmd="break_on_errors", on=self.break_on_errors.get())
+            self.app.session.send(cmd="break_on_errors", on=self.break_on_errors.get(), all=break_on_all_errors())
         self.destroy()

@@ -100,7 +100,8 @@ class App:
         self.bottom = ttk.Notebook(self.bottom_area)
         self.bottom_area.add(self.bottom, weight=1)
         self.debug_tabs = ttk.Notebook(self.bottom_area)
-        self.locals = LocalsPanel(self.debug_tabs, on_expand=lambda path: self.session and self.session.expand(path))
+        self.locals = LocalsPanel(self.debug_tabs, on_expand=lambda path: self.session and self.session.expand(path),
+                                  on_assign=lambda path, text: self.session and self.session.assign(path, text))
         self.call_stack = CallStackPanel(self.debug_tabs, on_select=lambda i: self.session and self.session.choose_frame(i))
         self.watches_panel = WatchesPanel(self.debug_tabs, on_expand=lambda path: self.session and self.session.expand(path),
                                           on_edit=self.edit_watch, on_delete=self.delete_watch)
@@ -748,6 +749,7 @@ class App:
             editor.code.on_change = lambda: (self.linter.check(editor), self.show_breakpoints())
             editor.code.on_edited = lambda code=editor.code: self._edited(code)
             editor.code.on_hover = lambda expression, x, y, code=editor.code: self._hovered(code, expression, x, y)
+            editor.code.on_set_next = lambda line, editor=editor: self.set_next_statement(editor, line)
             self.linter.check(editor, saved=True)
             editor.code.on_breakpoints = self.breakpoints_changed
             editor.code.on_gutter_menu = lambda line, e, editor=editor: self._gutter_menu(editor, line, e)
@@ -851,7 +853,8 @@ class App:
         self.immediate.write(f"--- Running {self.project.name} ({startup}, Python: {where}). Type Python below to inspect it. ---\n")
         self.session = DebugSession(self)  # Immediate lines, input() and the debugger go through it
         self.session.send(cmd="start", breakpoints=self._breakpoint_files(), watches=self.watches(),
-                          break_on_errors=options.break_on_errors(), step=step)
+                          break_on_errors=options.break_on_errors(), break_on_all=options.break_on_all_errors(),
+                          step=step)
         if step:
             self.immediate.write("--- Stepping: the program pauses as its first event (like Form_load) starts. ---\n")
         self._start([str(python), "-m", "readymade.run", "--debug", str(self.session.port), "--startup", startup,

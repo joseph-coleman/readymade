@@ -39,7 +39,8 @@ with the error above the code (`ZeroDivisionError: division by zero`). Nothing i
 lost yet:
 
 - **Locals** shows the function's variables: `prices` is `[]`. Open `self` (the form)
-  to look at its controls and the `basket`.
+  to look at its controls and the `basket`. Double-click a value to change it (a Python
+  expression, like `[1.5, 2.5]`); Enter sets it.
 - The **Immediate window** runs Python inside the paused function. Type `? len(prices)`
   and press Enter.
 - **Call Stack** shows how the program got here (just the click, this time).
@@ -49,6 +50,11 @@ click is skipped and the program carries on. (Tools > Options can turn breaking 
 errors off.)
 
 Try it again with a bad number: type `free` as the price and click **Add**.
+
+Usually the program pauses only for errors nothing catches. In Tools > Options, "Also
+where an error is raised, even if a try catches it" pauses as soon as any error is raised
+in your code (VB called it Break on All Errors), which finds errors that a `try` hides.
+It slows the program a little, so it's off to start with.
 
 ## 2. Breakpoints and stepping
 
@@ -87,6 +93,11 @@ A breakpoint inside a loop stops every time around. To stop only when it matters
 2. Type `item["name"] == "jam"` and click OK. The dot gets a white **+**.
 3. Run the program (or click **Total** if it's running). It pauses only for the jam.
 
+**Logpoints**: in the same dialog, tick "Instead of stopping, write this in the Immediate
+window" and type `adding {item["name"]}: subtotal {subtotal}`. The dot becomes a diamond,
+and the program carries on, writing that line (with the values in braces worked out)
+each time. It's the `print()` you'd otherwise add and later remove.
+
 Open the dialog again and clear the condition, then choose a **hit count** instead,
 and run the program again: "When the hit count is 3" stops the third time the line runs
 (the bread, as the program works out its first total) and not again; "at least" stops
@@ -106,6 +117,7 @@ any code:
    and the discount line never runs.
 4. Press **F5**: the total shown has no discount.
 
+You can also drag the yellow arrow in the line numbers to the line to go on from.
 It only works within the function that's paused, and Python refuses some jumps (into
 the middle of a loop, for one); the Immediate window says why.
 

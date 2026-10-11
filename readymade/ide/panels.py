@@ -594,27 +594,73 @@ def _tree(master, columns, style_name, show="headings"):
 class LocalsPanel(ttk.Frame):
     """While the program is paused: the variables of the function it's in, with their values
     and types. Objects, lists and dicts open to show their parts; on_expand(path) asks the
-    program for them, which answer with add_children(path, items)."""
+    program for them, which answer with add_children(path, items). With on_assign, double-
+    click a value (or press F2) to change it: on_assign(path, Python expression)."""
 
     COLUMNS = (("#0", "Name", 160, False), ("value", "Value", 360, True), ("type", "Type", 100, False))
 
-    def __init__(self, master, on_expand):
+    def __init__(self, master, on_expand, on_assign=None):
         super().__init__(master, padding=(4, 2))
         self._on_expand = on_expand
+        self._on_assign = on_assign
         self.tree = _tree(self, self.COLUMNS, "Debug.Treeview", show="tree headings")
         self._rows = {}  # path (a tuple of names) -> row
         self._paths = {}  # row -> path
         self._opened = set()  # the paths opened, opened again after the next step
+        self.value_editor = None  # the box a value is being changed in
         self.tree.bind("<<TreeviewOpen>>", self._open)
         self.tree.bind("<<TreeviewClose>>", lambda e: self._opened.discard(self._paths.get(self.tree.focus())))
+        if on_assign is not None:
+            self.tree.bind("<Double-Button-1>", self._double_click)
+            self.tree.bind("<F2>", lambda e: self.edit_value(self.tree.focus()))
 
     def apply_theme(self, theme):
         _style_tree(self, "Debug.Treeview", theme)
 
     def clear(self):
+        self._close_editor()
         self.tree.delete(*self.tree.get_children())
         self._rows = {}
         self._paths = {}
+
+    def _double_click(self, e):
+        if self.tree.identify_column(e.x) != "#1":
+            return None  # (on a name, it opens or closes as usual)
+        return self.edit_value(self.tree.identify_row(e.y))
+
+    def edit_value(self, row):
+        """Change a value: a box over it takes a Python expression; Enter sets it, Escape doesn't."""
+        path = self._paths.get(row)
+        box = self.tree.bbox(row, "value") if path else None
+        if not box:
+            return "break"
+        self._close_editor()
+        x, y, width, height = box
+        old = self.tree.set(row, "value")
+        entry = self.value_editor = ttk.Entry(self.tree)
+        entry.insert(0, old)
+        entry.select_range(0, tk.END)
+        entry.place(x=x, y=y, width=width, height=height)
+        entry.focus_set()
+
+        def done(commit):
+            text = entry.get().strip()
+            self._close_editor()
+            self.tree.focus_set()
+            if commit and text and text != old:
+                self._on_assign(list(path), text)
+            return "break"
+
+        entry.bind("<Return>", lambda e: done(True))
+        entry.bind("<KP_Enter>", lambda e: done(True))
+        entry.bind("<Escape>", lambda e: done(False))
+        entry.bind("<FocusOut>", lambda e: self._close_editor())
+        return "break"
+
+    def _close_editor(self):
+        if self.value_editor is not None:
+            self.value_editor.destroy()
+            self.value_editor = None
 
     def show(self, variables):
         """Show [{name, value, type, path, expandable}] (see readymade.debugger.value_info)."""
@@ -783,6 +829,8 @@ def describe_breakpoint(settings):
     hits = settings.get("hits") or 1
     said += {"=": [f"on hit {hits}"], ">=": [f"from hit {hits} on"], "%": [f"every {hits} hits"]}.get(
         settings.get("hit_mode", ""), [])
+    if settings.get("log"):
+        said.append(f"writes: {settings['log']}")
     return ", ".join(said)
 
 

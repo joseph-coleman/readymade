@@ -111,6 +111,8 @@ class DebugSession:
                 self.app.watches_panel.show(watches, values)
         elif event == "note":  # e.g. why Set Next Statement couldn't
             self.app.immediate.write(f"--- {message.get('text', '')} ---\n")
+        elif event == "log":  # a logpoint's message
+            self.app.immediate.write(f"\u00bb {message.get('text', '')}\n")
         elif event == "tip":
             self._tip_answered(message)
         elif event == "quick":
@@ -129,8 +131,11 @@ class DebugSession:
         if message.get("reason") == "watch":
             app.immediate.write(f"--- Watch: {message.get('message', '')} ---\n")
         editor = self.show_place()
-        if editor is not None and message.get("reason") == "error":
+        if editor is not None and message.get("reason") in ("error", "raised"):
             editor.code.show_error(self.where()["line"], message.get("message", ""))
+        if message.get("reason") == "raised":
+            app.immediate.write(f"--- {message.get('message', '')} was raised here. If a try catches it, the program "
+                                "carries on there: step (F10) to see where. ---\n")
         if editor is not None and message.get("changed_line"):
             editor.code.show_changed(message["changed_line"])
         if message.get("ends") and not self._said_ends:
@@ -194,6 +199,11 @@ class DebugSession:
         info = message.get("info", {})
         if not info.get("failed"):  # (a name the paused function doesn't have shows nothing)
             code.show_tip(expression, f"{expression} = {info.get('value', '')}", x, y)
+
+    def assign(self, path, text):
+        """Locals: give a variable (or a part of one) the value of a Python expression."""
+        if self.paused is not None:
+            self.send(cmd="assign", path=path, value=text)
 
     def can_step(self):
         """Stepping is possible when paused, except at an error (the failed line can't go on)."""
@@ -380,7 +390,8 @@ HIT_MODES = (("", "Always"), ("=", "When the hit count is"), (">=", "When the hi
 
 class BreakpointDialog(tk.Toplevel):
     """Breakpoint Condition: stop at a breakpoint only when an expression is true, and/or on
-    some of the times it's reached (counted when the condition is true). on_ok(settings)."""
+    some of the times it's reached (counted when the condition is true); or instead of
+    stopping, write a message in the Immediate window (a logpoint). on_ok(settings)."""
 
     def __init__(self, app, line, settings, on_ok):
         super().__init__(app.root)
@@ -392,6 +403,8 @@ class BreakpointDialog(tk.Toplevel):
         labels = dict(HIT_MODES)
         self.mode = tk.StringVar(self, labels.get(settings.get("hit_mode", ""), labels[""]))
         self.hits = tk.StringVar(self, str(settings.get("hits") or 1))
+        self.logs = tk.BooleanVar(self, bool(settings.get("log")))
+        self.log = tk.StringVar(self, settings.get("log", ""))
 
         body = ttk.Frame(self, padding=12)
         body.pack(fill=tk.BOTH, expand=True)
@@ -408,15 +421,28 @@ class BreakpointDialog(tk.Toplevel):
         self.count.grid(row=3, column=2, sticky="w", padx=(4, 0), pady=(8, 4))
         self.mode.trace_add("write", lambda *_: self._mode_chosen())
         self._mode_chosen()
+        ttk.Checkbutton(body, text="Instead of stopping, write this in the Immediate window:",
+                        variable=self.logs, command=self._logs_chosen).grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(12, 4))
+        self.log_entry = ttk.Entry(body, textvariable=self.log, width=40)
+        self.log_entry.grid(row=5, column=1, columnspan=2, sticky="we", padx=(8, 0))
+        ttk.Label(body, text="Names in {braces} show their values: total is {subtotal}",
+                  style="Note.TLabel").grid(row=6, column=1, columnspan=2, sticky="w", padx=(8, 0))
+        self._logs_chosen()
         self.note = ttk.Label(body, style="Note.TLabel", wraplength=420)
-        self.note.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.note.grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 0))
         buttons = ttk.Frame(body)
-        buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        buttons.grid(row=8, column=0, columnspan=3, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
         self.bind("<Return>", lambda e: self.ok())
         self.bind("<Escape>", lambda e: self.destroy())
         entry.focus_set()
+
+    def _logs_chosen(self):
+        self.log_entry.configure(state="normal" if self.logs.get() else "disabled")
+        if self.logs.get():
+            self.log_entry.focus_set()
 
     def _mode_chosen(self):
         self.count.configure(state="disabled" if self.hit_mode() == "" else "normal")
@@ -430,7 +456,8 @@ class BreakpointDialog(tk.Toplevel):
             hits = max(1, int(self.hits.get()))
         except ValueError:
             hits = 1
-        return {"condition": self.condition.get().strip(), "hit_mode": mode, "hits": hits if mode else 0}
+        return {"condition": self.condition.get().strip(), "hit_mode": mode, "hits": hits if mode else 0,
+                "log": self.log.get().strip() if self.logs.get() else ""}
 
     def ok(self):
         settings = self.settings()
@@ -439,6 +466,17 @@ class BreakpointDialog(tk.Toplevel):
                 compile(settings["condition"], "<condition>", "eval")
             except SyntaxError:
                 self.note.configure(text=f"{settings['condition']} isn't an expression Python can read.")
+                self.bell()
+                return
+        if self.logs.get():
+            try:
+                compile("f" + repr(settings["log"]), "<message>", "eval")
+            except SyntaxError:
+                self.note.configure(text="Python can't read the {names} in the message.")
+                self.bell()
+                return
+            if not settings["log"]:
+                self.note.configure(text="Type the message to write.")
                 self.bell()
                 return
         self.destroy()

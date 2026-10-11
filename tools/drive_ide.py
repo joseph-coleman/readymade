@@ -843,6 +843,29 @@ def drive(d):
     d.key("Return")
     d.pump(0.5)
     d.check("Immediate runs in the paused function", "\nWORLD\n" in app.immediate.output.get("1.0", "end"), True)
+    gx = code.gutter.winfo_rootx() + 8
+    _, below, _, height, _ = code.text.dlineinfo(f"{line + 1}.0")
+    _, above, _, _, _ = code.text.dlineinfo(f"{line}.0")
+    d.drag(gx, code.gutter.winfo_rooty() + below + height // 2, gx, code.gutter.winfo_rooty() + above + height // 2)
+    deadline = time.time() + 10
+    while code.paused_line() != line and time.time() < deadline:
+        d.pump(0.05)
+    d.check("dragging the arrow up sets the next statement", code.paused_line(), line)
+    code.text.focus_force()
+    d.pump(0.2)
+    d.key("F10")
+    deadline = time.time() + 10
+    while code.paused_line() != line + 1 and time.time() < deadline:
+        d.pump(0.05)
+    row = app.locals._rows[("name",)]
+    x, y, w, h = app.locals.tree.bbox(row, "value")
+    d.click(app.locals.tree.winfo_rootx() + x + 10, app.locals.tree.winfo_rooty() + y + h // 2, repeat=2)
+    d.type("'Ada'")
+    d.key("Return")
+    deadline = time.time() + 10
+    while app.locals.value_of("name")[0] != "'Ada'" and time.time() < deadline:
+        d.pump(0.05)
+    d.check("a value changed in Locals", app.locals.value_of("name"), ("'Ada'", "str"))
     d.shot("break-mode")
     d.click(*d.tab_at(app.debug_tabs, app.call_stack))
     d.shot("break-mode-call-stack")
@@ -854,15 +877,15 @@ def drive(d):
     deadline = time.time() + 10
     while app.in_break_mode and time.time() < deadline:
         d.pump(0.05)
-    d.check("F5 continues", (app.in_break_mode, d.ask("Label2.text")), (False, "Hello, World!"))
+    d.check("F5 continues, with the changed value", (app.in_break_mode, d.ask("Label2.text")), (False, "Hello, Ada!"))
     print("Watches while running (View > Watches)")
     app.show_debug_window(app.watches_panel)
     app.set_watches([{"expression": "Label2.text", "kind": "watch", "file": "", "function": ""},
                      {"expression": "name", "kind": "watch", "file": "Form1.py", "function": "Button1_click"}])
     deadline = time.time() + 10
-    while app.watches_panel.value_of("#watch", 0)[0] != "'Hello, World!'" and time.time() < deadline:
+    while app.watches_panel.value_of("#watch", 0)[0] != "'Hello, Ada!'" and time.time() < deadline:
         d.pump(0.05)
-    d.check("a watch's value while running", app.watches_panel.value_of("#watch", 0)[:2], ("'Hello, World!'", "str"))
+    d.check("a watch's value while running", app.watches_panel.value_of("#watch", 0)[:2], ("'Hello, Ada!'", "str"))
     d.shot("watches-running")
     d.key("shift+F5")
     deadline = time.time() + 10

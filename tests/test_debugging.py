@@ -85,6 +85,12 @@ class Form1(Form):
         basket = {"tea": 2, "jam": 0}
         per_jar = basket["tea"] / basket["jam"]
         self.text = str(per_jar)
+
+    def checked_price(self, text):
+        try:
+            return float(text)
+        except ValueError:
+            return 0.0
 """
 LINES = {text.strip(): n for n, text in enumerate(SHOP.splitlines(), 1) if text.strip()}
 
@@ -222,7 +228,8 @@ def test_watches(app, shop):
     shop.text.mark_set("insert", f"{LINES['tax = price // 10']}.5")  # on "price"
     dialog = app.add_watch()
     assert dialog.watch() == {"expression": "tax", "kind": "watch", "file": "Form1.py", "function": "add_tax"}
-    assert list(dialog.functions["values"]) == [debugging.ALL_FUNCTIONS, "add_tax", "Button1_click", "Form_load"]
+    assert list(dialog.functions["values"]) == [debugging.ALL_FUNCTIONS, "add_tax", "Button1_click", "checked_price",
+                                              "Form_load"]
     dialog.expression.set("price * 2")
     dialog.ok()
     dialog = app.add_watch("price")
@@ -478,3 +485,106 @@ def test_breakpoints_stay_with_the_saved_code_when_changes_are_thrown_away(app, 
     shop.text.insert("1.0", "\n\n")  # not saved
     app.close_document(app.form, ask=False)  # (thrown away)
     assert app.project.local_settings()["breakpoints"] == {"Form1.py": [line]}
+
+
+# ----- logpoints, breaking where errors are raised, changing values, dragging the arrow -----
+
+def test_a_logpoint(app, shop):
+    from readymade.ide import debugging
+
+    line = LINES["tax = price // 10"]
+    dialog = app.breakpoint_condition(app.form, line)
+    dialog.logs.set(True)
+    dialog._logs_chosen()
+    dialog.log.set("price is {price")
+    dialog.ok()
+    assert "can't read" in dialog.note.cget("text")
+    dialog.log.set("price is {price}, tax will be {price // 10}")
+    dialog.ok()
+    assert shop.breakpoints() == [{"line": line, "log": "price is {price}, tax will be {price // 10}"}]
+    app.root.update()
+    assert app.breakpoints_panel.tree.item(app.breakpoints_panel.tree.get_children()[0], "values")[4] == (
+        "writes: price is {price}, tax will be {price // 10}")
+    app.run()
+    assert wait_for(app, lambda: "\u00bb price is 100, tax will be 10\n" in output(app))
+    assert not app.in_break_mode
+    assert "--- Ended (exit code 0) ---" in finish(app)
+    assert isinstance(dialog, debugging.BreakpointDialog)
+
+
+def test_breaking_where_an_error_is_raised(app, shop):
+    from readymade import usersettings
+
+    usersettings.set("break-on-all-errors", True)
+    app.run()
+    assert wait_for(app, lambda: app.root.title().endswith("[run]"))
+    app.immediate_line("? form.checked_price('free')")  # a try catches it
+    assert paused_at(app, LINES["return float(text)"])
+    assert app.session.paused["reason"] == "raised" and app.session.can_step()
+    assert "was raised here" in output(app)
+    app.debug_go("next")  # F10: on to the except
+    assert paused_at(app, LINES["except ValueError:"])
+    app.run()
+    assert wait_for(app, lambda: "\n0.0\n" in output(app))
+    app.immediate_line("_ = Button1.widget.invoke()")  # not caught: it pauses where raised, and only there
+    assert paused_at(app, LINES['per_jar = basket["tea"] / basket["jam"]'])
+    app.run()
+    assert wait_for(app, lambda: not app.in_break_mode and "ZeroDivisionError" in output(app))
+    app.root.after(300)
+    wait_for(app, lambda: False, seconds=0.5)
+    assert not app.in_break_mode  # (no second pause as the error ended the event)
+    assert "--- Ended (exit code 0) ---" in finish(app)
+
+
+def test_changing_a_value_in_locals(app, shop):
+    import sys
+
+    shop.toggle_breakpoint(LINES["tax = price // 10"])
+    app.run()
+    assert paused_at(app, LINES["tax = price // 10"])
+    row = app.locals._rows[("price",)]
+    app.locals.edit_value(row)
+    editor = app.locals.value_editor
+    assert editor is not None and editor.get() == "100"
+    editor.delete(0, "end")
+    editor.insert(0, "200")
+    editor.focus_force()
+    app.root.update()
+    editor.event_generate("<Return>")
+    if sys.version_info >= (3, 13):
+        assert wait_for(app, lambda: app.locals.value_of("price") == ("200", "int")), (
+            app.locals.value_editor, output(app)[-300:])
+        app.run()
+        app.immediate_line("? form.text")
+        assert wait_for(app, lambda: "\n220\n" in output(app))
+    else:
+        assert wait_for(app, lambda: "before Python 3.13" in output(app))
+    assert "--- Ended (exit code 0) ---" in finish(app)
+
+
+def test_dragging_the_arrow(app, shop):
+    from types import SimpleNamespace
+
+    start, target = LINES["price = add_tax(price)"], LINES["self.text = str(price)"]
+    shop.toggle_breakpoint(start)
+    app.run()
+    assert paused_at(app, start)
+
+    def y_of(line):
+        app.root.update()
+        _, y, _, height, _ = shop.text.dlineinfo(f"{line}.0")
+        return y + height // 2
+
+    shop._gutter_press(SimpleNamespace(x=7, y=y_of(start)))
+    shop._gutter_drag(SimpleNamespace(x=7, y=y_of(target)))
+    assert shop._drag_to == target
+    shop._gutter_release(SimpleNamespace(x=7, y=y_of(target)))
+    assert paused_at(app, target)  # add_tax never ran
+    assert shop.breakpoint_lines() == [start]  # (a drag isn't a click)
+    shop._gutter_press(SimpleNamespace(x=7, y=y_of(target)))
+    shop._gutter_release(SimpleNamespace(x=7, y=y_of(target)))  # a click on the arrow's line: a breakpoint
+    assert shop.breakpoint_lines() == [start, target]
+    app.run()
+    app.immediate_line("? form.text")
+    assert wait_for(app, lambda: "\n100\n" in output(app))  # no tax added
+    assert "--- Ended (exit code 0) ---" in finish(app)

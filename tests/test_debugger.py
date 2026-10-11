@@ -357,3 +357,78 @@ def test_starting_in_step_mode(tmp_path, shop):
     dbg.break_into_event()  # the first event
     module.total([1])
     assert where(ide.paused()[0]) == ("total", LINE["count = 0"])
+
+
+# ----- logpoints, breaking where errors are raised, changing values -----
+
+def test_a_logpoint_logs_instead_of_stopping(tmp_path, shop):
+    module, path = shop
+    ide = PretendIDE()
+    dbg = make(tmp_path, ide)
+    dbg.set_breakpoints({path: [
+        {"line": LINE["count += price"], "log": "adding {price}, {count=}", "condition": "price > 1"},
+        {"line": LINE["return count"], "log": "{nonsense}"},
+    ]})
+    assert module.total([1, 2, 3]) == 6
+    assert ide.paused() == []
+    logs = [m["text"] for m in ide.told if m["event"] == "log"]
+    assert logs == ["adding 2, count=1", "adding 3, count=3",
+                    "{nonsense}  <NameError: name 'nonsense' is not defined>"]
+
+
+def test_breaking_where_an_error_is_raised(tmp_path, shop):
+    module, path = shop
+    ide = PretendIDE("continue")
+    dbg = make(tmp_path, ide)
+    dbg.break_on_all = True
+    dbg.trace_if_needed()
+    try:
+        module.broken({"name": "tea"})  # a KeyError, caught by this try
+    except KeyError as error:
+        caught = error
+    stop, = ide.paused()  # once, where it was raised (not again in each frame it leaves)
+    assert stop["reason"] == "raised" and stop["message"] == "KeyError: 'missing'" and stop["stepping"]
+    assert where(stop) == ("broken", LINE['return name.upper() + order["missing"]'])
+    assert dbg.raised_here(caught)  # (an event that fails with it doesn't pause again)
+
+
+def test_errors_that_are_how_python_works_dont_stop(tmp_path, shop):
+    module, _ = shop
+    ide = PretendIDE()
+    dbg = make(tmp_path, ide)
+    dbg.break_on_all = True
+    dbg.trace_if_needed()
+    assert module.total(iter([1, 2])) == 3  # (StopIteration ends the loop)
+    assert ide.paused() == []
+
+
+def test_changing_values_while_paused(tmp_path, shop):
+    module, path = shop
+    ide = PretendIDE({"cmd": "assign", "path": ["self", "items", "[0]"], "value": "'milk'"},
+                     {"cmd": "assign", "path": ["self", "owner", "'name'"], "value": "'Bo' * 2"},
+                     {"cmd": "assign", "path": ["self", "owner"], "value": "nonsense"},
+                     {"cmd": "assign", "path": ["self", "items"], "value": "('a', 'tuple')"},
+                     {"cmd": "assign", "path": ["self", "items", "[1]"], "value": "'x'"},
+                     "continue")
+    dbg = make(tmp_path, ide)
+    dbg.set_breakpoints({path: [LINE["self._secret = 1"]]})
+    basket = module.Basket()
+    assert basket.items == ("a", "tuple") and basket.owner == {"name": "BoBo"}
+    notes = [m["text"] for m in ide.told if m["event"] == "note"]
+    assert notes == ["Can't change self.owner: NameError: name 'nonsense' is not defined",
+                     "Can't change self.items[1]: TypeError: a tuple's items can't be changed"]
+    frames = [m for m in ide.told if m["event"] == "frame"]
+    assert len(frames) == 5  # Locals shows the new values after each
+
+
+def test_changing_a_variable_while_paused(tmp_path, shop):
+    module, path = shop
+    ide = PretendIDE({"cmd": "assign", "path": ["prices"], "value": "[10, 20]"}, "continue")
+    dbg = make(tmp_path, ide)
+    dbg.set_breakpoints({path: [LINE["for price in prices:"]]})
+    result = module.total([1])
+    notes = [m["text"] for m in ide.told if m["event"] == "note"]
+    if sys.version_info >= (3, 13):
+        assert result == 30 and notes == []
+    else:
+        assert result == 1 and "before Python 3.13" in notes[0]
