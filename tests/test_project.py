@@ -240,8 +240,13 @@ def test_default_and_explicit_instances(tmp_path, monkeypatch):
     [
         ('[project]\nname = "x"\n', '[project]\ndependencies = ["rich"]\nname = "x"\n'),
         ('[project]\ndependencies = []\n', '[project]\ndependencies = [\n    "rich",\n]\n'),
+        # Changed where it stands; the comment stays.
         ('[project]\ndependencies = [\n  "Rich==13",  # pinned, ] in a comment\n  "requests[socks]>=2",\n]\n\n[tool.readymade]\n',
-         '[project]\ndependencies = [\n    "requests[socks]>=2",\n    "rich",\n]\n\n[tool.readymade]\n'),
+         '[project]\ndependencies = [\n  "rich",  # pinned, ] in a comment\n  "requests[socks]>=2",\n]\n\n[tool.readymade]\n'),
+        # Added after the last, indented the same, with a comma after the one before; comments stay.
+        ('[project]\ndependencies = [\n  # what the program needs\n  "requests"  # for the prices\n]\n',
+         '[project]\ndependencies = [\n  # what the program needs\n  "requests",  # for the prices\n  "rich",\n]\n'),
+        ('[project]\ndependencies = ["requests"]\n', '[project]\ndependencies = ["requests", "rich"]\n'),
         ('[tool.readymade]\n', '[tool.readymade]\n\n[project]\ndependencies = ["rich"]\n'),
     ],
 )

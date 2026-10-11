@@ -55,6 +55,48 @@ def find_method(source, name):
     return source.count("\n", 0, m.start()) + 1 if m else None
 
 
+def method_at(source, line):
+    """The name of the method (or function) a line (1-based) is in, or None. By the
+    indentation of the lines that start statements (not those inside brackets or strings),
+    so it works while the code has errors."""
+    lines = source.splitlines()
+    if not 1 <= line <= len(lines):
+        return None
+    starts = _statement_lines(source)
+    defs = []  # [(indent, name)] around the line being read
+    for number, text in enumerate(lines[:line], 1):
+        stripped = text.strip()
+        if number not in starts or not stripped or stripped.startswith("#"):
+            continue
+        indent = len(text) - len(text.lstrip())
+        while defs and indent <= defs[-1][0]:
+            defs.pop()
+        found = re.match(r"[ \t]*(?:async[ \t]+)?def[ \t]+(\w+)", text)
+        if found:
+            defs.append((indent, found.group(1)))
+    return defs[-1][1] if defs else None
+
+
+def _statement_lines(source):
+    """The line numbers where statements start (lines of their own, not continued ones);
+    after a tokenizing error, every later line counts."""
+    import io
+    import tokenize
+
+    starts, expecting = set(), True
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type in (tokenize.NEWLINE, tokenize.NL):
+                expecting = expecting or token.type == tokenize.NEWLINE
+            elif token.type not in (tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT) and expecting:
+                starts.add(token.start[0])
+                expecting = False
+    except (tokenize.TokenError, IndentationError, SyntaxError) as error:
+        broke_at = error.args[1][0] if len(error.args) > 1 and isinstance(error.args[1], tuple) else 1
+        starts.update(range(broke_at, source.count("\n") + 2))
+    return starts
+
+
 def add_method(source, class_name, name, params=()):
     """An Edit that adds an empty method at the end of the class."""
     lines = source.splitlines(keepends=True)

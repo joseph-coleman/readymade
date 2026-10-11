@@ -770,9 +770,23 @@ class CodeView(ttk.Frame):
             completions.close()  # it opens again in the new colors
         self._show_numbers()
 
+    def show_handler_at(self, line):
+        """Show in the Object and Event dropdowns the handler a line is in (Button1, click)."""
+        method = codegen.method_at(self.get_source(), line)
+        if method is None:
+            return
+        for obj in sorted(self.app.code_objects(), key=len, reverse=True):  # (the longest name that fits)
+            event = method[len(obj) + 1:] if method.startswith(f"{obj}_") else None
+            if event and event in [e.name for e in self.app.events_for(obj)]:
+                self.objects.set(obj)
+                self._refresh_events()
+                self.events.set(next(v for v in self.events["values"] if v.removesuffix(_IMPLEMENTED) == event))
+                return
+
     def show_error(self, line, message):
         """Highlight the line where a run-time error happened, with its message above the code."""
         self.clear_error()
+        self.show_handler_at(line)
         self.text.tag_add("error", f"{line}.0", f"{line}.0 lineend +1c")
         self.text.mark_set("insert", f"{line}.0")
         self.text.see(f"{line}.0")
@@ -870,6 +884,7 @@ class CodeView(ttk.Frame):
     def show_paused(self, line):
         """While the program is paused: the line it's at, in yellow with an arrow (as in VB)."""
         self.clear_paused()
+        self.show_handler_at(line)
         self.text.mark_set("paused", f"{line}.0")
         self.text.mark_gravity("paused", tk.LEFT)
         self.text.tag_add("current", f"{line}.0", f"{line}.0 lineend +1c")

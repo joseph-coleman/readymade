@@ -315,6 +315,24 @@ def rename_imports(source, old, new):
 _NOT_SHOWN = {"__pycache__", "build", "dist", "venv", "node_modules", ".DS_Store", "Thumbs.db", "desktop.ini"}
 
 
+def rename_form_references(source, old, new):
+    """Python code with a form's name changed where it's used: forms.Old, and imports of it.
+    Where the code does `from Old import Old`, Old there is the form's class, so each Old in
+    that code changes; otherwise it's the module (see rename_imports)."""
+    source = re.sub(rf"\bforms\.{re.escape(old)}\b", f"forms.{new}", source)
+    if re.search(rf"^[ \t]*from[ \t]+{re.escape(old)}[ \t]+import\b", source, re.M):
+        return re.sub(rf"(?<![\w.]){re.escape(old)}\b", new, source)
+    return rename_imports(source, old, new)
+
+
+def uses_of(source, name, form=False):
+    """The lines of some code that use a module (or with form, a form) by name: imports of it,
+    and for a form, forms.Name. [(line number, the line)]."""
+    pattern = re.compile(rf"^[ \t]*(from[ \t]+{re.escape(name)}[ \t]+import\b|import[ \t]+(.*,[ \t]*)?"
+                         rf"{re.escape(name)}\b(?!\.))" + (rf"|\bforms\.{re.escape(name)}\b" if form else ""))
+    return [(n, line.strip()) for n, line in enumerate(source.splitlines(), 1) if pattern.search(line)]
+
+
 def _machine():
     """This machine and platform, e.g. "MYPC win32": WSL and Windows on one PC count as two."""
     return f"{platform.node()} {sys.platform}"
@@ -365,54 +383,105 @@ def requirement_name(requirement):
 
 
 def add_dependency(text, requirement):
-    """Add requirement to [project] dependencies in pyproject.toml text, replacing
-    any entry for the same package and leaving the rest of the text as it was."""
-    requirement = requirement.strip()
-    return _change_dependencies(text, lambda current: [*_without(current, requirement), requirement])
+    """Add requirement to [project] dependencies in pyproject.toml text, replacing any entry
+    for the same package where it is, and leaving the rest of the text (comments in the list
+    too) as it was."""
+    return _edit_dependencies(text, requirement.strip(), adding=True)
 
 
 def remove_dependency(text, requirement):
-    """Remove requirement's package from [project] dependencies in pyproject.toml text."""
-    return _change_dependencies(text, lambda current: _without(current, requirement))
+    """Remove requirement's package from [project] dependencies in pyproject.toml text (with
+    its line, and any comment on it, when it has a line of its own)."""
+    return _edit_dependencies(text, requirement, adding=False)
 
 
-def _without(requirements, requirement):
-    return [r for r in requirements if requirement_name(r) != requirement_name(requirement)]
-
-
-def _change_dependencies(text, change):
-    """Replace [project] dependencies with change(the current list), leaving the rest of the text as it was."""
+def _edit_dependencies(text, requirement, adding):
+    """Change the dependencies list in place, as someone editing it by hand would."""
     header = re.search(r"(?m)^\[project\][ \t]*$", text)
+    literal = json.dumps(requirement)
     if header is None:
-        wanted = change([])
-        return text.rstrip("\n") + f"\n\n[project]\ndependencies = {_inline(wanted)}\n" if wanted else text
+        return text.rstrip("\n") + f"\n\n[project]\ndependencies = [{literal}]\n" if adding else text
     start = header.end()
     following = re.search(r"(?m)^\[", text[start:])
     end = start + following.start() if following else len(text)
     key = re.search(r"(?m)^dependencies[ \t]*=[ \t]*\[", text[start:end])
     if key is None:
-        wanted = change([])
-        return text[:start] + f"\ndependencies = {_inline(wanted)}" + text[start:] if wanted else text
+        return text[:start] + f"\ndependencies = [{literal}]" + text[start:] if adding else text
     open_at = start + key.end() - 1
     close_at = _closing_bracket(text, open_at)
+    items = _list_items(text, open_at, close_at)
+    same = [item for item in items if requirement_name(item[2]) == requirement_name(requirement)]
+    if not adding:
+        for item in reversed(same):
+            text = _remove_item(text, item, multi_line="\n" in text[open_at:close_at])
+        return text
+    if same:  # this package is there already: changed where it stands
+        first, *others = same
+        for item in reversed(others):
+            text = _remove_item(text, item, multi_line="\n" in text[open_at:close_at])
+        return text if first[2] == requirement else text[:first[0]] + literal + text[first[1]:]
+    return _append_item(text, open_at, close_at, items, literal)
+
+
+def _list_items(text, open_at, close_at):
+    """The strings in a TOML list: [(start, end, value)], skipping comments."""
     import tomllib
 
-    current = tomllib.loads("d = " + text[open_at : close_at + 1])["d"]
-    wanted = change(current)
-    if wanted == current:
-        return text  # nothing to change, so not even the list's layout
-    return text[:open_at] + _toml_list(wanted) + text[close_at + 1 :]
+    items, i = [], open_at + 1
+    while i < close_at:
+        char = text[i]
+        if char == "#":
+            newline = text.find("\n", i)
+            i = close_at if newline < 0 else newline
+            continue
+        if char in "\"'":
+            j = i + 1
+            while j < close_at and text[j] != char:
+                j += 2 if char == '"' and text[j] == "\\" else 1
+            items.append((i, j + 1, tomllib.loads("v = " + text[i:j + 1])["v"]))
+            i = j + 1
+            continue
+        i += 1
+    return items
 
 
-def _inline(requirements):
-    return "[" + ", ".join(json.dumps(r) for r in requirements) + "]"
+def _append_item(text, open_at, close_at, items, literal):
+    inside = text[open_at + 1:close_at]
+    if not items and not inside.strip():
+        return text[:open_at] + f"[\n    {literal},\n]" + text[close_at + 1:]
+    if "\n" not in inside:  # all on one line: ["a", "b"]
+        last = items[-1][1]
+        return text[:last] + f", {literal}" + text[last:]
+    # One per line: after the last, indented the same, with a comma after the one before.
+    indent = "    "
+    if items:
+        last_start, last_end, _ = items[-1]
+        line_start = text.rfind("\n", 0, last_start) + 1
+        indent = text[line_start:last_start]
+        after = re.match(r"[ \t]*,", text[last_end:])
+        if after is None:
+            text = text[:last_end] + "," + text[last_end:]
+            close_at += 1
+    close_line = text.rfind("\n", 0, close_at) + 1
+    if not text[close_line:close_at].strip():  # ] on its own line
+        return text[:close_line] + f"{indent}{literal},\n" + text[close_line:]
+    return text[:close_at] + f"\n{indent}{literal},\n" + text[close_at:]
 
 
-def _toml_list(requirements):
-    """A rewritten list: one requirement per line, so changes diff cleanly."""
-    if not requirements:
-        return "[]"
-    return "[" + "".join(f"\n    {json.dumps(r)}," for r in requirements) + "\n]"
+def _remove_item(text, item, multi_line):
+    start, end, _ = item
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    line_end = len(text) if line_end < 0 else line_end
+    rest = text[end:line_end].lstrip(" \t")
+    rest = rest[1:].lstrip(" \t") if rest.startswith(",") else rest
+    if multi_line and not text[line_start:start].strip() and (not rest or rest.startswith("#")):
+        return text[:line_start] + text[line_end + 1:]  # its whole line, with any comment on it
+    following = re.match(r"[ \t]*,[ \t]*", text[end:])
+    if following:
+        return text[:start] + text[end + following.end():]
+    before = re.search(r",[ \t]*$", text[:start])
+    return text[:before.start()] + text[end:] if before else text[:start] + text[end:]
 
 
 def _closing_bracket(text, open_at):

@@ -25,6 +25,7 @@ from readymade import events, formatting, formfile, menus, package, remote, user
 from readymade.controls import REGISTRY
 from readymade.formfile import FormFileError
 from readymade.ide import assist
+from readymade.form import FORM
 from readymade.ide.editors import FileEditor, FormEditor, ModuleEditor, ViewerEditor, bring_in
 from readymade.ide.linting import Linter
 from readymade.ide.find import FindBar, FindInFilesPanel
@@ -1657,11 +1658,17 @@ class App:
         if kind == "file":
             return self._remove_file(name)
         files = " and ".join([f"{name}.form", f"{name}.py"] if kind == "form" else [f"{name}.py"])
-        uses = f"forms.{name}" if kind == "form" else f"import {name}"
+        uses = self.uses_of(name, form=kind == "form")
+        if uses:
+            shown = [f"    {file}, line {line}: {text}" for file, line, text in uses[:8]]
+            if len(uses) > 8:
+                shown.append(f"    and {len(uses) - 8} more")
+            said = "This code uses it, and will need changing:\n" + "\n".join(shown)
+        else:
+            said = "Nothing else in the project uses it."
         if not messagebox.askyesno(
             f"Remove {kind.capitalize()}",
-            f"Remove {name} from the project? This moves {files} to the {trash.name()}.\n\n"
-            f"Code that uses it (like {uses}) will need changing.",
+            f"Remove {name} from the project? This moves {files} to the {trash.name()}.\n\n{said}",
             icon="warning", default="no", parent=self.root,
         ):
             return False
@@ -1884,6 +1891,63 @@ class App:
         self.project.set_bundled(relative, bundled)
         self.explorer_refresh()
         self.immediate.write(f"--- Make EXE {'bundles' if bundled else 'leaves out'} {relative}. ---\n")
+
+    def uses_of(self, name, form=False):
+        """The project's code that uses a module (or form) by name, besides its own:
+        [(file, line number, the line)]; open files as they are in their tabs."""
+        if self.project is None:
+            return []
+        found = []
+        for path, source, relative in self.search_files():
+            if path.suffix == ".py" and path.stem != name:
+                found += [(relative, line, text) for line, text in project_module.uses_of(source, name, form)]
+        return found
+
+    def rename_form(self, name, new=None):
+        """Project Explorer > Rename... (F2) on a form: its class and files get the new name, and
+        so does code that uses it (forms.Old, its imports), open or not (open code then needs
+        saving). Its unsaved changes are saved first. Returns whether it was renamed."""
+        if self.project is None:
+            return False
+        if new is None:
+            new = simpledialog.askstring("Rename Form", f"New name for {name}:", initialvalue=name, parent=self.root)
+        new = (new or "").strip()
+        if not new or new == name:
+            return False
+        try:
+            self.project._check_new_name(new)
+        except ProjectError as e:
+            messagebox.showerror("Rename Form", str(e), parent=self.root)
+            return False
+        editor = self._editor(FormEditor, name) or self.open_form(name)
+        if editor is None or (editor.is_dirty() and not editor.save()):
+            return False
+        if editor.set_property(FORM, "name", new) is None or not editor.save():  # (save renames its files)
+            return False
+        changed = []
+        on_disk = {path: path.read_text(encoding="utf-8") for path in self.project.folder.glob("*.py")}
+        for other in self.editors:
+            if other is editor or other.code.on_breakpoints is None:
+                continue
+            source = other.code.get_source()
+            renamed = project_module.rename_form_references(source, name, new)
+            on_disk.pop(Path(other.code_path), None)
+            if renamed != source:
+                other.code.replace_source(renamed)
+                changed.append(Path(other.code_path).name)
+        on_disk.pop(editor.code_path, None)
+        for path, source in on_disk.items():
+            renamed = project_module.rename_form_references(source, name, new)
+            if renamed != source:
+                path.write_text(renamed, encoding="utf-8")
+                changed.append(path.name)
+        self._rename_in_debug_settings(f"{name}.py", f"{new}.py")
+        self.explorer_refresh()
+        self.update_title()
+        self.linter.check_project()
+        self.immediate.write(f"--- Renamed {name} to {new}" +
+                             (f", and its uses in {', '.join(sorted(changed))}" if changed else "") + ". ---\n")
+        return True
 
     def rename_module(self, name, new=None):
         """Project Explorer > Rename...: give a module a new name, changing the project's imports

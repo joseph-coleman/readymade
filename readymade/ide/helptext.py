@@ -184,7 +184,8 @@ def panel(name, platform=sys.platform):
         ]),
         "explorer": ("Project Explorer", "the project's parts", [
             "Forms and Modules: the project's code. Double-click to open; right-click for more",
-            "(View Code, Set as Startup, Rename, Remove). F2 renames a module, Delete removes.",
+            "(View Code, Set as Startup, Rename, Remove). F2 renames, changing the code that uses it",
+            "too; Remove says first what uses it. Delete removes.",
             "(startup) marks the form F5 shows first.",
             "",
             "The Python row: the interpreter that runs the program. Double-click to choose another;",

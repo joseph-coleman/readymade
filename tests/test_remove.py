@@ -11,7 +11,11 @@ from readymade.project import Project
 # ----- the project -----
 
 @pytest.mark.parametrize("before, after", [
-    ('[project]\ndependencies = ["rich", "requests>=2"]\n', '[project]\ndependencies = [\n    "requests>=2",\n]\n'),
+    ('[project]\ndependencies = ["rich", "requests>=2"]\n', '[project]\ndependencies = ["requests>=2"]\n'),
+    ('[project]\ndependencies = ["requests>=2", "rich"]\n', '[project]\ndependencies = ["requests>=2"]\n'),
+    # Its own line goes, with its comment; other comments stay.
+    ('[project]\ndependencies = [\n    # wanted\n    "requests>=2",  # prices\n    "rich",  # colors\n]\n',
+     '[project]\ndependencies = [\n    # wanted\n    "requests>=2",  # prices\n]\n'),
     ('[project]\ndependencies = ["Rich[jupyter]>=13"]\n', '[project]\ndependencies = []\n'),  # by package name
     ('[project]\ndependencies = ["requests"]\n', '[project]\ndependencies = ["requests"]\n'),  # not there: unchanged
     ('[project]\nname = "x"\n', '[project]\nname = "x"\n'),  # no list at all
@@ -83,7 +87,8 @@ def test_removing_a_form_closes_it_and_deletes_its_files(app, answer):
     asked = answer(False)
     assert not app.remove_from_project("form", "Form2")
     assert (app.project.folder / "Form2.form").exists() and editor in app.editors
-    assert "This moves Form2.form and Form2.py to the Trash" in asked[0].replace("Recycle Bin", "Trash") and "forms.Form2" in asked[0]
+    assert "This moves Form2.form and Form2.py to the Trash" in asked[0].replace("Recycle Bin", "Trash")
+    assert asked[0].endswith("Nothing else in the project uses it.")
 
     answer(True)
     assert app.remove_from_project("form", "Form2")
@@ -101,7 +106,7 @@ def test_removing_a_module(app, answer):
     app.open_module("helpers")
     asked = answer(True)
     assert app.remove_from_project("module", "helpers")
-    assert "import helpers" in asked[0]
+    assert asked[0].endswith("Nothing else in the project uses it.")
     assert app.project.modules() == [] and not any(e.name == "helpers" for e in app.editors)
     assert "module:helpers" not in explorer_rows(app)
 
@@ -342,3 +347,42 @@ def test_a_chosen_picture_shows_in_the_files_list(app, tmp_path, monkeypatch):
     assert tree.item("file:images/logo.png", "text") == "logo.png"
     app.save()
     assert tree.item("file:images/logo.png", "text") == "logo.png  (bundled)"  # a form shows it
+
+
+def test_renaming_a_form(app):
+    from test_ide import write_code
+
+    app.project.add_form("Settings")
+    app.set_startup("Settings")
+    write_code(app, "Settings", "from readymade import Form\n\n\nclass Settings(Form):\n    pass\n\n\n"
+               "if __name__ == \"__main__\":\n    Settings.run()\n")
+    write_code(app, "Form1", "from readymade import Form, forms\n\n\nclass Form1(Form):\n"
+               "    def Form_load(self):\n        forms.Settings.show()\n")
+    app.project.add_module("tools")
+    (app.project.folder / "tools.py").write_text("from Settings import Settings\n\n\ndef make():\n    return Settings()\n")
+    form1 = app.open_form("Form1", "code")
+    assert app.rename_form("Settings", "Options")
+    folder = app.project.folder
+    assert (folder / "Options.form").exists() and not (folder / "Settings.form").exists()
+    options_code = (folder / "Options.py").read_text()
+    assert "class Options(Form):" in options_code and "Options.run()" in options_code
+    assert "forms.Options.show()" in form1.code.get_source() and form1.is_dirty()  # open: changed there, to save
+    assert (folder / "tools.py").read_text() == "from Options import Options\n\n\ndef make():\n    return Options()\n"
+    assert app.project.startup == "Options"
+    assert app.explorer.tree.exists("form:Options") and app.explorer.menu_for("form:Options").entrycget(
+        "Rename...", "state") == "normal"
+    assert "Renamed Settings to Options, and its uses in Form1.py, tools.py." in app.immediate.output.get("1.0", "end")
+
+
+def test_removing_says_what_uses_it(app, answer):
+    from test_ide import write_code
+
+    app.project.add_form("Settings")
+    write_code(app, "Form1", "from readymade import Form, forms\n\n\nclass Form1(Form):\n"
+               "    def Form_load(self):\n        forms.Settings.show()\n")
+    asked = answer(False)
+    app.remove_from_project("form", "Settings")
+    assert "This code uses it, and will need changing:\n    Form1.py, line 6: forms.Settings.show()" in asked[-1]
+    app.project.add_module("lonely")
+    app.remove_from_project("module", "lonely")
+    assert "Nothing else in the project uses it." in asked[-1]

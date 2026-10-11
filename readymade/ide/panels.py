@@ -174,7 +174,8 @@ class ProjectExplorer(ttk.Frame):
                 return "Make EXE puts this in the program, with the folder it's in."
             return "Make EXE puts this in the program: a form shows it (or it's the program's icon)."
         if text in ("Forms", "Modules") and self.tree.parent(row) and not self.tree.parent(self.tree.parent(row)):
-            return ("The project's forms: double-click one to design it, right-click for its code." if text == "Forms"
+            return ("The project's forms: double-click one to design it, right-click for its code; F2 renames."
+                    if text == "Forms"
                     else "Python code the forms share: import it by name. Double-click to open; F2 renames.")
         return ""
 
@@ -267,13 +268,15 @@ class ProjectExplorer(ttk.Frame):
         for label in ("View Object", "Set as Startup"):
             enable(self.menu, label, row.startswith("form:"))
         enable(self.menu, "Remove...", row.startswith(("form:", "module:")))
-        enable(self.menu, "Rename...", row.startswith("module:"))
+        enable(self.menu, "Rename...", row.startswith(("form:", "module:")))
         return self.menu
 
     def _rename(self):
         kind, name = self._selected()
         if kind == "module":
             self.app.rename_module(name)
+        elif kind == "form":
+            self.app.rename_form(name)
         elif kind == "file":
             self.app.rename_file(name)
         return "break"

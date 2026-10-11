@@ -74,3 +74,13 @@ def test_rename_control_renames_handlers_and_references_only():
 def test_rename_class():
     source = codegen.new_module("Form1")
     assert codegen.rename_class(source, "Form1", "Main") == codegen.new_module("Main")
+
+
+def test_the_method_a_line_is_in():
+    from readymade.codegen import method_at
+
+    source = "class Form1(Form):\n    def Button1_click(self):\n        if x:\n\n            y = (\n" \
+             "    1)\n        z = 1\n\n    async def Timer1_timer(self):\n        pass\n\nx = 1\n"
+    assert [method_at(source, n) for n in (1, 2, 3, 5, 6, 7, 9, 10, 12)] == [
+        None, "Button1_click", "Button1_click", "Button1_click", "Button1_click", "Button1_click", "Timer1_timer",
+        "Timer1_timer", None]

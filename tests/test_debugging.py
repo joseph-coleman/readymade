@@ -611,3 +611,19 @@ def test_breakpoints_stay_put_when_code_is_changed_for_you(app, shop):
     assert shop.breakpoint_lines() == [line + 1]
     shop.text.edit_undo()
     assert shop.get_source() == source + "\n\ndef extra():\n    pass\n"  # still one undo step each
+
+
+def test_the_dropdowns_show_the_handler_paused_in(app, shop):
+    shop.toggle_breakpoint(LINES["tax = price // 10"])  # in add_tax: not a handler, so they stay
+    shop.objects.set("")
+    shop.toggle_breakpoint(LINES['basket = {"tea": 2, "jam": 0}'])
+    app.run()
+    assert paused_at(app, LINES["tax = price // 10"])
+    assert shop.objects.get() == ""
+    app.run()
+    app.immediate_line("_ = Button1.widget.invoke()")
+    assert paused_at(app, LINES['basket = {"tea": 2, "jam": 0}'])
+    assert (shop.objects.get(), shop.events.get().split()[0]) == ("Button1", "click")
+    app.run()  # on to the click's error, which pauses it again
+    assert wait_for(app, lambda: app.session.paused is not None and app.session.paused["reason"] == "error")
+    assert "--- Ended (exit code 0) ---" in finish(app)

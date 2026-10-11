@@ -2,23 +2,15 @@
 
 Ideas and gaps noted along the way, roughly by area.
 
-## Bug
-- **Project Files**:  When an Image widget gets the .picture property set, the image gets copied to the /images location.  The Project files listing doesn't update or refresh the file listing.  Actually, any file added to the project directory outside of the IDE doesn't refresh.   
-
 ## Runtime
 - **Menu item `visible`**: Tk can't hide a menu entry; supporting it means rebuilding the menu.
 - **Debugging threads** (future): breaking in threads started with `in_thread` (tracing is only on the program's main thread). First, more examples that use threads, to get a feel for how pausing one thread should affect the others in this kind of program.
 - **Edit and continue** (tabled): VB let you change code while paused. Python can't swap the code of a function that's running, so today edits take effect next run (a note above the code says so).
 
 ## IDE
+- **Find follow-ups**: Replace in Files (today Find in Files finds; replacing is file by file); searching the Immediate window's output.
 - **Project Files follow-ups**: Markdown shown formatted (a preview beside the text); dragging files into the Project Explorer from the system's file manager.
-- **Search and Replace**:  The ability to search for a term in a code file and optionally replace occurrences of it.
-- **Project Explorer**: when a form is removed, point out code that still uses it (`forms.Name`, imports); rename a form from the Explorer (today: its name in the Properties panel).
 - **Environments**: create conda/mamba environments (existing ones work via Choose Python Interpreter).
-- **Add Library**: keep comments inside the `dependencies` list when it's rewritten.
-- **Code window**: after jumping to a run-time error, name the handler in the Object/Event dropdowns.
-- **Renaming a form**: also update references to it in other files (like `forms.OldName`).
-- **Watch**: Interface quirk? When something is being watched and either "Break when value is true" or "Break when the value changes is true" is selected, that type of watch condition is effectively a breakpoint. It doesn't correspond to any particular line in the program because it is a vastly more broad observation tool.  I had a watch that was breaking on a variable change and I was confused because I didn't see any breakpoints explicitly set. And it's not obvious from the Watches window what type a watch is--the "Type" in that view is for variable type, not monitor or break watch type.  Something to think about in terms of visibility and usability.
 
 ## Code editor
 - **Options follow-ups**: more themes; mark a run-time error's line in the line numbers; let a project ask for an indent width (today it's each person's, and generated handlers always use 4). Dark gaps: the menu bar on Windows and macOS (the system draws it), dialogs' title bars on Windows (only the main window's is dark), and the font chooser's family list.
