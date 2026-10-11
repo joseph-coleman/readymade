@@ -12,10 +12,10 @@ import re
 import subprocess
 import threading
 from pathlib import Path
-from tkinter import simpledialog
 
 from readymade import remote
 from readymade.ide import PACKAGE_ROOT, options
+from readymade.ide.dialog import ask_string
 from readymade.ide.debugging import DebugSession
 from readymade.ide.tracebacks import TracebackWatcher
 from readymade.ide.part import Part
@@ -200,7 +200,7 @@ class _DesignTimeConsole(code.InteractiveConsole):
         self.stream = _ImmediateStream(app)
 
     def _input(self, prompt=""):
-        answer = simpledialog.askstring("input()", str(prompt) or "Input:", parent=self.app.root)
+        answer = ask_string(self.app, "input()", str(prompt) or "Input:")
         if answer is None:
             raise EOFError
         self.stream.write(f"{prompt}{answer}\n")

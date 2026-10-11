@@ -63,7 +63,7 @@ def test_every_name_used_exists():
     for path in SOURCE.rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in owners:
-                if path.name == "protocol.py" or (node.value.id == "Event" and path.name in ("controls.py", "form.py",
-                                                                                           "editors.py", "menus.py")):
+                if path.name == "protocol.py" or (node.value.id == "Event" and (
+                        path.parent.name == "controls" or path.name in ("form.py", "editors.py", "menus.py"))):
                     continue  # (controls' own Event, a different thing)
                 assert hasattr(owners[node.value.id], node.attr), f"{path.name}:{node.lineno}: no {node.value.id}.{node.attr}"

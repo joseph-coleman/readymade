@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog
+from tkinter import filedialog, messagebox
 
 from readymade import formfile, names, package
 from readymade import project as project_module
@@ -17,6 +17,7 @@ from readymade.controls import REGISTRY
 from readymade.form import FORM
 from readymade.formfile import FormFileError
 from readymade.ide import trash
+from readymade.ide.dialog import ask_string
 from readymade.ide.editors import FileEditor, FormEditor, ModuleEditor, bring_in
 from readymade.project import ProjectError
 from readymade.ide.part import Part
@@ -83,7 +84,7 @@ class ProjectFiles(Part):
         kind = "Folder" if folder_too else "File"
         where = f" in {folder}" if folder else ""
         if name is None:
-            name = simpledialog.askstring(f"New {kind}", f"Name of the new {kind.lower()}{where}:", parent=self.root)
+            name = ask_string(self.app, f"New {kind}", f"Name of the new {kind.lower()}{where}:")
         name = (name or "").strip()
         if not name:
             return None
@@ -118,7 +119,7 @@ class ProjectFiles(Part):
         files follow it, and so does Make EXE's include list. Returns the new relative path."""
         old_name = relative.rpartition("/")[2]
         if new is None:
-            new = simpledialog.askstring("Rename", f"New name for {old_name}:", initialvalue=old_name, parent=self.root)
+            new = ask_string(self.app, "Rename", f"New name for {old_name}:", old_name)
         new = (new or "").strip()
         if not new or new == old_name:
             return None
@@ -230,7 +231,7 @@ class ProjectFiles(Part):
         if self.project is None:
             return False
         if new is None:
-            new = simpledialog.askstring("Rename Form", f"New name for {name}:", initialvalue=name, parent=self.root)
+            new = ask_string(self.app, "Rename Form", f"New name for {name}:", name)
         new = (new or "").strip()
         if not new or new == name:
             return False
@@ -276,8 +277,7 @@ class ProjectFiles(Part):
         if self.project is None:
             return False
         if new is None:
-            new = simpledialog.askstring("Rename Module", f"New name for {name}.py:", initialvalue=name,
-                                         parent=self.root)
+            new = ask_string(self.app, "Rename Module", f"New name for {name}.py:", name)
         new = (new or "").strip().removesuffix(".py")
         if not new or new == name:
             return False

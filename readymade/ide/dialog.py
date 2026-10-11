@@ -67,3 +67,39 @@ class Dialog(tk.Toplevel):
 
     def cancel(self):
         self.destroy()
+
+    def center_on(self, widget):
+        """Place the dialog over the middle of widget (the IDE's window, say)."""
+        self.update_idletasks()
+        x = widget.winfo_rootx() + (widget.winfo_width() - self.winfo_reqwidth()) // 2
+        y = widget.winfo_rooty() + (widget.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+
+
+class AskString(Dialog):
+    """A line of text to type, like tkinter's simpledialog.askstring but in the IDE's look."""
+
+    def __init__(self, app, title, prompt, initial=""):
+        super().__init__(app, title)
+        self.answer = None
+        ttk.Label(self.body, text=prompt).pack(anchor="w", pady=(0, 4))
+        self.entry = ttk.Entry(self.body, width=40)
+        self.entry.pack(fill=tk.X)
+        self.entry.insert(0, initial)
+        self.entry.select_range(0, tk.END)
+        self.entry.icursor(tk.END)
+        self.add_buttons()
+        self.entry.focus_set()
+
+    def ok(self):
+        self.answer = self.entry.get()
+        self.destroy()
+
+
+def ask_string(app, title, prompt, initial=""):
+    """Ask for a line of text and wait: what was typed, or None if canceled."""
+    asker = AskString(app, title, prompt, initial)
+    asker.center_on(app.root)
+    asker.grab_set()
+    asker.wait_window()
+    return asker.answer

@@ -536,6 +536,39 @@ def test_dialogs_are_built_alike(app, monkeypatch):
     assert based_on == [Path(sys.executable)] and not create.winfo_exists()
 
 
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_asking_for_a_name(app, theme):
+    from tkinter import ttk
+
+    from readymade import usersettings
+    from readymade.ide import options
+    from readymade.ide.dialog import AskString, ask_string
+
+    usersettings.set("theme", theme.lower())
+    options.apply(app)
+    seen = {}
+
+    def answer(typed):
+        asker = next(w for w in app.root.winfo_children() if isinstance(w, AskString) and w.winfo_exists())
+        try:
+            entry = asker.entry
+            seen["selected"] = entry.get()[entry.index("sel.first"):entry.index("sel.last")]
+            seen["colors"] = {str(asker.cget("background")), str(ttk.Style(asker).lookup("TFrame", "background"))}
+            if typed is not None:
+                entry.delete(0, tk.END)
+                entry.insert(0, typed)
+                asker.ok()
+        finally:
+            asker.cancel()  # (if it's still open: a failure here mustn't leave the test waiting)
+
+    app.root.after(100, answer, "Shop")
+    assert ask_string(app, "Add Module", "Module name:", "Module1") == "Shop"
+    assert seen["selected"] == "Module1"  # typing replaces the suggestion
+    assert len(seen["colors"]) == 1  # the window and what's in it look alike
+    app.root.after(100, answer, None)
+    assert ask_string(app, "Add Module", "Module name:") is None
+
+
 def test_shortcut_picker_shows_problems_as_you_go(app):
     editor = app.menu_editor()
     editor.add()
@@ -631,13 +664,13 @@ def test_ctrl_z_belongs_to_the_code_editor_while_typing_code(app):
     form.show_code()
     form.code.text.focus_force()
     app.root.update()
-    assert app._undo_key(redo=False) is None  # the Text widget's own undo runs
+    assert app.undo_key(redo=False) is None  # the Text widget's own undo runs
     assert form.design.controls
 
     form.show_design()
     form.surface.canvas.focus_force()
     app.root.update()
-    assert app._undo_key(redo=False) == "break"
+    assert app.undo_key(redo=False) == "break"
     assert form.design.controls == []
 
 
@@ -827,12 +860,12 @@ def test_clipboard_keys_leave_text_boxes_alone(app):
     form.add_control("Button", 8, 8)
     form.surface.canvas.focus_force()
     app.root.update()
-    assert app._clipboard_key("copy") == "break" and app.clipboard
+    assert app.clipboard_key("copy") == "break" and app.clipboard
     app.clipboard = []
     entry = next(w for w in app.properties.grid_frame.grid_slaves(column=1) if w.winfo_class() == "TEntry")
     entry.focus_force()
     app.root.update()
-    assert app._clipboard_key("copy") is None and app.clipboard == []  # the entry copies its own text
+    assert app.clipboard_key("copy") is None and app.clipboard == []  # the entry copies its own text
 
 
 def test_clicking_one_control_of_a_selection_selects_just_it(app):

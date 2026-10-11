@@ -19,16 +19,16 @@ from __future__ import annotations
 import argparse
 import queue
 import subprocess
-import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from readymade import events, formatting, menus
 from readymade.formfile import FormFileError
-from readymade.ide import PACKAGE_ROOT, assist, helptext, options
+from readymade.ide import PACKAGE_ROOT, assist, helptext, menubar, options
 from readymade.ide.debugcontrol import DebugControl
+from readymade.ide.dialog import ask_string
 from readymade.ide.debugging import DebugSession
 from readymade.ide.editors import FormEditor, ModuleEditor, ViewerEditor
 from readymade.ide.environments import Environments
@@ -39,18 +39,7 @@ from readymade.ide.panels import (BreakpointsPanel, CallStackPanel, HelpPanel, I
                                   ProblemsPanel, ProjectExplorer, PropertiesPanel, Toolbox, WatchesPanel)
 from readymade.ide.projectfiles import ProjectFiles
 from readymade.ide.running import Runner
-from readymade.ide.tooldialog import formatting_dialog, linting_dialog
 from readymade.project import Project, ProjectError
-from readymade.protocol import Cmd
-
-
-# Replace is Ctrl+H, as in VS Code; a Mac uses ⌘H to hide a program, so there it's Option+⌘F
-# (also VS Code's). Find Next is F3, and on a Mac ⌘G, its usual.
-REPLACE_KEY = "Ctrl+Alt+F" if sys.platform == "darwin" else "Ctrl+H"
-FIND_NEXT = "Ctrl+G" if sys.platform == "darwin" else "F3"
-# Step Into is F11, as in VS Code; macOS takes F11 for Show Desktop, so a Mac's menu shows
-# ⌘F11 (both work everywhere, and F11 does on a Mac with that system shortcut turned off).
-STEP_INTO = "Ctrl+F11" if sys.platform == "darwin" else "F11"
 
 
 class App:
@@ -84,7 +73,7 @@ class App:
         if "clam" in ttk.Style().theme_names():
             ttk.Style().theme_use("clam")
         self.light_theme = ttk.Style().theme_use()  # the Light option's look; Dark is its own theme (options.py)
-        self._build_menu()
+        menubar.build(self)  # the menus and their shortcuts (menubar.py)
 
         outer = ttk.PanedWindow(root, orient=tk.VERTICAL)
         outer.pack(fill=tk.BOTH, expand=True)
@@ -135,152 +124,10 @@ class App:
         outer.add(self.bottom_area, weight=0)
         self.debug.update_debug_windows()
 
-        # Shortcuts are written as on Windows and Linux; on a Mac, Ctrl is ⌘ and Alt is Option (see menus).
-        for shortcut, command in (
-            ("Ctrl+N", self.new_project),
-            ("Ctrl+O", self.open_project),
-            ("Ctrl+S", self.save),
-            ("Ctrl+W", self.close_document),
-            ("Ctrl+E", self.menu_editor),
-            ("F5", self.runner.run),
-            ("Shift+F5", self.runner.stop),
-            ("F6", self.debug.pause),
-            ("F9", self.debug.toggle_breakpoint),
-            ("Ctrl+Shift+F9", self.debug.clear_breakpoints),
-            ("F10", lambda: self.debug.debug_go(Cmd.NEXT)),
-            ("Ctrl+F10", self.debug.run_to_cursor),
-            ("Ctrl+Shift+F10", self.debug.set_next_statement),
-            ("F11", lambda: self.debug.debug_go(Cmd.STEP)),
-            ("Ctrl+F11", lambda: self.debug.debug_go(Cmd.STEP)),  # ⌘F11: macOS keeps F11 for Show Desktop
-            ("Shift+F11", lambda: self.debug.debug_go(Cmd.RETURN)),
-            ("Shift+F9", self.debug.quick_watch),
-            ("F7", lambda: self.form and self.form.show_code()),
-            ("Shift+F7", lambda: self.form and self.form.show_design()),
-            ("Shift+Alt+F", self.format_document),
-            ("F12", self.go_to_definition),
-            ("F1", self.show_help),
-            ("Ctrl+F", lambda: self.find()),
-            (REPLACE_KEY, lambda: self.find(replace=True)),
-            ("F3", lambda: self.find_next(1)),
-            ("Shift+F3", lambda: self.find_next(-1)),
-            ("Ctrl+Shift+F", self.find_in_files),
-            *([("Ctrl+G", lambda: self.find_next(1)), ("Ctrl+Shift+G", lambda: self.find_next(-1))]
-              if sys.platform == "darwin" else []),  # (a Mac's usual Find Next and Previous)
-        ):
-            menus.bind_shortcut(root, shortcut, lambda e, c=command: (c(), "break")[1])
-        for shortcut, redo in (("Ctrl+Z", False), ("Ctrl+Y", True), ("Ctrl+Shift+Z", True)):
-            menus.bind_shortcut(root, shortcut, lambda e, r=redo: self._undo_key(r))
-        for shortcut, action in (("Ctrl+X", "cut"), ("Ctrl+C", "copy"), ("Ctrl+V", "paste"),
-                                 ("Ctrl+Shift+V", "paste_code")):
-            menus.bind_shortcut(root, shortcut, lambda e, a=action: self._clipboard_key(a))
         root.protocol("WM_DELETE_WINDOW", self.exit)
         # Back from another program: look for files changed outside the IDE.
         root.bind("<FocusOut>", lambda e: root.after_idle(self.files.window_left), add="+")
         root.bind("<FocusIn>", lambda e: self.files.window_back(), add="+")
-
-    def _build_menu(self):
-        menubar = tk.Menu(self.root)
-        file = tk.Menu(menubar, tearoff=False)
-        file.add_command(label="New Project...", accelerator=menus.accelerator("Ctrl+N"), command=self.new_project)
-        file.add_command(label="Open Project...", accelerator=menus.accelerator("Ctrl+O"), command=self.open_project)
-        file.add_command(label="Save All", accelerator=menus.accelerator("Ctrl+S"), command=self.save)
-        file.add_command(label="Close", accelerator=menus.accelerator("Ctrl+W"), command=self.close_document)
-        file.add_separator()
-        file.add_command(label="Make EXE...", command=self.envs.make_exe)
-        file.add_separator()
-        file.add_command(label="Exit", command=self.exit)
-        edit = tk.Menu(menubar, tearoff=False, postcommand=lambda: self._update_edit_menu(edit))
-        edit.add_command(label="Undo", accelerator=menus.accelerator("Ctrl+Z"), command=self.undo)
-        redo = "Ctrl+Shift+Z" if sys.platform == "darwin" else "Ctrl+Y"  # each system's usual (both work)
-        edit.add_command(label="Redo", accelerator=menus.accelerator(redo), command=lambda: self.undo(redo=True))
-        edit.add_separator()
-        for label, action, key in (("Cut", "cut", "Ctrl+X"), ("Copy", "copy", "Ctrl+C"),
-                                   ("Paste", "paste", "Ctrl+V"), ("Paste with Code", "paste_code", "Ctrl+Shift+V"),
-                                   ("Delete", "delete", "Del")):
-            edit.add_command(label=label, accelerator=menus.accelerator(key), command=lambda a=action: self.edit(a))
-        edit.add_separator()
-        edit.add_command(label="Find...", accelerator=menus.accelerator("Ctrl+F"), command=lambda: self.find())
-        edit.add_command(label="Replace...", accelerator=menus.accelerator(REPLACE_KEY),
-                         command=lambda: self.find(replace=True))
-        edit.add_command(label="Find Next", accelerator=menus.accelerator(FIND_NEXT), command=lambda: self.find_next(1))
-        edit.add_command(label="Find Previous", accelerator=menus.accelerator(f"Shift+{FIND_NEXT}" if FIND_NEXT == "F3"
-                                                                                else "Ctrl+Shift+G"),
-                         command=lambda: self.find_next(-1))
-        edit.add_command(label="Find in Files...", accelerator=menus.accelerator("Ctrl+Shift+F"),
-                         command=self.find_in_files)
-        edit.add_separator()
-        edit.add_command(label="Toggle Comment", accelerator=menus.accelerator("Ctrl+/"), command=self.toggle_comment)
-        edit.add_command(label="Format Document", accelerator=menus.accelerator("Shift+Alt+F"), command=self.format_document)
-        edit.add_command(label="Go to Definition", accelerator=menus.accelerator("F12"), command=self.go_to_definition)
-        format_menu = self._build_format_menu(menubar)
-        project = tk.Menu(menubar, tearoff=False)
-        project.add_command(label="Add Form...", command=self.add_form)
-        project.add_command(label="Add Module...", command=self.add_module)
-        project.add_command(label="Refresh", command=self.explorer_refresh)
-        project.add_separator()
-        project.add_command(label="Create Environment...", command=self.envs.ask_create_environment)
-        project.add_command(label="Add Library...", command=self.envs.add_library)
-        project.add_separator()
-        project.add_command(label="Choose Python Interpreter...", command=self.envs.choose_python)
-        project.add_separator()
-        project.add_command(label="Linting...", command=lambda: self.project and linting_dialog(self))
-        project.add_command(label="Formatting...", command=lambda: self.project and formatting_dialog(self))
-        project.add_command(label="Use Default Python", command=lambda: self.envs.set_python(None))
-        project.add_separator()
-        project.add_command(label="Program Icon...", command=self.files.choose_icon)
-        project.add_command(label="Remove Program Icon", command=lambda: self.files.set_icon(None))
-        view = tk.Menu(menubar, tearoff=False)
-        view.add_command(label="Code", accelerator=menus.accelerator("F7"), command=lambda: self.form and self.form.show_code())
-        view.add_command(label="Object", accelerator=menus.accelerator("Shift+F7"), command=lambda: self.form and self.form.show_design())
-        view.add_separator()
-        view.add_checkbutton(label="Debug Windows", variable=self.debug.keep_debug_windows, command=self.debug.debug_windows_toggled)
-        view.add_command(label="Locals", command=lambda: self.debug.show_debug_window(self.locals))
-        view.add_command(label="Watches", command=lambda: self.debug.show_debug_window(self.watches_panel))
-        view.add_command(label="Call Stack", command=lambda: self.debug.show_debug_window(self.call_stack))
-        view.add_command(label="Breakpoints", command=lambda: self.debug.show_debug_window(self.breakpoints_panel))
-        tools = tk.Menu(menubar, tearoff=False)
-        tools.add_command(label="Menu Editor...", accelerator=menus.accelerator("Ctrl+E"), command=self.menu_editor)
-        tools.add_separator()
-        tools.add_command(label="Options...", command=self.show_options)
-        debug = tk.Menu(menubar, tearoff=False, postcommand=lambda: self.debug.update_debug_menu(debug))
-        for item in (
-            ("Continue", "F5", lambda: self.debug.debug_go(Cmd.CONTINUE)),
-            ("Step Into", STEP_INTO, lambda: self.debug.debug_go(Cmd.STEP)),
-            ("Step Over", "F10", lambda: self.debug.debug_go(Cmd.NEXT)),
-            ("Step Out", "Shift+F11", lambda: self.debug.debug_go(Cmd.RETURN)),
-            ("Run to Cursor", "Ctrl+F10", self.debug.run_to_cursor),
-            ("Set Next Statement", "Ctrl+Shift+F10", self.debug.set_next_statement),
-            ("Pause", "F6", self.debug.pause),
-            None,
-            ("Toggle Breakpoint", "F9", self.debug.toggle_breakpoint),
-            ("Breakpoint Condition...", None, self.debug.breakpoint_condition),
-            ("Clear All Breakpoints", "Ctrl+Shift+F9", self.debug.clear_breakpoints),
-            None,
-            ("Add Watch...", None, self.debug.add_watch),
-            ("Quick Watch...", "Shift+F9", self.debug.quick_watch),
-        ):
-            if item is None:
-                debug.add_separator()
-            else:
-                label, key, command = item
-                debug.add_command(label=label, accelerator=menus.accelerator(key) if key else "", command=command)
-        run = tk.Menu(menubar, tearoff=False)
-        run.add_command(label="Start", accelerator=menus.accelerator("F5"), command=self.runner.run)
-        run.add_command(label="End", accelerator=menus.accelerator("Shift+F5"), command=self.runner.stop)
-        menubar.add_cascade(label="File", menu=file)
-        menubar.add_cascade(label="Edit", menu=edit)
-        menubar.add_cascade(label="Format", menu=format_menu)
-        menubar.add_cascade(label="Project", menu=project)
-        menubar.add_cascade(label="View", menu=view)
-        menubar.add_cascade(label="Tools", menu=tools)
-        menubar.add_cascade(label="Debug", menu=debug)
-        menubar.add_cascade(label="Run", menu=run)
-        help_menu = tk.Menu(menubar, tearoff=False)
-        help_menu.add_command(label="Help on This", accelerator=menus.accelerator("F1"), command=self.show_help)
-        help_menu.add_command(label="readymade Overview", command=lambda: self.show_topic(helptext.home()))
-        menubar.add_cascade(label="Help", menu=help_menu)
-        menus.defer_commands(menubar)  # or dialogs opened from it freeze on macOS
-        self.root.configure(menu=menubar)
 
     # ----- the project -----
 
@@ -335,7 +182,7 @@ class App:
     def _add(self, kind, suggestion, create, open_it):
         if self.project is None:
             return
-        name = simpledialog.askstring(f"Add {kind}", f"{kind} name:", initialvalue=suggestion, parent=self.root)
+        name = ask_string(self, f"Add {kind}", f"{kind} name:", suggestion)
         if not name:
             return
         try:
@@ -369,53 +216,6 @@ class App:
         self.explorer_refresh()
         self.update_title()
 
-    def _build_format_menu(self, menubar):
-        """VB's Format menu, for the selected controls of the form being designed."""
-        def on_form(action, needs=1):
-            return lambda: self.designing() and len(self.form.selected_controls()) >= needs and action(self.form)
-
-        menu = tk.Menu(menubar, tearoff=False)
-        align = tk.Menu(menu, tearoff=False)
-        for label, edge in (("Lefts", "lefts"), ("Centers", "centers"), ("Rights", "rights"),
-                            ("Tops", "tops"), ("Middles", "middles"), ("Bottoms", "bottoms")):
-            align.add_command(label=label, command=on_form(lambda f, e=edge: f.align(e), needs=2))
-        align.add_separator()
-        align.add_command(label="to Grid", command=on_form(lambda f: f.align_to_grid()))
-        size = tk.Menu(menu, tearoff=False)
-        size.add_command(label="Width", command=on_form(lambda f: f.make_same_size(height=False), needs=2))
-        size.add_command(label="Height", command=on_form(lambda f: f.make_same_size(width=False), needs=2))
-        size.add_command(label="Both", command=on_form(lambda f: f.make_same_size(), needs=2))
-        spacing = {}
-        for axis, label in (("x", "Horizontal Spacing"), ("y", "Vertical Spacing")):
-            spacing[label] = tk.Menu(menu, tearoff=False)
-            spacing[label].add_command(label="Make Equal", command=on_form(lambda f, a=axis: f.space_evenly(a), needs=3))
-        center = tk.Menu(menu, tearoff=False)
-        center.add_command(label="Horizontally", command=on_form(lambda f: f.center_in_container("x")))
-        center.add_command(label="Vertically", command=on_form(lambda f: f.center_in_container("y")))
-        order = tk.Menu(menu, tearoff=False)
-        order.add_command(label="Bring to Front", command=on_form(lambda f: f.change_order(to_front=True)))
-        order.add_command(label="Send to Back", command=on_form(lambda f: f.change_order(to_front=False)))
-        # Each submenu, with how many selected controls it needs.
-        submenus = (("Align", align, 1), ("Make Same Size", size, 2),
-                    ("Horizontal Spacing", spacing["Horizontal Spacing"], 3),
-                    ("Vertical Spacing", spacing["Vertical Spacing"], 3),
-                    ("Center in Form", center, 1), ("Order", order, 1))
-        for label, submenu, _ in submenus:
-            menu.add_cascade(label=label, menu=submenu)
-        menu.add_separator()
-        self._tab_order_mode = tk.BooleanVar(self.root, False)
-        menu.add_checkbutton(label="Tab Order", variable=self._tab_order_mode, command=self.toggle_tab_order)
-
-        def update():
-            count = len(self.form.selected_controls()) if self.designing() else 0
-            for label, _, needs in submenus:
-                menu.entryconfigure(label, state=tk.NORMAL if count >= needs else tk.DISABLED)
-            menu.entryconfigure("Tab Order", state=tk.NORMAL if self.designing() else tk.DISABLED)
-            self._tab_order_mode.set(self.designing() and self.form.surface.tab_order_next is not None)
-
-        menu.configure(postcommand=update)
-        return menu
-
     def toggle_tab_order(self):
         """Format > Tab Order: click the form's controls in the order Tab should visit them
         (Esc, or the menu again, to finish)."""
@@ -443,7 +243,8 @@ class App:
             except tk.TclError:
                 pass  # nothing to undo
 
-    def _undo_key(self, redo):
+    def undo_key(self, redo):
+        """Ctrl+Z, Ctrl+Y: the designer's undo, unless typing in text, which has its own."""
         try:
             focus = self.root.focus_get()
         except KeyError:
@@ -741,7 +542,7 @@ class App:
         editor.code.replace_keeping_place(formatted)
         return True
 
-    def _clipboard_key(self, action):
+    def clipboard_key(self, action):
         """Ctrl+X/C/V act on controls only while the design surface has the keyboard;
         anywhere else (code, Properties, Immediate) they're the usual text keys."""
         try:
@@ -752,21 +553,6 @@ class App:
             return None
         self.edit(action)
         return "break"
-
-    def _update_edit_menu(self, menu):
-        editor = self.current_editor()
-        designing = editor is not None and editor.showing_design()
-        selected = bool(designing and editor.selected_controls())
-        for label, possible in (("Undo", editor.can_undo() if designing else editor is not None),
-                                ("Redo", editor.can_redo() if designing else editor is not None),
-                                ("Cut", selected or (editor is not None and not designing)),
-                                ("Copy", selected or (editor is not None and not designing)),
-                                ("Paste", bool(self.clipboard) if designing else editor is not None),
-                                ("Paste with Code", bool(self.clipboard and self.clipboard_handlers) if designing
-                                 else editor is not None),
-                                ("Delete", selected or (editor is not None and not designing)),
-                                ("Toggle Comment", editor is not None and not designing)):
-            menu.entryconfigure(label, state=tk.NORMAL if possible else tk.DISABLED)
 
     def menu_editor(self):
         """Open the Menu Editor for the form that's showing."""

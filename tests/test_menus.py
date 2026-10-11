@@ -170,15 +170,16 @@ def test_defer_commands_runs_them_after_the_menu_closes():
 
 @pytest.mark.usefixtures("display")
 def test_every_ide_menu_command_is_deferred(tmp_path, monkeypatch):
-    from tkinter import simpledialog
-
+    from readymade.ide import app as app_module
+    from readymade.ide import environments
     from readymade.ide.app import App
 
     root = tk.Tk()
     app = App(root, tmp_path / "Shop")
     try:
         asked = []
-        monkeypatch.setattr(simpledialog, "askstring", lambda *a, **kw: asked.append(a[0]))
+        for module in (app_module, environments):
+            monkeypatch.setattr(module, "ask_string", lambda app, title, *a: asked.append(title))
         bar = root.nametowidget(root["menu"])
         project_menu = next(bar.nametowidget(bar.entrycget(i, "menu")) for i in range(bar.index("end") + 1)
                             if bar.type(i) == "cascade" and bar.entrycget(i, "label") == "Project")

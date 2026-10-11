@@ -666,7 +666,7 @@ def drive(d):
     d.pump(0.2)
     d.xdo("mousemove", x, y)  # rest the mouse on Button1
     d.pump(1.2)
-    tip = "(lambda t: t.window.winfo_children()[0].cget('text') if t.window else None)(__import__('readymade.controls').controls._tip)"
+    tip = "(lambda t: t.window.winfo_children()[0].cget('text') if t.window else None)(__import__('readymade.controls.base').controls.base._tip)"
     d.check("the tooltip shows", d.ask(tip), "Says hello")
     d.shot("tooltip")
     x, y = d.ask("(TextBox1.widget.winfo_rootx() + 20, TextBox1.widget.winfo_rooty() + 10)")

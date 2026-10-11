@@ -7,11 +7,11 @@ import shutil
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from readymade import package
 from readymade.ide import PACKAGE_ROOT
-from readymade.ide.dialog import Dialog
+from readymade.ide.dialog import Dialog, ask_string
 from readymade.ide.makeexe import MakeExeDialog
 from readymade.project import ProjectError, describe_python, find_pythons, requirement_name
 from readymade.ide.part import Part
@@ -135,9 +135,7 @@ class Environments(Part):
         if self.project is None or not self.app.runner.idle():
             return
         if requirement is None:
-            requirement = simpledialog.askstring(
-                "Add Library", "Library to install from PyPI (for example: requests):", parent=self.root
-            )
+            requirement = ask_string(self.app, "Add Library", "Library to install from PyPI (for example: requests):")
         requirement = (requirement or "").strip()
         if not requirement:
             return

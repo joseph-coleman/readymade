@@ -23,9 +23,8 @@ import tkinter as tk
 from pathlib import Path
 
 from readymade import appearance, events, formfile, forms, keys, menus, names, pictures
-from readymade.controls import (Button, CheckBox, Event, Grid, OptionButton, _TabIndex, _TabStop, _WidgetText,
-                                control_of, create, focus_widget, option_group, repaint_inside, show_as_default,
-                                tab_numbers)
+from readymade.controls import (Event, OptionButton, TabIndex, TabStop, WidgetText, control_of, create, focus_widget,
+                                option_group, repaint_inside, show_as_default, tab_numbers)
 
 FORM = "Form"
 FORM_EVENTS = (
@@ -189,7 +188,7 @@ class Form:
                 self._on_form.append(control)
             self._containers[control.name] = spec.get("container")
         for control in self.controls.values():  # (made before what's in them, so arranged now)
-            if isinstance(control, Grid):
+            if control.arranges_inside:
                 control.arrange()
         self.menus = {}
         if design.menu:
@@ -298,7 +297,7 @@ class Form:
     def default_button(self, button):
         self._default_button = self._button(button, "default_button")
         for control in self.controls.values():
-            if isinstance(control, Button):  # the default button shows a heavier border
+            if control.can_be_default:  # the default button shows a heavier border
                 show_as_default(control, control is self._default_button)
 
     @property
@@ -315,7 +314,7 @@ class Form:
             return None
         if isinstance(button, str):
             button = self.controls.get(button)
-        if not isinstance(button, Button):
+        if button is None or not button.can_be_default:
             raise ValueError(f"{prop} must be one of the form's Buttons (or None)")
         return button
 
@@ -327,7 +326,7 @@ class Form:
         (or with none chosen, the first): the arrow keys move between them, as in Windows."""
         stops, groups = [], set()
         for control in self._tab_sequence():
-            if not isinstance(control, _TabStop) or not control.tabstop:
+            if not isinstance(control, TabStop) or not control.tabstop:
                 continue
             if isinstance(control, OptionButton):
                 group = self._option_group(control)
@@ -358,7 +357,7 @@ class Form:
 
     def _tab_sequence(self):
         """Every control with a place in the Tab order, Labels and Frames too, in that order."""
-        placed = [c for c in self.controls.values() if isinstance(c, _TabIndex)]
+        placed = [c for c in self.controls.values() if isinstance(c, TabIndex)]
         return sorted(placed, key=lambda c: (c.tabindex, self._design_order.index(c.name) if c.name in self._design_order else 0))
 
     def _tab(self, step):
@@ -389,7 +388,7 @@ class Form:
         if isinstance(focus, tk.Text):
             return None  # a new line in a multi-line text box
         focused = control_of(focus)
-        return self._press(focused if isinstance(focused, Button) else self._default_button)
+        return self._press(focused if focused is not None and focused.can_be_default else self._default_button)
 
     def _escape(self, e):
         return self._press(self._cancel_button)
@@ -403,15 +402,15 @@ class Form:
             return None
         for name in self._design_order:
             control = self.controls.get(name)
-            if (isinstance(control, _WidgetText) and control.access_key == letter and control.enabled
+            if (isinstance(control, WidgetText) and control.access_key == letter and control.enabled
                     and control.visible and control.widget.winfo_viewable()):
                 return self._use_access_key(control)
         return None
 
     def _use_access_key(self, control):
-        if isinstance(control, Button):
+        if control.access_key_action == "press":
             return self._press(control)
-        if isinstance(control, (CheckBox, OptionButton)):
+        if control.access_key_action == "choose":
             self._focus(control)
             control.widget.invoke()
             return "break"
@@ -424,7 +423,7 @@ class Form:
         """Where a Label's or Frame's access key goes: a Frame's first control, or the next
         control after a Label in the Tab order that Tab stops at (as in VB)."""
         def reachable(c):
-            return isinstance(c, _TabStop) and c.enabled and c.visible and c.widget.winfo_viewable()
+            return isinstance(c, TabStop) and c.enabled and c.visible and c.widget.winfo_viewable()
 
         def inside(name, frame):
             while name is not None:

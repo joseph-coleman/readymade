@@ -11,7 +11,8 @@ import pytest
 
 from readymade import Form, formfile, package
 from readymade import form as form_module
-from readymade.controls import REGISTRY, _tip
+from readymade.controls import REGISTRY
+from readymade.controls.base import _tip
 from readymade.project import Project
 
 pytestmark = pytest.mark.usefixtures("display")

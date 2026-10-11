@@ -1,10 +1,11 @@
 """The IDE's link with the programs it runs: the Immediate window, input(), help() and the debugger."""
 
 import tkinter as tk
-from tkinter import simpledialog
 
 import pytest
 from test_ide import wait_for, wait_for_exit
+
+from readymade.ide import running
 
 pytestmark = pytest.mark.usefixtures("display")
 
@@ -51,11 +52,11 @@ def test_help_writes_its_text(app):
 
 
 def test_input_and_help_at_design_time(app, monkeypatch):
-    monkeypatch.setattr(simpledialog, "askstring", lambda title, prompt, **kw: "Bob")
+    monkeypatch.setattr(running, "ask_string", lambda app, title, prompt, initial="": "Bob")
     app.runner.immediate_line("who = input('Who? ')")
     app.runner.immediate_line("? who")
     assert "Who? Bob\n" in output(app) and output(app).rstrip().endswith("Bob")
-    monkeypatch.setattr(simpledialog, "askstring", lambda title, prompt, **kw: None)  # Cancel
+    monkeypatch.setattr(running, "ask_string", lambda app, title, prompt, initial="": None)  # Cancel
     app.runner.immediate_line("input()")
     assert "EOFError" in output(app)
     app.runner.immediate_line("help(len)")

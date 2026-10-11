@@ -15,7 +15,7 @@ from __future__ import annotations
 import tkinter as tk
 
 from readymade import menus
-from readymade.controls import GRID_CELL, Button, Grid, create, grid_of, repaint_inside, show_as_default
+from readymade.controls import GRID_CELL, create, grid_of, repaint_inside, show_as_default
 from readymade.form import FORM
 from readymade.ide import options, tooltips
 
@@ -125,7 +125,7 @@ class DesignSurface(tk.Frame):
 
     def _mark_default(self, control):
         """The form's default button shows a heavier border, as it will when the program runs."""
-        if isinstance(control, Button):
+        if control.can_be_default:
             show_as_default(control, control.name == self.app.design.default_button)
 
     def refresh_menu(self):
@@ -169,7 +169,7 @@ class DesignSurface(tk.Frame):
         self.controls[control.name] = control
         _follow_size(spec, control)
         self._mark_default(control)
-        if isinstance(container, Grid):
+        if container is not None and container.arranges_inside:
             container.arrange()  # into its cell
         self._lift_handles()
 

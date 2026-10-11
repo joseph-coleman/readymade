@@ -15,7 +15,7 @@ from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from readymade import appearance, codegen, dialogs, formfile, layout, menus, names
-from readymade.controls import GRID_CELL, LOOK_CHOICES, REGISTRY, Event, Grid, tab_numbers
+from readymade.controls import GRID_CELL, LOOK_CHOICES, REGISTRY, Event, tab_numbers
 from readymade.form import FORM, FORM_EVENTS, check_name
 from readymade.ide import arrange, assist
 from readymade.ide.codeview import CodeView
@@ -53,6 +53,13 @@ def bring_in(folder, path, into="images"):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
     return target.relative_to(folder).as_posix()
+
+
+def _anchors_inside(spec):
+    """Whether the controls in this one (a Frame) keep to its edges by their anchors when it
+    changes size. (Not those in a Grid: it places them itself.)"""
+    kind = REGISTRY[spec["type"]]
+    return kind.is_container and not kind.arranges_inside
 
 
 def _same_file_contents(a, b):
@@ -210,7 +217,7 @@ class FormEditor(Editor):
     def _grid_of(self, spec):
         """The spec of the Grid a control is in, or None."""
         container = self.design.control(spec["container"]) if spec.get("container") else None
-        return container if container and container["type"] == "Grid" else None
+        return container if container and REGISTRY[container["type"]].arranges_inside else None
 
     @_undoable
     def set_cells(self, changes):
@@ -242,7 +249,7 @@ class FormEditor(Editor):
         """The allowed values of a property limited to fixed choices, or None."""
         if obj == FORM:
             if prop in ("default_button", "cancel_button"):
-                return ("", *(c["name"] for c in self.design.controls if c["type"] == "Button"))
+                return ("", *(c["name"] for c in self.design.controls if REGISTRY[c["type"]].can_be_default))
             return LOOK_CHOICES["cursor"] if prop == "cursor" else None
         if obj == MULTIPLE:
             spec = self._spec(self.selected)
@@ -433,7 +440,7 @@ class FormEditor(Editor):
         geometries = dict(geometries)
         for name, geometry in list(geometries.items()):
             spec = self._spec(name)
-            if spec["type"] == "Frame":
+            if _anchors_inside(spec):
                 grown = (geometry[2] - spec["width"], geometry[3] - spec["height"])
                 for inside, moved in self._anchored(name, *grown).items():
                     geometries.setdefault(inside, moved)
@@ -463,7 +470,7 @@ class FormEditor(Editor):
             new = layout.follow(old, spec.get("anchor", layout.DEFAULT), across, down)
             if new != old:
                 moves[spec["name"]] = new
-                if spec["type"] == "Frame":
+                if _anchors_inside(spec):
                     moves.update(self._anchored(spec["name"], new[2] - old[2], new[3] - old[3]))
         return moves
 
@@ -480,7 +487,7 @@ class FormEditor(Editor):
         name = self._free_name(type_name, set(self.object_names() + menus.names(self.design.menu)))
         spec = REGISTRY[type_name].new_spec(name, left, top, width, height, container)
         grid = self.surface.controls.get(container) if container else None
-        if isinstance(grid, Grid):
+        if grid is not None and grid.arranges_inside:
             spec["row"], spec["column"] = grid.cell_at(left, top)
             if "anchor" in spec:
                 spec["anchor"] = "top bottom left right"  # fills its cell, as in WPF

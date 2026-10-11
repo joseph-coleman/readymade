@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import tkinter as tk
 
-from readymade.ide import options
-
 DELAY = 600  # milliseconds the mouse rests on a widget before its tip shows
 
 
@@ -62,6 +60,8 @@ def _show(widget, text, x=None, y=None):
     _Tip.job = None
     if not widget.winfo_viewable():
         return
+    from readymade.ide import options  # (here: options has a dialog, and dialogs have tips)
+
     chrome = options.theme().chrome
     window = _Tip.window = tk.Toplevel(widget)
     window.wm_overrideredirect(True)  # no title bar or border from the window manager

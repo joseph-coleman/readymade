@@ -93,15 +93,21 @@ class DebugControl(Part):
         self.app.session.send(cmd=Cmd.PAUSE)
         self.immediate.write("--- Pausing: the program breaks when its next event starts (a click, a key, a timer). ---\n")
 
-    def update_debug_menu(self, menu):
-        paused = self.app.in_break_mode and self.app.session is not None and self.app.session.paused is not None
-        stepping = paused and self.app.session.can_step()
-        stopped = self.app.session is None and self.app.process is None and self.project is not None
-        for label, on in (("Continue", paused), ("Step Into", stepping or stopped), ("Step Over", stepping or stopped),
-                          ("Step Out", stepping), ("Run to Cursor", stepping), ("Set Next Statement", stepping),
-                          ("Quick Watch...", paused),
-                          ("Pause", self.app.session is not None and not self.app.in_break_mode)):
-            menu.entryconfigure(label, state=tk.NORMAL if on else tk.DISABLED)
+    # When the Debug menu's commands can be used:
+
+    def is_paused(self):
+        return self.app.in_break_mode and self.app.session is not None and self.app.session.paused is not None
+
+    def can_step(self):
+        """Paused where it can go on a step at a time (not after an error)."""
+        return self.is_paused() and self.app.session.can_step()
+
+    def can_start(self):
+        """Nothing running: F10 or F11 starts the program, pausing as its first event starts."""
+        return self.app.session is None and self.app.process is None and self.project is not None
+
+    def can_pause(self):
+        return self.app.session is not None and not self.app.in_break_mode
 
     def toggle_breakpoint(self):
         """F9: set or clear a breakpoint on the cursor's line."""
