@@ -10,8 +10,9 @@ import tkinter as tk
 from readymade import usersettings
 from readymade.ide import options
 from readymade.ide.breakpoints import Breakpoints
-from readymade.ide.debugging import STEPS, BreakpointDialog, WatchDialog, function_at
+from readymade.ide.debugging import BreakpointDialog, WatchDialog, function_at
 from readymade.ide.part import Part
+from readymade.protocol import STEPPING, Cmd
 
 
 class DebugControl(Part):
@@ -69,12 +70,12 @@ class DebugControl(Part):
     def debug_go(self, how, **extra):
         """Continue (F5), Step Into (F11), Step Over (F10) or Step Out (Shift+F11) while paused."""
         session = self.app.session
-        if session is None and how in ("step", "next") and self.project is not None:
+        if session is None and how in (Cmd.STEP, Cmd.NEXT) and self.project is not None:
             self.app.runner.run(step=True)  # F10 or F11 starts the program, stepping (as VB's F8 did)
             return
         if session is None or session.paused is None:
             return
-        if how in STEPS and not session.can_step():
+        if how in STEPPING and not session.can_step():
             self.immediate.write("(After an error the program can't step on: Continue skips the rest of the event.)\n")
             return
         session.go(how, **extra)
@@ -83,13 +84,13 @@ class DebugControl(Part):
         """Ctrl+F10: go on until the line with the cursor."""
         editor = self.app.code_editor()
         if editor is not None:
-            self.debug_go("until", file=str(editor.code_path), line=int(editor.code.text.index("insert").split(".")[0]))
+            self.debug_go(Cmd.UNTIL, file=str(editor.code_path), line=int(editor.code.text.index("insert").split(".")[0]))
 
     def pause(self):
         """F6: break into the running program. It's idle between events, so it breaks as the next one starts."""
         if self.app.session is None or self.app.in_break_mode:
             return
-        self.app.session.send(cmd="pause")
+        self.app.session.send(cmd=Cmd.PAUSE)
         self.immediate.write("--- Pausing: the program breaks when its next event starts (a click, a key, a timer). ---\n")
 
     def update_debug_menu(self, menu):
@@ -130,7 +131,7 @@ class DebugControl(Part):
             return
         if line is None:
             line = int(editor.code.text.index("insert").split(".")[0])
-        self.app.session.send(cmd="jump", file=str(editor.code_path), line=line)
+        self.app.session.send(cmd=Cmd.JUMP, file=str(editor.code_path), line=line)
 
     def gutter_menu(self, editor, line, e):
         """A right-click in the line numbers."""
@@ -149,7 +150,7 @@ class DebugControl(Part):
         if self.app.session is not None and self.app.session.paused is not None and self.app.session.can_step():
             menu.add_separator()
             menu.add_command(label="Run to Here",
-                             command=lambda: self.debug_go("until", file=str(editor.code_path), line=line))
+                             command=lambda: self.debug_go(Cmd.UNTIL, file=str(editor.code_path), line=line))
             menu.add_command(label="Set Next Statement", command=lambda: self.set_next_statement(editor, line))
         options.color_menus(menu, options.theme().chrome)
         menu.tk_popup(e.x_root, e.y_root)
@@ -176,7 +177,7 @@ class DebugControl(Part):
         self.breakpoints.store()
         self.show_breakpoints()
         if self.app.session is not None:
-            self.app.session.send(cmd="breakpoints", breakpoints=self.breakpoints.for_program())
+            self.app.session.send(cmd=Cmd.BREAKPOINTS, breakpoints=self.breakpoints.for_program())
 
     def show_breakpoints(self):
         """Fill the Breakpoints tab: every breakpoint, with its line's code."""
@@ -212,7 +213,7 @@ class DebugControl(Part):
         self.breakpoints.save_watches(watches)
         self.show_breakpoints()  # (watches that break are listed there too)
         if self.app.session is not None:
-            self.app.session.send(cmd="watches", watches=watches)  # paused, it answers with their values
+            self.app.session.send(cmd=Cmd.WATCHES, watches=watches)  # paused, it answers with their values
         if not self.app.in_break_mode:
             self.app.watches_panel.show(watches)
 
@@ -257,7 +258,7 @@ class DebugControl(Part):
         expression = (text.get("sel.first", "sel.last") if text.tag_ranges("sel")
                       else text.get("insert wordstart", "insert wordend")).strip()
         if expression:
-            self.app.session.send(cmd="quick", expression=expression)
+            self.app.session.send(cmd=Cmd.QUICK, expression=expression)
 
     def code_edited(self, code):
         """Code changed: during a run, say the program won't see it until the next."""

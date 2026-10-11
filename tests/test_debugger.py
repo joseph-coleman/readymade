@@ -7,7 +7,7 @@ import textwrap
 
 import pytest
 
-from readymade import debugger
+from readymade import debugger, protocol
 
 CODE = textwrap.dedent('''\
     import json
@@ -54,6 +54,7 @@ class PretendIDE:
         self.told = []
 
     def send(self, **message):
+        protocol.check(message)  # one of the messages the IDE knows
         json.dumps(message)  # it must travel as JSON
         self.told.append(message)
 

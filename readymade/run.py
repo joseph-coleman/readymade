@@ -23,6 +23,7 @@ from pathlib import Path
 from readymade import debugger, forms, remote
 from readymade.form import app_root, main_loop, set_app_icon, set_app_path
 from readymade.project import Project
+from readymade.protocol import Cmd
 
 
 def attach_immediate(form):
@@ -73,7 +74,7 @@ def main(argv=None):
         remote.install(channel)  # input() and help() go through the IDE
         # The IDE starts with its breakpoints, before any form loads (Form_load can have them too).
         settings = channel.receive(timeout=30) or {}
-        debugger.start(channel, project.folder, settings if settings.get("cmd") == "start" else {})
+        debugger.start(channel, project.folder, settings if settings.get("cmd") == Cmd.START else {})
     try:
         form = getattr(forms, startup)
         if channel is not None:

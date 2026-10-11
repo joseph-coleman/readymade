@@ -1,11 +1,9 @@
 """The running program's side of its link with the IDE (python -m readymade.run --debug PORT).
 
-The IDE listens on a localhost port; the program connects and they exchange JSON lines.
-The program's prints still go to its stdout, which the IDE shows in the Immediate window.
-
-From the IDE: {"cmd": "eval", "line": ...} runs a line typed in the Immediate window;
-{"cmd": "answer", "text": ...} answers an input() (see ide_input); the debugger adds more.
-To the IDE: {"event": "input", "prompt": ...} asks for a line of input; the debugger adds more.
+The IDE listens on a localhost port; the program connects and they exchange JSON lines,
+the messages readymade.protocol lists. The program's prints still go to its stdout, which
+the IDE shows in the Immediate window. Here: running Immediate lines (Cmd.EVAL) and
+answering input() (Event.INPUT, Cmd.ANSWER); the debugger (readymade.debugger) does the rest.
 
 Run from the IDE, the program's input() asks in the Immediate window (a window program has
 no console of its own), and help() writes its text instead of starting pydoc's own prompt.
@@ -23,7 +21,10 @@ import sys
 import threading
 import tkinter as tk
 
-CLOSED = {"cmd": "closed"}  # what receive() gives once the IDE has gone
+from readymade import protocol
+from readymade.protocol import Cmd, Event
+
+CLOSED = {"cmd": Cmd.CLOSED}  # what receive() gives once the IDE has gone
 
 
 class Channel:
@@ -41,13 +42,14 @@ class Channel:
         try:
             for line in self._file:
                 message = json.loads(line)
-                (self.answers if message.get("cmd") == "answer" else self.inbox).put(message)
+                (self.answers if message.get("cmd") == Cmd.ANSWER else self.inbox).put(message)
         except (OSError, ValueError):
             pass
         self.inbox.put(CLOSED)
         self.answers.put(CLOSED)
 
     def send(self, **message):
+        protocol.check(message)
         try:
             with self._lock:
                 self._file.write(json.dumps(message) + "\n")
@@ -67,7 +69,7 @@ def ide_input(channel):
     """An input() that asks in the IDE's Immediate window."""
     def ask(prompt=""):
         sys.stdout.flush()  # what the program printed first appears first
-        channel.send(event="input", prompt=str(prompt))
+        channel.send(event=Event.INPUT, prompt=str(prompt))
         answer = channel.answers.get()
         if answer is CLOSED or answer.get("eof"):
             raise EOFError
@@ -127,7 +129,7 @@ class Immediate:
 
     def _poll(self, root):
         while (message := self.channel.receive(timeout=0)) is not None:
-            if message.get("cmd") == "eval":
+            if message.get("cmd") == Cmd.EVAL:
                 self.run_line(message.get("line", ""))
             elif self.handle is not None:
                 self.handle(message)

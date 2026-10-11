@@ -41,6 +41,7 @@ from readymade.ide.projectfiles import ProjectFiles
 from readymade.ide.running import Runner
 from readymade.ide.tooldialog import formatting_dialog, linting_dialog
 from readymade.project import Project, ProjectError
+from readymade.protocol import Cmd
 
 
 # Replace is Ctrl+H, as in VS Code; a Mac uses ⌘H to hide a program, so there it's Option+⌘F
@@ -146,12 +147,12 @@ class App:
             ("F6", self.debug.pause),
             ("F9", self.debug.toggle_breakpoint),
             ("Ctrl+Shift+F9", self.debug.clear_breakpoints),
-            ("F10", lambda: self.debug.debug_go("next")),
+            ("F10", lambda: self.debug.debug_go(Cmd.NEXT)),
             ("Ctrl+F10", self.debug.run_to_cursor),
             ("Ctrl+Shift+F10", self.debug.set_next_statement),
-            ("F11", lambda: self.debug.debug_go("step")),
-            ("Ctrl+F11", lambda: self.debug.debug_go("step")),  # ⌘F11: macOS keeps F11 for Show Desktop
-            ("Shift+F11", lambda: self.debug.debug_go("return")),
+            ("F11", lambda: self.debug.debug_go(Cmd.STEP)),
+            ("Ctrl+F11", lambda: self.debug.debug_go(Cmd.STEP)),  # ⌘F11: macOS keeps F11 for Show Desktop
+            ("Shift+F11", lambda: self.debug.debug_go(Cmd.RETURN)),
             ("Shift+F9", self.debug.quick_watch),
             ("F7", lambda: self.form and self.form.show_code()),
             ("Shift+F7", lambda: self.form and self.form.show_design()),
@@ -243,10 +244,10 @@ class App:
         tools.add_command(label="Options...", command=self.show_options)
         debug = tk.Menu(menubar, tearoff=False, postcommand=lambda: self.debug.update_debug_menu(debug))
         for item in (
-            ("Continue", "F5", lambda: self.debug.debug_go("continue")),
-            ("Step Into", STEP_INTO, lambda: self.debug.debug_go("step")),
-            ("Step Over", "F10", lambda: self.debug.debug_go("next")),
-            ("Step Out", "Shift+F11", lambda: self.debug.debug_go("return")),
+            ("Continue", "F5", lambda: self.debug.debug_go(Cmd.CONTINUE)),
+            ("Step Into", STEP_INTO, lambda: self.debug.debug_go(Cmd.STEP)),
+            ("Step Over", "F10", lambda: self.debug.debug_go(Cmd.NEXT)),
+            ("Step Out", "Shift+F11", lambda: self.debug.debug_go(Cmd.RETURN)),
             ("Run to Cursor", "Ctrl+F10", self.debug.run_to_cursor),
             ("Set Next Statement", "Ctrl+Shift+F10", self.debug.set_next_statement),
             ("Pause", "F6", self.debug.pause),

@@ -37,6 +37,9 @@ from collections import ChainMap
 from collections.abc import MutableMapping
 from pathlib import Path
 
+from readymade.protocol import STEPPING, Cmd, Event, Reason
+
+
 class _Repr(reprlib.Repr):
     def repr_dict(self, x, level):
         """In the dict's own order (reprlib sorts the keys)."""
@@ -253,9 +256,9 @@ class Debugger(bdb.Bdb):
         fired = self._check_watches(frame)  # (first, so they always see each line)
         stop, said = self._breakpoint_says(frame) if super().break_here(frame) else (False, "")
         if stop:
-            self._why = ("breakpoint", said, None)
+            self._why = (Reason.BREAKPOINT, said, None)
         elif fired[0]:
-            self._why = ("watch", *fired)
+            self._why = (Reason.WATCH, *fired)
         return self._why is not None
 
     def _breakpoint_says(self, frame):
@@ -267,7 +270,7 @@ class Debugger(bdb.Bdb):
         stop, said = condition.check(frame, self.extra_names)
         if stop and condition.log:
             text = said if condition.failed else condition.message(frame, self.extra_names)
-            self.channel.send(event="log", text=text, file=frame.f_code.co_filename, line=frame.f_lineno)
+            self.channel.send(event=Event.LOG, text=text, file=frame.f_code.co_filename, line=frame.f_lineno)
             return False, ""
         return stop, said
 
@@ -282,7 +285,7 @@ class Debugger(bdb.Bdb):
                 error._readymade_paused = True  # (not again as it travels out, nor when it ends the event)
             except AttributeError:
                 pass
-            self.interaction([(f, f.f_lineno) for f in self._stack(frame)], "raised", f"{type(error).__name__}: {error}")
+            self.interaction([(f, f.f_lineno) for f in self._stack(frame)], Reason.RAISED, f"{type(error).__name__}: {error}")
         return super().dispatch_exception(frame, arg)
 
     def raised_here(self, error):
@@ -316,7 +319,7 @@ class Debugger(bdb.Bdb):
             return
         if self._why is None:  # stepping (bdb didn't ask break_here)
             fired = self._check_watches(frame)
-            self._why = ("watch", *fired) if fired[0] else ("step", "", None)
+            self._why = (Reason.WATCH, *fired) if fired[0] else (Reason.STEP, "", None)
         reason, message, changed = self._why
         self._why = None
         self._at_line = True
@@ -329,7 +332,7 @@ class Debugger(bdb.Bdb):
         if not self.post_mortem_mode and any(w.traced for w in self.watches):
             fired, ran = self._check_watches(frame, returning=True)  # (a change on its last line)
             if fired:
-                self.interaction([(f, f.f_lineno) for f in self._stack(frame)], "watch", fired, ran)
+                self.interaction([(f, f.f_lineno) for f in self._stack(frame)], Reason.WATCH, fired, ran)
         return super().dispatch_return(frame, arg)
 
     def user_call(self, frame, argument_list):
@@ -376,7 +379,7 @@ class Debugger(bdb.Bdb):
             return
         self.post_mortem_mode = True
         try:
-            self.interaction(frames, "error", f"{type(error).__name__}: {error}", ends=starting)
+            self.interaction(frames, Reason.ERROR, f"{type(error).__name__}: {error}", ends=starting)
         finally:
             self.post_mortem_mode = False
 
@@ -391,56 +394,56 @@ class Debugger(bdb.Bdb):
         self.consoles = {}
         self._paused = {"reason": reason, "message": message, "changed_line": changed_line, "ends": ends,
                         "stepping": not self.post_mortem_mode,
-                        "watches_fired": self._fired if reason == "watch" else []}
+                        "watches_fired": self._fired if reason == Reason.WATCH else []}
         self._send_paused()
         while True:
             command = self.channel.receive()
             kind = command.get("cmd")
-            if kind == "eval":
+            if kind == Cmd.EVAL:
                 self._run_line(command.get("line", ""))
-            elif kind == "frame":
+            elif kind == Cmd.FRAME:
                 self.selected = max(0, min(len(self.frames) - 1, int(command.get("index", 0))))
                 self._send_frame()
-            elif kind == "watches":
+            elif kind == Cmd.WATCHES:
                 self.set_watches(command.get("watches", []))
                 self._send_frame()
-            elif kind == "quick":
-                self.channel.send(event="quick", info=self._quick(command.get("expression", "")))
-            elif kind == "assign":  # a value changed in the Locals window
+            elif kind == Cmd.QUICK:
+                self.channel.send(event=Event.QUICK, info=self._quick(command.get("expression", "")))
+            elif kind == Cmd.ASSIGN:  # a value changed in the Locals window
                 self._assign(command.get("path", []), command.get("value", ""))
-            elif kind == "tip":  # the mouse rests on a name in the code
-                self.channel.send(event="tip", id=command.get("id"), info=self._quick(command.get("expression", "")))
-            elif kind == "expand":
-                self.channel.send(event="children", path=command.get("path"), items=self._expand(command.get("path")))
-            elif kind == "breakpoints":
+            elif kind == Cmd.TIP:  # the mouse rests on a name in the code
+                self.channel.send(event=Event.TIP, id=command.get("id"), info=self._quick(command.get("expression", "")))
+            elif kind == Cmd.EXPAND:
+                self.channel.send(event=Event.CHILDREN, path=command.get("path"), items=self._expand(command.get("path")))
+            elif kind == Cmd.BREAKPOINTS:
                 self.set_breakpoints(command.get("breakpoints", {}))
-            elif kind == "jump":
+            elif kind == Cmd.JUMP:
                 self._jump(command.get("file", ""), int(command.get("line", 0)))
-            elif kind == "closed":
+            elif kind == Cmd.CLOSED:
                 os._exit(0)  # the IDE has gone
-            elif kind in ("continue", "step", "next", "return", "until"):
+            elif kind in (Cmd.CONTINUE, *STEPPING):
                 if self.post_mortem_mode:
                     break  # after an error the event can only end
                 frame = self.frames[-1][0]
-                if kind == "continue":
+                if kind == Cmd.CONTINUE:
                     self.set_continue()
-                elif kind == "step":
+                elif kind == Cmd.STEP:
                     self.set_step()
-                elif kind == "next":
+                elif kind == Cmd.NEXT:
                     self.set_next(frame)
-                elif kind == "return":
+                elif kind == Cmd.RETURN:
                     self.set_return(frame)
-                elif kind == "until":
+                elif kind == Cmd.UNTIL:
                     self.set_break(self.canonic(command["file"]), int(command["line"]), temporary=True)
                     self.set_continue()
                 break
         self.frames = []
         self.consoles = {}
         self.last_running = None
-        self.channel.send(event="running")
+        self.channel.send(event=Event.RUNNING)
 
     def _send_paused(self):
-        self.channel.send(event="paused", **self._paused, stack=self._stack_info(), selected=self.selected,
+        self.channel.send(event=Event.PAUSED, **self._paused, stack=self._stack_info(), selected=self.selected,
                           locals=self._locals(), watches=self._watch_values())
 
     def _jump(self, file, line):
@@ -464,9 +467,9 @@ class Debugger(bdb.Bdb):
                 self._paused["changed_line"] = None
                 self._send_paused()
                 for warning in warned:  # e.g. a variable skipped over is None (Python 3.13+)
-                    self.channel.send(event="note", text=f"Going on from line {line}: {warning.message}.")
+                    self.channel.send(event=Event.NOTE, text=f"Going on from line {line}: {warning.message}.")
                 return
-        self.channel.send(event="note", text=f"Can't go on from line {line}: {problem}.")
+        self.channel.send(event=Event.NOTE, text=f"Can't go on from line {line}: {problem}.")
 
     def _stack_info(self):
         return [{"file": frame.f_code.co_filename, "line": line, "function": frame.f_code.co_name}
@@ -510,7 +513,7 @@ class Debugger(bdb.Bdb):
                     parent = dict(_children(parent))[step]
                 _set_child(parent, path[-1], value)
         except Exception as error:  # noqa: BLE001 - say why, and leave it as it was
-            self.channel.send(event="note", text=f"Can't change {shown}: {type(error).__name__}: {error}")
+            self.channel.send(event=Event.NOTE, text=f"Can't change {shown}: {type(error).__name__}: {error}")
         self._send_frame()
 
     def _run_line(self, line):
@@ -526,7 +529,7 @@ class Debugger(bdb.Bdb):
         self._send_frame()  # values may have changed
 
     def _send_frame(self):
-        self.channel.send(event="frame", selected=self.selected, locals=self._locals(), watches=self._watch_values())
+        self.channel.send(event=Event.FRAME, selected=self.selected, locals=self._locals(), watches=self._watch_values())
 
     def _watch_values(self):
         """Each watch's value, for the Watches window: in the chosen frame while paused, else as
@@ -759,15 +762,15 @@ def handle(message):
     if _debugger is None:
         return
     kind = message.get("cmd")
-    if kind == "breakpoints":
+    if kind == Cmd.BREAKPOINTS:
         _debugger.set_breakpoints(message.get("breakpoints", {}))
-    elif kind == "watches":
+    elif kind == Cmd.WATCHES:
         _debugger.set_watches(message.get("watches", []))
-    elif kind == "pause":
+    elif kind == Cmd.PAUSE:
         _debugger.pause_at_next_event()
-    elif kind == "expand":  # a watch's parts
-        _debugger.channel.send(event="children", path=message.get("path"), items=_debugger._expand(message.get("path")))
-    elif kind == "break_on_errors":
+    elif kind == Cmd.EXPAND:  # a watch's parts
+        _debugger.channel.send(event=Event.CHILDREN, path=message.get("path"), items=_debugger._expand(message.get("path")))
+    elif kind == Cmd.BREAK_ON_ERRORS:
         _debugger.break_on_errors = bool(message.get("on"))
         _debugger.break_on_all = _debugger.break_on_errors and bool(message.get("all"))
         _debugger.trace_if_needed()
@@ -780,7 +783,7 @@ def tick():
     values = _debugger._watch_values()
     if values != _debugger.last_running:
         _debugger.last_running = values
-        _debugger.channel.send(event="watch_values", watches=values)
+        _debugger.channel.send(event=Event.WATCH_VALUES, watches=values)
 
 
 def event_failed(error, starting=False):

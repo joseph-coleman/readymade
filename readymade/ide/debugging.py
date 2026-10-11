@@ -1,10 +1,10 @@
 """The IDE's side of its link with a program it runs (see readymade.remote).
 
-The IDE listens on a localhost port and starts the program with --debug PORT. Lines typed
-in the Immediate window go to the program; when the program asks for input(), the next
-line typed answers it. The debugger's messages travel the same way (see
-readymade.debugger): the program says when it pauses, with where and its variables, and
-the IDE says how to go on.
+The IDE listens on a localhost port and starts the program with --debug PORT; they
+exchange the messages readymade.protocol lists. Lines typed in the Immediate window go to
+the program; when the program asks for input(), the next line typed answers it. The
+debugger's messages travel the same way (see readymade.debugger): the program says when it
+pauses, with where and its variables, and the IDE says how to go on.
 """
 
 from __future__ import annotations
@@ -18,10 +18,11 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from readymade import protocol
 from readymade.ide import helptext
 from readymade.ide.tooltips import help_button, tip
+from readymade.protocol import STEPPING, Cmd, Event, Reason
 
-STEPS = ("step", "next", "return", "until")  # Step Into, Step Over, Step Out, Run to Cursor
 
 
 class DebugSession:
@@ -73,6 +74,7 @@ class DebugSession:
             pass  # the program has ended
 
     def send(self, **message):
+        protocol.check(message)
         with self._lock:
             if self._file is None:
                 self._unsent.append(message)
@@ -90,35 +92,35 @@ class DebugSession:
 
     def handle(self, message):
         event = message.get("event")
-        if event == "input":
+        if event == Event.INPUT:
             self.prompt = message.get("prompt", "")
             self.app.immediate.write(self.prompt)
             self.app.immediate.ask_for_input()
-        elif event == "paused":
+        elif event == Event.PAUSED:
             self._paused(message)
-        elif event == "running":
+        elif event == Event.RUNNING:
             self._running()
-        elif event == "frame" and self.paused is not None:
+        elif event == Event.FRAME and self.paused is not None:
             self.selected = message.get("selected", self.selected)
             self.app.locals.show(message.get("locals", []))
             self.app.watches_panel.show(self.app.debug.breakpoints.watches(), message.get("watches"))
             self.app.call_stack.select(self.selected)
-        elif event == "children":
+        elif event == Event.CHILDREN:
             path = message.get("path") or [""]
             panel = self.app.watches_panel if path[0] == "#watch" else self.app.locals
             panel.add_children(path, message.get("items", []))
-        elif event == "watch_values" and self.paused is None and not self.app.in_break_mode:
+        elif event == Event.WATCH_VALUES and self.paused is None and not self.app.in_break_mode:
             watches = self.app.debug.breakpoints.watches()
             values = message.get("watches", [])
             if [v["name"] for v in values] == [w["expression"] for w in watches]:  # (not from before a change)
                 self.app.watches_panel.show(watches, values)
-        elif event == "note":  # e.g. why Set Next Statement couldn't
+        elif event == Event.NOTE:  # e.g. why Set Next Statement couldn't
             self.app.immediate.write(f"--- {message.get('text', '')} ---\n")
-        elif event == "log":  # a logpoint's message
+        elif event == Event.LOG:  # a logpoint's message
             self.app.immediate.write(f"\u00bb {message.get('text', '')}\n")
-        elif event == "tip":
+        elif event == Event.TIP:
             self._tip_answered(message)
-        elif event == "quick":
+        elif event == Event.QUICK:
             QuickWatch(self.app, message.get("info", {}))
 
     # ----- break mode -----
@@ -131,15 +133,15 @@ class DebugSession:
         app.locals.show(message.get("locals", []))
         app.watches_panel.show(app.debug.breakpoints.watches(), message.get("watches"))
         app.call_stack.show(message.get("stack", []), self.selected)
-        if message.get("reason") == "watch":
+        if message.get("reason") == Reason.WATCH:
             app.immediate.write(f"--- Watch: {message.get('message', '')} ---\n")
             app.debug_tabs.select(app.watches_panel)  # the watch that paused it, in front
             for index in message.get("watches_fired", [])[:1]:
                 app.watches_panel.choose(index)
         editor = self.show_place()
-        if editor is not None and message.get("reason") in ("error", "raised"):
+        if editor is not None and message.get("reason") in (Reason.ERROR, Reason.RAISED):
             editor.code.show_error(self.where()["line"], message.get("message", ""))
-        if message.get("reason") == "raised":
+        if message.get("reason") == Reason.RAISED:
             app.immediate.write(f"--- {message.get('message', '')} was raised here. If a try catches it, the program "
                                 "carries on there: step (F10) to see where. ---\n")
         if editor is not None and message.get("changed_line"):
@@ -183,11 +185,11 @@ class DebugSession:
         self.selected = index
         self.app.call_stack.select(index)
         self.show_place()
-        self.send(cmd="frame", index=index)
+        self.send(cmd=Cmd.FRAME, index=index)
 
     def expand(self, path):
         if self.paused is not None or path[:1] == ["#watch"]:  # (watches have values while running too)
-            self.send(cmd="expand", path=path)
+            self.send(cmd=Cmd.EXPAND, path=path)
 
     def ask_tip(self, code, expression, x, y):
         """The mouse rests on a name in some code: ask the paused program for its value."""
@@ -195,7 +197,7 @@ class DebugSession:
             return
         self._tips += 1
         self._tip = (self._tips, code, expression, x, y)
-        self.send(cmd="tip", id=self._tips, expression=expression)
+        self.send(cmd=Cmd.TIP, id=self._tips, expression=expression)
 
     def _tip_answered(self, message):
         if self._tip is None or message.get("id") != self._tip[0] or self.paused is None:
@@ -209,15 +211,15 @@ class DebugSession:
     def assign(self, path, text):
         """Locals: give a variable (or a part of one) the value of a Python expression."""
         if self.paused is not None:
-            self.send(cmd="assign", path=path, value=text)
+            self.send(cmd=Cmd.ASSIGN, path=path, value=text)
 
     def can_step(self):
         """Stepping is possible when paused, except at an error (the failed line can't go on)."""
         return self.paused is not None and self.paused.get("stepping", False)
 
     def go(self, how, **extra):
-        """Continue, or one of STEPS. Returns whether the program was told to."""
-        if self.paused is None or (how in STEPS and not self.can_step()):
+        """Continue, or one of STEPPING. Returns whether the program was told to."""
+        if self.paused is None or (how in STEPPING and not self.can_step()):
             return False
         self.paused = None  # (until it says it's paused again)
         self.send(cmd=how, **extra)
@@ -227,7 +229,7 @@ class DebugSession:
         """Answer the program's input() with a line typed in the Immediate window."""
         self.prompt = None
         self.app.immediate.input_done()
-        self.send(cmd="answer", text=text, eof=eof)
+        self.send(cmd=Cmd.ANSWER, text=text, eof=eof)
 
     def close(self):
         self.prompt = None

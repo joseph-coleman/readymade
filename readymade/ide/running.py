@@ -19,6 +19,7 @@ from readymade.ide import PACKAGE_ROOT, options
 from readymade.ide.debugging import DebugSession
 from readymade.ide.tracebacks import TracebackWatcher
 from readymade.ide.part import Part
+from readymade.protocol import Cmd
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")  # terminal color and cursor codes
@@ -35,7 +36,7 @@ class Runner(Part):
     def run(self, step=False):
         """F5: run the program (with step, pausing as its first event starts), or continue it."""
         if self.app.in_break_mode:
-            self.app.debug.debug_go("continue")  # F5 continues a paused program
+            self.app.debug.debug_go(Cmd.CONTINUE)  # F5 continues a paused program
             return
         if self.project is None or not self.idle():
             return
@@ -54,7 +55,7 @@ class Runner(Part):
         self.immediate.write(f"--- Running {self.project.name} ({startup}, Python: {where}). Type Python below to inspect it. ---\n")
         self.app.session = DebugSession(self.app)  # Immediate lines, input() and the debugger go through it
         breakpoints = self.app.debug.breakpoints
-        self.app.session.send(cmd="start", breakpoints=breakpoints.for_program(), watches=breakpoints.watches(),
+        self.app.session.send(cmd=Cmd.START, breakpoints=breakpoints.for_program(), watches=breakpoints.watches(),
                               break_on_errors=options.break_on_errors(), break_on_all=options.break_on_all_errors(),
                               step=step)
         if step:
@@ -166,7 +167,7 @@ class Runner(Part):
             self._console.push(line)
             return
         if self.app.session is not None:
-            self.app.session.send(cmd="eval", line=line)
+            self.app.session.send(cmd=Cmd.EVAL, line=line)
             return
         try:
             self.app.process.stdin.write(line + "\n")

@@ -19,6 +19,7 @@ from tkinter import ttk
 
 from readymade import appearance, usersettings
 from readymade.ide import helptext, themes, tooltips
+from readymade.protocol import Cmd
 
 CODE_FONT = "ReadymadeCode"  # the named font code shows in; changing it changes every place at once
 INDENTS = (2, 4, 8)
@@ -275,5 +276,5 @@ class OptionsDialog(tk.Toplevel):
         usersettings.set("break-on-all-errors", self.break_on_all.get())
         apply(self.app)
         if self.app.session is not None:  # the running program too
-            self.app.session.send(cmd="break_on_errors", on=self.break_on_errors.get(), all=break_on_all_errors())
+            self.app.session.send(cmd=Cmd.BREAK_ON_ERRORS, on=self.break_on_errors.get(), all=break_on_all_errors())
         self.destroy()
