@@ -893,6 +893,54 @@ def drive(d):
         d.pump(0.05)
     d.check("Shift+F5 ends it", app.process, None)
 
+    print("Ctrl+drag inside a Frame selects the controls in it")
+    editor = app.open_form("Form1")
+    editor.show_design()
+    d.pump(0.3)
+    frame = editor.surface.controls["Frame1"]
+    x0, y0 = d.at(frame.inner, 2, 2)
+    d.xdo("keydown", "ctrl")
+    d.drag(x0, y0, x0 + frame.inner.winfo_width() - 4, y0 + frame.inner.winfo_height() - 4)
+    d.xdo("keyup", "ctrl")
+    d.check("a box inside the frame", sorted(editor.selection), ["OptionButton1", "OptionButton2"])
+
+    print("Edit > Paste with Code (Ctrl+Shift+V) brings the click handler along, renamed")
+    editor.select("Button1")
+    editor.surface.canvas.focus_force()
+    d.pump(0.2)
+    d.key("ctrl+c")
+    d.key("ctrl+shift+v")
+    pasted = editor.selected
+    d.check("pasted with its handler", f"def {pasted}_click(self):" in editor.code.get_source() and pasted != "Button1", True)
+
+    print("An access key: &Say Hello is Alt+S in the running program")
+    app.clear_breakpoints()  # (the break mode step's breakpoint would stop the click)
+    editor.set_property("Button1", "text", "&Say Hello")
+    d.key("F5")
+    left, top = d.ask("(form.root.winfo_rootx(), form.root.winfo_rooty())")
+    textbox = editor.design.control("TextBox1")
+    d.click(left + textbox["left"] + 8, top + textbox["top"] + 8)
+    d.key("ctrl+a")
+    d.type("Bo")
+    d.key("alt+s")
+    d.check("Alt+S clicks Say Hello", d.ask("Label2.text"), "Hello, Bo!")
+    d.shot("access-key")
+    d.key("shift+F5")
+    deadline = time.time() + 10
+    while app.process is not None and time.time() < deadline:
+        d.pump(0.05)
+
+    print("The project's other files in the Project Explorer: open the README by double-clicking it")
+    (app.project.folder / "README.md").write_text("# Hello\n\nA first readymade program.\n", encoding="utf-8")
+    app.explorer_refresh()
+    tree = app.explorer.tree
+    tree.see("file:README.md")
+    d.pump(0.2)
+    x, y, w, h = tree.bbox("file:README.md")
+    d.click(tree.winfo_rootx() + x + 20, tree.winfo_rooty() + y + h // 2, repeat=2)
+    d.check("README opens in a tab", app.documents.tab(app.documents.select(), "text"), "README.md")
+    d.shot("project-files")
+
 
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/readymade-ui")
@@ -905,6 +953,7 @@ def main():
     os.environ["DISPLAY"] = DISPLAY  # also inherited by the program F5 starts
     # Its own user settings (lint choices, theme...), never the real ones.
     os.environ["READYMADE_CONFIG_DIR"] = tempfile.mkdtemp(prefix="readymade-drive-settings-")
+    os.environ["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="readymade-drive-data-")  # removed files' Trash too
     try:
         import tkinter as tk
 

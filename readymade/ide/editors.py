@@ -600,10 +600,25 @@ class FormEditor:
         """The selected controls and their contents, ready for paste(); None if nothing's selected."""
         return copy.deepcopy(self._with_contents(self.selected_controls())) or None
 
+    def copy_handlers(self, specs):
+        """The event handlers of copied controls, for paste(): [(control, method name, its code)]."""
+        source = self.code.get_source()
+        found = []
+        for spec in specs:
+            for event in REGISTRY[spec["type"]].events:
+                method = f"{spec['name']}_{event.name}"
+                text = codegen.method_text(source, method)
+                if text is not None:
+                    found.append((spec["name"], method, text))
+        return found
+
     @_undoable
-    def paste(self, specs):
+    def paste(self, specs, handlers=()):
         """Add copies of controls: into the selected Frame if one is selected, else onto the form.
-        Names are kept where they're free; copies that would land on top of others are offset."""
+        Names are kept where they're free; copies that would land on top of others are offset.
+        handlers (from copy_handlers) come too, renamed to match (Edit > Paste with Code);
+        one whose name the code already has is left out (and named in handlers_left_out).
+        Returns the names of the controls added."""
         selected = self.selected_controls()
         target = selected[0] if len(selected) == 1 and self.surface.controls[selected[0]].is_container else None
         copied = {spec["name"] for spec in specs}
@@ -638,11 +653,33 @@ class FormEditor:
         self._order_tabs(last=added)
         for new in added:
             self.surface.add(new)
+        self.handlers_left_out = self._paste_handlers(specs, handlers, renames) if handlers else []
         self.properties.refresh_objects()
         self.code.refresh_objects()
         self.select_many([renames[s["name"]] for s in outermost])
         self.update_title()
         return [s["name"] for s in added]
+
+    def _paste_handlers(self, specs, handlers, renames):
+        source = self.code.get_source()
+        events = {spec["name"]: [e.name for e in REGISTRY[spec["type"]].events] for spec in specs}
+        left_out = []
+        for control, method, text in handlers:
+            if control not in renames:
+                continue
+            for old, new in renames.items():  # its name, and self.Other for other controls pasted with it
+                if old != new:
+                    text = codegen.rename_control(text, old, new, events[old])
+            name = renames[control] + method[len(control):]
+            if codegen.find_method(source, name) is not None:
+                left_out.append(name)
+                continue
+            try:
+                source = codegen.add_method_text(source, self.design.name, text)
+            except codegen.CodeGenError:
+                left_out.append(name)
+        self.code.replace_source(source)
+        return left_out
 
     def goto_handler(self, obj, event_name):
         """Show the handler for obj's event in the code window, creating it if needed."""
@@ -881,6 +918,28 @@ class ViewerEditor(ModuleEditor):
 
     def save(self):
         return True
+
+
+class FileEditor(ModuleEditor):
+    """Another file of the project, like a README or some data, edited as plain text: no
+    colors, completion, checking or breakpoints, as it isn't Python. (Python in a folder of
+    the project, like a package's, is edited as code.)"""
+
+    def __init__(self, app, path):
+        self.app = app
+        self.path = path
+        self.plain = path.suffix.lower() not in (".py", ".pyw")
+        self.frame = CodeView(app.documents, self, objects=False, python=not self.plain)
+        self._saved = path.read_text(encoding="utf-8")
+        self.frame.set_source(self._saved)
+
+    @property
+    def name(self):
+        """Its place in the project, like "docs/README.md" (so never a module's name)."""
+        try:
+            return self.path.relative_to(self.app.project.folder).as_posix()
+        except (AttributeError, ValueError):
+            return self.path.name
 
 
 class _DetachedPanel:

@@ -90,6 +90,41 @@ def add_method(source, class_name, name, params=()):
     return Edit(insert_at, insert_at, prefix + "\n" + method, method_line=insert_at + 2)
 
 
+def method_text(source, name):
+    """A method's code: its def (and any decorators) through the end of its body, or None."""
+    line = find_method(source, name)
+    if line is None:
+        return None
+    lines = source.splitlines(keepends=True)
+    start = line - 1
+    indent = _indent(lines[start])
+    while start > 0 and lines[start - 1].lstrip().startswith("@") and _indent(lines[start - 1]) == indent:
+        start -= 1
+    end = line
+    while end < len(lines) and (not lines[end].strip() or len(_indent(lines[end])) > len(indent)):
+        end += 1
+    while end > line and not lines[end - 1].strip():
+        end -= 1  # (not the blank lines after it)
+    text = "".join(lines[start:end])
+    return text if text.endswith("\n") else text + "\n"
+
+
+def add_method_text(source, class_name, text):
+    """The source with a method's code (from method_text) added at the end of the class,
+    indented as the class's other methods are."""
+    edit = add_method(source, class_name, "_new_method_")
+    placeholder = next(line for line in edit.text.splitlines(keepends=True) if "def _new_method_" in line)
+    indent, old = _indent(placeholder), _indent(text)
+    moved = "".join(indent + line[len(old):] if line.startswith(old) else line
+                    for line in text.splitlines(keepends=True))
+    body = edit.text[: edit.text.index(placeholder)] + moved
+    return Edit(edit.start, edit.end, body, edit.method_line).apply(source)
+
+
+def _indent(line):
+    return line[: len(line) - len(line.lstrip())]
+
+
 def rename_control(source, old, new, events):
     """Rename a control's handlers and its `self.old` references."""
     if events:

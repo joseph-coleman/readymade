@@ -588,3 +588,15 @@ def test_dragging_the_arrow(app, shop):
     app.immediate_line("? form.text")
     assert wait_for(app, lambda: "\n100\n" in output(app))  # no tax added
     assert "--- Ended (exit code 0) ---" in finish(app)
+
+
+def test_breakpoints_stay_put_when_code_is_changed_for_you(app, shop):
+    line = LINES["tax = price // 10"]
+    shop.toggle_breakpoint(line)
+    source = shop.get_source()
+    shop.replace_source(source + "\n\ndef extra():\n    pass\n")  # (as Paste with Code, or renaming, do)
+    assert shop.breakpoint_lines() == [line] and shop.get_source().endswith("    pass\n")
+    shop.replace_source("# a new first line\n" + shop.get_source())
+    assert shop.breakpoint_lines() == [line + 1]
+    shop.text.edit_undo()
+    assert shop.get_source() == source + "\n\ndef extra():\n    pass\n"  # still one undo step each

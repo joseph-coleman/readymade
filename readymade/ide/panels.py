@@ -67,7 +67,8 @@ class Toolbox(ttk.Frame):
 
 
 class ProjectExplorer(ttk.Frame):
-    """The project's forms and modules. Double-click to open; right-click for more."""
+    """The project's forms, modules, libraries and other files. Double-click to open;
+    right-click for more."""
 
     def __init__(self, master, app):
         super().__init__(master, padding=4)
@@ -80,11 +81,13 @@ class ProjectExplorer(ttk.Frame):
         for sequence in menus.context_clicks(self.tree):
             self.tree.bind(sequence, self._popup)
         self.tree.bind("<Delete>", lambda e: self._remove())
+        self.tree.bind("<F2>", lambda e: self._rename())
         self.menu = tk.Menu(self, tearoff=False)
         self.menu.add_command(label="View Object", command=lambda: self._open("design"))
         self.menu.add_command(label="View Code", command=lambda: self._open("code"))
         self.menu.add_command(label="Set as Startup", command=self._set_startup)
         self.menu.add_separator()
+        self.menu.add_command(label="Rename...", command=self._rename)
         self.menu.add_command(label="Remove...", command=self._remove)
         self.python_menu = tk.Menu(self, tearoff=False)
         self.python_menu.add_command(label="Create Environment...", command=app.ask_create_environment)
@@ -93,10 +96,20 @@ class ProjectExplorer(ttk.Frame):
         self.libraries_menu = tk.Menu(self, tearoff=False)
         self.libraries_menu.add_command(label="Add Library...", command=app.add_library)
         self.libraries_menu.add_command(label="Remove Library...", command=self._remove)
-        for menu in (self.menu, self.python_menu, self.libraries_menu):
+        self.bundled = tk.BooleanVar(self)
+        self.files_menu = tk.Menu(self, tearoff=False)
+        self.files_menu.add_command(label="Open", command=lambda: self._open("design"))
+        self.files_menu.add_command(label="Open with System Program", command=self._open_with_system)
+        self.files_menu.add_checkbutton(label="Bundle with Make EXE", variable=self.bundled, command=self._bundle)
+        self.files_menu.add_separator()
+        self.files_menu.add_command(label="Remove...", command=self._remove)
+        for menu in (self.menu, self.python_menu, self.libraries_menu, self.files_menu):
             menus.defer_commands(menu)  # or dialogs opened from them freeze on macOS
+        self.tree.bind("<<TreeviewOpen>>", lambda e: self._fill_folder(self.tree.focus()))
 
     def refresh(self):
+        opened = [row for row in self._rows() if self.tree.item(row, "open")]
+        chosen = self.tree.focus()
         self.tree.delete(*self.tree.get_children())
         project = self.app.project
         if project is None:
@@ -114,6 +127,36 @@ class ProjectExplorer(ttk.Frame):
         libraries = self.tree.insert(top, tk.END, iid="libraries", text="Libraries", open=True)
         for requirement in project.dependencies:
             self.tree.insert(libraries, tk.END, iid=f"library:{requirement}", text=requirement)
+        self._bundled = self.app.bundled_paths()
+        self.tree.insert(top, tk.END, iid="files", text="Files", open=True)
+        self._fill("files", "")
+        for row in opened:  # folders open before stay open (each filled as it opens)
+            if self.tree.exists(row):
+                self.tree.item(row, open=True)
+                self._fill_folder(row)
+        if chosen and self.tree.exists(chosen):
+            self.tree.focus(chosen)
+            self.tree.selection_set(chosen)
+
+    def _rows(self, parent=""):
+        for row in self.tree.get_children(parent):
+            yield row
+            yield from self._rows(row)
+
+    def _fill(self, parent, folder):
+        """Show a folder's files under a row: folders get a placeholder, filled when opened."""
+        for relative, is_folder in self.app.project.other_files(folder):
+            name = relative.rsplit("/", 1)[-1]
+            bundled = self.app.is_bundled(relative, self._bundled)
+            row = self.tree.insert(parent, tk.END, iid=f"file:{relative}",
+                                   text=f"{name}{'/' if is_folder else ''}{'  (bundled)' if bundled else ''}")
+            if is_folder:
+                self.tree.insert(row, tk.END, iid=f"waiting:{relative}", text="...")
+
+    def _fill_folder(self, row):
+        if row.startswith("file:") and self.tree.exists(f"waiting:{row[5:]}"):
+            self.tree.delete(f"waiting:{row[5:]}")
+            self._fill(row, row[5:])
 
     def _selected(self):
         kind, _, name = self.tree.focus().partition(":")
@@ -131,12 +174,24 @@ class ProjectExplorer(ttk.Frame):
             self.app.open_form(name, view)
         elif kind == "module":
             self.app.open_module(name)
+        elif kind == "file":
+            self.app.open_file(name)
         return "break"
 
-    def _remove(self):
-        """Remove the selected form, module or library (the app asks first)."""
+    def _open_with_system(self):
         kind, name = self._selected()
-        if kind in ("form", "module", "library"):
+        if kind == "file":
+            self.app.open_with_system(self.app.project.folder / name)
+
+    def _bundle(self):
+        kind, name = self._selected()
+        if kind == "file":
+            self.app.set_bundled(name, self.bundled.get())
+
+    def _remove(self):
+        """Remove the selected form, module, library or file (the app asks first)."""
+        kind, name = self._selected()
+        if kind in ("form", "module", "library", "file"):
             self.app.remove_from_project(kind, name)
         return "break"
 
@@ -155,13 +210,29 @@ class ProjectExplorer(ttk.Frame):
 
         if row == "python":
             return self.python_menu
+        if row.startswith("file:"):
+            relative = row[5:]
+            folder = (self.app.project.folder / relative).is_dir()
+            enable(self.files_menu, "Open", not folder)
+            self.bundled.set(self.app.is_bundled(relative, self.app.bundled_paths()))
+            # Bundled with its folder, or as a form's picture: it can't be left out by itself.
+            enable(self.files_menu, "Bundle with Make EXE",
+                   relative in self.app.project.include() or not self.bundled.get())
+            return self.files_menu
         if row == "libraries" or self.tree.parent(row) == "libraries":
             enable(self.libraries_menu, "Remove Library...", row.startswith("library:"))
             return self.libraries_menu
         for label in ("View Object", "Set as Startup"):
             enable(self.menu, label, row.startswith("form:"))
         enable(self.menu, "Remove...", row.startswith(("form:", "module:")))
+        enable(self.menu, "Rename...", row.startswith("module:"))
         return self.menu
+
+    def _rename(self):
+        kind, name = self._selected()
+        if kind == "module":
+            self.app.rename_module(name)
+        return "break"
 
     def _set_startup(self):
         kind, name = self._selected()

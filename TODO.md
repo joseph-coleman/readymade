@@ -8,14 +8,14 @@ Ideas and gaps noted along the way, roughly by area.
 - **Edit and continue** (tabled): VB let you change code while paused. Python can't swap the code of a function that's running, so today edits take effect next run (a note above the code says so).
 
 ## IDE
-- **Project Files**: A project may have extra files associated with it, such as a README or other non-code files.  Should those need to be explicitly added to the project for packaging?  Images get copied to a dedicated subfolder.  That folder's contents are not visible in the IDE.  Having other non-code text files, the README for example, editable and viewable in the IDE could be useful.
+- **Project Files follow-ups**: new files and folders from the Project Explorer; renaming files; noticing files added or changed outside the IDE (today: Project > Refresh); Markdown shown formatted.
 - **Search and Replace**:  The ability to search for a term in a code file and optionally replace occurrences of it.
-- **Copy and paste**: optionally bring the controls' event handlers along (renamed to match), which VB never did. Also a selection box inside a Frame (today it only works on the form itself; Ctrl+click works anywhere).
-- **Project Explorer**: send removed forms and modules to the Recycle Bin / Trash instead of deleting them (`send2trash`); rename a module; when a form is removed, point out code that still uses it (`forms.Name`, imports).
+- **Project Explorer**: when a form is removed, point out code that still uses it (`forms.Name`, imports); rename a form from the Explorer (today: its name in the Properties panel).
 - **Environments**: create conda/mamba environments (existing ones work via Choose Python Interpreter).
 - **Add Library**: keep comments inside the `dependencies` list when it's rewritten.
 - **Code window**: after jumping to a run-time error, name the handler in the Object/Event dropdowns.
 - **Renaming a form**: also update references to it in other files (like `forms.OldName`).
+- **Watch**: Interface quirk? When something is being watched and either "Break when value is true" or "Break when the value changes is true" is selected, that type of watch condition is effectively a breakpoint. It doesn't correspond to any particular line in the program because it is a vastly more broad observation tool.  I had a watch that was breaking on a variable change and I was confused because I didn't see any breakpoints explicitly set. And it's not obvious from the Watches window what type a watch is--the "Type" in that view is for variable type, not monitor or break watch type.  Something to think about in terms of visibility and usability.
 
 ## Code editor
 - **Options follow-ups**: more themes; mark a run-time error's line in the line numbers; let a project ask for an indent width (today it's each person's, and generated handlers always use 4). Dark gaps: the menu bar on Windows and macOS (the system draws it), dialogs' title bars on Windows (only the main window's is dark), and the font chooser's family list.
@@ -38,7 +38,7 @@ Ideas and gaps noted along the way, roughly by area.
 - **Canvas follow-ups**: keyboard events (a Tk canvas takes no focus by default); scrolling and zooming a canvas bigger than the control; saving a canvas as a picture (Tk can only write PostScript, so this needs drawing through Pillow too); dragging shapes with less code (perhaps `shape.draggable = True`).
 - **Appearance follow-ups**: a form `font` that new controls start with (as VB's form Font was); colors for disabled controls (Tk grays them its own way); `selectcolor` for check box and option button indicators. Known limits: macOS buttons keep the system's colors, and Windows' native theme may ignore a ComboBox's field color (both are Tk's).
 - **TextBox follow-ups**: `readonly` on a multi-line box can't be copied from with the keyboard (it's a disabled Text underneath, which takes no focus from a click); `maxlength` doesn't stop a middle-click paste on Linux.
-- **Keyboard follow-ups**: `tabstop` (leave a control out of the Tab order without disabling it); arrow keys moving between the OptionButtons of a group, with only the chosen one a Tab stop (as in Windows); access keys (Alt+letter from an `&` in a caption); a `keydown`/`keyup` pair for games (keypress repeats while a key is held).
+- **Keyboard follow-ups**: `tabstop` (leave a control out of the Tab order without disabling it); arrow keys moving between the OptionButtons of a group, with only the chosen one a Tab stop (as in Windows); a `keydown`/`keyup` pair for games (keypress repeats while a key is held).
 - **Image follow-ups**: show an Image's outline in the designer when its picture is smaller than the control (sizing normal, center or zoom); offer to delete a copied picture from images/ when nothing uses it any more; animated GIFs; pictures on Buttons and Labels (Tk supports both).
 
 ## Biggest features

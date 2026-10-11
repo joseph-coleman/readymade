@@ -288,3 +288,24 @@ def test_find_pythons_looks_on_the_path_and_in_conda(tmp_path, monkeypatch):
     pythons = find_pythons()
     assert pythons[1:] == [*on_path, conda_python]  # the IDE's own first, then these
     assert store not in pythons
+
+
+def test_other_files_and_bundling(tmp_path):
+    from readymade.project import Project
+
+    project = Project.create(tmp_path / "Shop")
+    folder = project.folder
+    for name in ("README.md", "data/prices.csv", "data/old/2019.csv", "images/logo.png", ".venv/x",
+                 "build/x", "__pycache__/x.pyc", "helpers.py", "notes.txt"):
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text("x")
+    assert project.other_files() == [("data", True), ("images", True), ("notes.txt", False),
+                                     ("pyproject.toml", False), ("README.md", False)]
+    assert project.other_files("data") == [("data/old", True), ("data/prices.csv", False)]
+    project.set_bundled("data", True)
+    project.set_bundled("README.md", True)
+    assert project.include() == ["data", "README.md"]
+    project.set_bundled("data", False)
+    assert project.include() == ["README.md"]
+    project.set_bundled("README.md", False)
+    assert project.include() == [] and "include" not in (folder / "pyproject.toml").read_text()

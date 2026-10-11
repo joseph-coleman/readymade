@@ -317,3 +317,60 @@ def test_tab_order_mode(app):
     surface.canvas.update()
     surface.canvas.event_generate("<Escape>")
     assert surface.tab_order_next is None and surface._badges == []
+
+
+# ----- access keys: & in a caption -----
+
+def test_access_keys(make_form):
+    clicks = []
+
+    class Form1(Form):
+        def Save_click(self):
+            clicks.append("Save")
+
+    form = make_form(
+        ("Label", "lblName", {"text": "&Name:"}),
+        ("TextBox", "Name", {"tabindex": 0}),
+        ("TextBox", "Notes", {"tabindex": 1}),
+        ("CheckBox", "Gift", {"text": "&Gift wrap", "tabindex": 2}),
+        ("OptionButton", "Post", {"text": "By &post", "tabindex": 3}),
+        ("Button", "Save", {"text": "&Save && close", "tabindex": 4}),
+        ("Label", "lblQA", {"text": "Q&A", "accesskey": False}),
+        cls=Form1,
+    )
+    assert form.Save.text == "&Save && close"  # as written; it shows without the &s, with S underlined
+    assert (form.Save.widget["text"], form.Save.widget["underline"]) == ("Save & close", 0)
+    assert (form.lblQA.widget["text"], form.lblQA.access_key) == ("Q&A", "")  # accesskey off: an & is an &
+    assert [form.lblName.access_key, form.Gift.access_key, form.Post.access_key] == ["N", "G", "P"]
+    form.Notes.widget.focus_force()
+    press(form, "<Alt-KeyPress-s>")
+    assert clicks == ["Save"]
+    press(form, "<Alt-KeyPress-g>")
+    assert form.Gift.value is True and focused(form) == "Gift"
+    press(form, "<Alt-KeyPress-p>")
+    assert form.Post.value is True
+    press(form, "<Alt-KeyPress-n>")  # a Label goes to the control after it
+    assert focused(form) == "Name"
+    form.Save.enabled = False
+    press(form, "<Alt-KeyPress-s>")
+    assert clicks == ["Save"]  # (not when it's disabled)
+
+
+def test_a_frames_access_key_goes_inside_it(make_form):
+    form = make_form(
+        ("TextBox", "Before", {"tabindex": 0}),
+        ("Frame", "fraSize", {"text": "&Size", "width": 200, "height": 120}),
+        ("OptionButton", "Small", {"container": "fraSize", "tabindex": 2, "top": 8}),
+        ("OptionButton", "Large", {"container": "fraSize", "tabindex": 1, "top": 40}),
+    )
+    press(form, "<Alt-KeyPress-s>")
+    assert focused(form) == "Large"  # its first in Tab order
+    assert form.fraSize.widget["text"] == "Size"
+
+
+def test_mac_access_keys_go_by_the_keys_place(monkeypatch):
+    from readymade import form as form_module
+
+    monkeypatch.setattr(form_module.sys, "platform", "darwin")
+    event = type("Key", (), {"keycode": 1 << 24, "keysym": "ß"})()  # Option+S types ß; the key is S's
+    assert form_module._access_letter(event) == "S"

@@ -24,16 +24,18 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from readymade import events, formatting, menus, package, remote, usersettings
 from readymade.formfile import FormFileError
 from readymade.ide import assist
-from readymade.ide.editors import FormEditor, ModuleEditor, ViewerEditor, bring_in
+from readymade.ide.editors import FileEditor, FormEditor, ModuleEditor, ViewerEditor, bring_in
 from readymade.ide.linting import Linter
 from readymade.ide.menueditor import MenuEditor
 from readymade.ide import helptext
 from readymade.ide.panels import (BreakpointsPanel, CallStackPanel, HelpPanel, ImmediateWindow, LocalsPanel,
                                   ProblemsPanel, ProjectExplorer, PropertiesPanel, Toolbox, WatchesPanel)
 from readymade.ide import options
+from readymade.ide import trash
 from readymade.ide.tooldialog import formatting_dialog, linting_dialog
 from readymade.ide.debugging import STEPS, BreakpointDialog, DebugSession, WatchDialog, function_at
 from readymade.ide.tracebacks import TracebackWatcher
+from readymade import project as project_module
 from readymade.project import Project, ProjectError, describe_python, find_pythons, requirement_name
 
 _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containing readymade/
@@ -67,7 +69,8 @@ class App:
         self.assistant = assist.Assistant(_PACKAGE_ROOT) if assist.AVAILABLE else None
         self._completions: queue.Queue = queue.Queue()  # answers from the assistant's thread
         self._python_info: dict[str, str] = {}
-        self.clipboard: list[dict] = []  # copied controls, for pasting into any form  # interpreter path -> describe_python(), which is slow
+        self.clipboard: list[dict] = []  # copied controls, for pasting into any form
+        self.clipboard_handlers: list = []  # their event handlers, for Edit > Paste with Code  # interpreter path -> describe_python(), which is slow
         self._build_ui()
         if path is not None:
             self.open_path(path)
@@ -156,7 +159,8 @@ class App:
             menus.bind_shortcut(root, shortcut, lambda e, c=command: (c(), "break")[1])
         for shortcut, redo in (("Ctrl+Z", False), ("Ctrl+Y", True), ("Ctrl+Shift+Z", True)):
             menus.bind_shortcut(root, shortcut, lambda e, r=redo: self._undo_key(r))
-        for shortcut, action in (("Ctrl+X", "cut"), ("Ctrl+C", "copy"), ("Ctrl+V", "paste")):
+        for shortcut, action in (("Ctrl+X", "cut"), ("Ctrl+C", "copy"), ("Ctrl+V", "paste"),
+                                 ("Ctrl+Shift+V", "paste_code")):
             menus.bind_shortcut(root, shortcut, lambda e, a=action: self._clipboard_key(a))
         root.protocol("WM_DELETE_WINDOW", self.exit)
 
@@ -177,7 +181,8 @@ class App:
         edit.add_command(label="Redo", accelerator=menus.accelerator(redo), command=lambda: self.undo(redo=True))
         edit.add_separator()
         for label, action, key in (("Cut", "cut", "Ctrl+X"), ("Copy", "copy", "Ctrl+C"),
-                                   ("Paste", "paste", "Ctrl+V"), ("Delete", "delete", "Del")):
+                                   ("Paste", "paste", "Ctrl+V"), ("Paste with Code", "paste_code", "Ctrl+Shift+V"),
+                                   ("Delete", "delete", "Del")):
             edit.add_command(label=label, accelerator=menus.accelerator(key), command=lambda a=action: self.edit(a))
         edit.add_separator()
         edit.add_command(label="Toggle Comment", accelerator=menus.accelerator("Ctrl+/"), command=self.toggle_comment)
@@ -463,16 +468,23 @@ class App:
                 copied = form.copy_selection()
                 if copied:
                     self.clipboard = copied
+                    self.clipboard_handlers = form.copy_handlers(copied)  # for Paste with Code
                     if action == "cut":
                         form.delete_selection()
             elif action == "paste" and self.clipboard:
                 form.paste(self.clipboard)
+            elif action == "paste_code" and self.clipboard:
+                form.paste(self.clipboard, self.clipboard_handlers)
+                if form.handlers_left_out:
+                    self.immediate.write(f"--- Not pasted, as the code already has them: "
+                                         f"{', '.join(form.handlers_left_out)}. ---\n")
             elif action == "delete":
                 form.delete_selection()
             return
         editor = self._current_editor()
         if editor is not None:
-            event = {"cut": "<<Cut>>", "copy": "<<Copy>>", "paste": "<<Paste>>", "delete": "<<Clear>>"}[action]
+            event = {"cut": "<<Cut>>", "copy": "<<Copy>>", "paste": "<<Paste>>", "paste_code": "<<Paste>>",
+                     "delete": "<<Clear>>"}[action]
             editor.code.text.event_generate(event)
 
     def toggle_comment(self):
@@ -526,7 +538,7 @@ class App:
         """Edit > Go to Definition (F12, or Ctrl+click): open the code where a name is defined.
         A form's control or menu item is shown in the designer."""
         editor = editor or self._current_editor()
-        if editor is None or self._assist_unavailable(manual=True):
+        if editor is None or getattr(editor, "plain", False) or self._assist_unavailable(manual=True):
             return
         code = editor.code
         line, column = map(int, code.text.index(index).split("."))
@@ -620,7 +632,7 @@ class App:
             spec = form.design.control(form.selected)
             topic = helptext.control(spec["type"], spec["name"]) if spec else helptext.form(form.design.name)
             self.show_topic(topic)
-        elif self._current_editor() is not None:
+        elif self._current_editor() is not None and not getattr(self._current_editor(), "plain", False):
             self.show_topic(self._code_help(self._current_editor()))
         else:
             self.show_topic(helptext.home())
@@ -656,7 +668,7 @@ class App:
         """Format an open document's code with the project's formatters (one undo step).
         Returns False, leaving the code as it was, if a formatter couldn't."""
         tools = formatting.tools_for(self.project)
-        if not tools:
+        if not tools or getattr(editor, "plain", False):
             return True
         source = editor.code.get_source()
         self.root.configure(cursor="watch")
@@ -693,6 +705,8 @@ class App:
                                 ("Cut", selected or (editor is not None and not designing)),
                                 ("Copy", selected or (editor is not None and not designing)),
                                 ("Paste", bool(self.clipboard) if designing else editor is not None),
+                                ("Paste with Code", bool(self.clipboard and self.clipboard_handlers) if designing
+                                 else editor is not None),
                                 ("Delete", selected or (editor is not None and not designing)),
                                 ("Toggle Comment", editor is not None and not designing)):
             menu.entryconfigure(label, state=tk.NORMAL if possible else tk.DISABLED)
@@ -742,6 +756,8 @@ class App:
     def _add_tab(self, editor):
         self.editors.append(editor)
         self.documents.add(editor.frame, text=editor.title())
+        if getattr(editor, "plain", False):
+            return  # another file, like a README: plain text
         editor.code.on_complete = lambda code, manual: self.complete(editor, manual)
         editor.code.on_goto = lambda code, index: self.go_to_definition(editor, index)
         if not getattr(editor, "read_only", False):
@@ -1486,17 +1502,19 @@ class App:
                                  "for the windows' icon.)\n")
 
     def remove_from_project(self, kind, name):
-        """Delete a form's or module's files ("form", "module"), or take a library out of the
-        project ("library"), after asking. Returns whether it was removed."""
+        """Move a form's or module's files ("form", "module") to the Recycle Bin / Trash, or
+        take a library out of the project ("library"), after asking. Returns whether it was removed."""
         if self.project is None or not self._idle():
             return False
         if kind == "library":
             return self._remove_library(name)
+        if kind == "file":
+            return self._remove_file(name)
         files = " and ".join([f"{name}.form", f"{name}.py"] if kind == "form" else [f"{name}.py"])
         uses = f"forms.{name}" if kind == "form" else f"import {name}"
         if not messagebox.askyesno(
             f"Remove {kind.capitalize()}",
-            f"Delete {name} from the project? This deletes {files} and can't be undone.\n\n"
+            f"Remove {name} from the project? This moves {files} to the {trash.name()}.\n\n"
             f"Code that uses it (like {uses}) will need changing.",
             icon="warning", default="no", parent=self.root,
         ):
@@ -1504,11 +1522,148 @@ class App:
         editor = self._editor(FormEditor if kind == "form" else ModuleEditor, name)
         if editor is not None:
             self.close_document(editor, ask=False)  # its unsaved changes go with it
-        (self.project.remove_form if kind == "form" else self.project.remove_module)(name)
+        remove = self.project.remove_form if kind == "form" else self.project.remove_module
+        try:
+            remove(name, discard=trash.move_to_trash)
+            done = f"Moved {files} to the {trash.name()}"
+        except OSError as e:
+            if not messagebox.askyesno(
+                f"Remove {kind.capitalize()}",
+                f"{e}\n\nDelete {files} for good instead? That can't be undone.",
+                icon="warning", default="no", parent=self.root,
+            ):
+                self.explorer_refresh()
+                return False
+            remove(name)
+            done = f"Deleted {files}"
         self.explorer_refresh()
         self.linter.check_project()  # forgets its problems
-        self.immediate.write(f"--- Deleted {files}. ---\n")
+        self.immediate.write(f"--- {done}. ---\n")
         return True
+
+    def _remove_file(self, relative):
+        path = self.project.folder / relative
+        what = f"the {relative} folder and everything in it" if path.is_dir() else relative
+        if not messagebox.askyesno("Remove", f"Move {what} to the {trash.name()}?", icon="warning", default="no",
+                                   parent=self.root):
+            return False
+        for editor in list(self.editors):  # its open files close (their unsaved changes go with them)
+            open_path = Path(editor.code_path)
+            if open_path == path or path in open_path.parents:
+                self.close_document(editor, ask=False)
+        try:
+            trash.move_to_trash(path)
+        except OSError as e:
+            messagebox.showerror("Remove", str(e), parent=self.root)
+            return False
+        if relative in self.project.include():
+            self.project.set_bundled(relative, False)
+        self.explorer_refresh()
+        self.immediate.write(f"--- Moved {relative} to the {trash.name()}. ---\n")
+        return True
+
+    # ----- the project's other files -----
+
+    def open_file(self, relative):
+        """Open one of the project's other files: text in a tab, anything else (a picture, a
+        sound) with the system's program for it. Returns the editor, if it opened in one."""
+        path = self.project.folder / relative
+        if path.is_dir():
+            return None
+        if path.suffix == ".py" and path.parent == self.project.folder:
+            return self.open_code(path)
+        editor = next((e for e in self.editors if isinstance(e, FileEditor) and e.path == path), None)
+        if editor is None:
+            if not _is_text(path):
+                self.open_with_system(path)
+                return None
+            try:
+                editor = FileEditor(self, path)
+            except (OSError, UnicodeDecodeError):
+                self.open_with_system(path)
+                return None
+            self._add_tab(editor)
+        self.documents.select(editor.frame)
+        self._tab_changed()
+        return editor
+
+    def open_with_system(self, path):
+        """Open a file (or folder) with the program the system uses for it."""
+        try:
+            if sys.platform == "win32":
+                os.startfile(path)  # noqa: S606 - the user's own file, as Explorer would
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            self.immediate.write(f"(Couldn't open {path.name}: {e})\n")
+
+    def bundled_paths(self):
+        """The files and folders Make EXE bundles: the forms, their pictures, the icon, and include."""
+        return [path for path, _ in package.bundled_files(self.project)[0]] if self.project else []
+
+    def is_bundled(self, relative, bundled):
+        """Whether a file or folder (relative) is among bundled (from bundled_paths), or in one of them."""
+        path = self.project.folder / relative
+        return any(path == b or b in path.parents for b in bundled)
+
+    def set_bundled(self, relative, bundled):
+        """Project Explorer > Bundle with Make EXE: put a file or folder in [tool.readymade] include, or not."""
+        self.project.set_bundled(relative, bundled)
+        self.explorer_refresh()
+        self.immediate.write(f"--- Make EXE {'bundles' if bundled else 'leaves out'} {relative}. ---\n")
+
+    def rename_module(self, name, new=None):
+        """Project Explorer > Rename...: give a module a new name, changing the project's imports
+        of it to match (in open code too, which then needs saving). Returns whether it was renamed."""
+        if self.project is None:
+            return False
+        if new is None:
+            new = simpledialog.askstring("Rename Module", f"New name for {name}.py:", initialvalue=name,
+                                         parent=self.root)
+        new = (new or "").strip().removesuffix(".py")
+        if not new or new == name:
+            return False
+        editor = self._editor(ModuleEditor, name)
+        if editor is not None and editor.is_dirty() and not editor.save():
+            return False
+        try:
+            on_disk = self.project.rename_module(name, new)
+        except (ProjectError, OSError) as e:
+            messagebox.showerror("Rename Module", str(e), parent=self.root)
+            return False
+        if editor is not None:
+            editor.path = self.project.folder / f"{new}.py"
+        changed = []
+        for open_editor in self.editors:
+            if open_editor.code.on_breakpoints is None:
+                continue  # (not the project's code)
+            source = open_editor.code.get_source()
+            renamed = project_module.rename_imports(source, name, new)
+            on_disk.pop(Path(open_editor.code_path), None)
+            if renamed != source:
+                open_editor.code.replace_source(renamed)
+                changed.append(Path(open_editor.code_path).name)
+        for path, source in on_disk.items():
+            path.write_text(source, encoding="utf-8")
+            changed.append(path.name)
+        self._rename_in_debug_settings(f"{name}.py", f"{new}.py")
+        self.explorer_refresh()
+        self.update_title()
+        self.linter.check_project()
+        self.immediate.write(f"--- Renamed {name}.py to {new}.py" +
+                             (f", and its imports in {', '.join(sorted(changed))}" if changed else "") + ". ---\n")
+        return True
+
+    def _rename_in_debug_settings(self, old, new):
+        """A file was renamed: its breakpoints and watches go with it."""
+        saved = self._saved_breakpoints()
+        if old in saved:
+            self.project.set_local_setting("breakpoints", {new if k == old else k: v for k, v in saved.items()})
+        watches = self.watches()
+        if any(w.get("file") == old for w in watches):
+            self.set_watches([{**w, "file": new} if w.get("file") == old else w for w in watches])
+        self.show_breakpoints()
 
     def _remove_library(self, requirement):
         python = self.project.python()
@@ -1597,6 +1752,24 @@ class _DesignTimeConsole(code.InteractiveConsole):
     def push(self, *args, **kwargs):
         with contextlib.redirect_stdout(self.stream), contextlib.redirect_stderr(self.stream):
             return super().push(*args, **kwargs)
+
+
+def _is_text(path, size=8192):
+    """Whether a file looks like text: UTF-8, without the NUL bytes binary files have."""
+    try:
+        with open(path, "rb") as file:
+            start = file.read(size)
+    except OSError:
+        return False
+    if b"\0" in start:
+        return False
+    try:
+        import codecs
+
+        codecs.getincrementaldecoder("utf-8")().decode(start, final=False)  # (a character may be cut off)
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def _breakpoint_item(item):

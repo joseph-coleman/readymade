@@ -24,7 +24,8 @@ import tkinter as tk
 from pathlib import Path
 
 from readymade import appearance, events, formfile, forms, menus, pictures
-from readymade.controls import Button, Event, Grid, _TabStop, control_of, create, repaint_inside
+from readymade.controls import (Button, CheckBox, Event, Grid, OptionButton, _TabStop, _WidgetText, control_of,
+                                create, repaint_inside)
 
 FORM = "Form"
 FORM_EVENTS = (
@@ -161,6 +162,7 @@ class Form:
         self.backcolor = design.backcolor  # before the controls, which may show it
         self.cursor = design.cursor
         self.controls = {}
+        self._containers = {}  # control name -> the Frame (or Grid) it's in, or None
         self._designed_size = self._configured_size = (design.width, design.height)
         self._on_form = []  # the controls straight on the form (the rest follow their Frame)
         for spec in design.controls:
@@ -170,6 +172,7 @@ class Form:
             setattr(self, control.name, control)
             if spec.get("container") is None:
                 self._on_form.append(control)
+            self._containers[control.name] = spec.get("container")
         for control in self.controls.values():  # (made before what's in them, so arranged now)
             if isinstance(control, Grid):
                 control.arrange()
@@ -186,6 +189,7 @@ class Form:
                                  ("<Shift-Tab>", lambda e: self._tab(-1)), ("<<PrevWindow>>", lambda e: self._tab(-1)),
                                  ("<Return>", self._enter), ("<KP_Enter>", self._enter), ("<Escape>", self._escape)):
             self.root.bind(sequence, action)  # the form's own bindings see keys pressed in any of its controls
+        self.root.bind(_access_sequence(self.root), self._access_key)
         self.loaded = True
         _loaded.add(self)
         self._connect_events()
@@ -338,6 +342,51 @@ class Form:
     def _escape(self, e):
         return self._press(self._cancel_button)
 
+    def _access_key(self, e):
+        """Alt+letter (Ctrl+Option+letter on a Mac): the control whose text has &letter. A
+        Button is clicked, a CheckBox or OptionButton chosen, and a Label or Frame goes to the
+        next control (as in VB). Other keys go on to the menus."""
+        letter = _access_letter(e)
+        if not letter:
+            return None
+        for name in self._design_order:
+            control = self.controls.get(name)
+            if (isinstance(control, _WidgetText) and control.access_key == letter and control.enabled
+                    and control.visible and control.widget.winfo_viewable()):
+                return self._use_access_key(control)
+        return None
+
+    def _use_access_key(self, control):
+        if isinstance(control, Button):
+            return self._press(control)
+        if isinstance(control, (CheckBox, OptionButton)):
+            self._focus(control)
+            control.widget.invoke()
+            return "break"
+        target = self._after(control)
+        if target is not None:
+            self._focus(target)
+        return "break"
+
+    def _after(self, control):
+        """Where a Label's or Frame's access key goes: a Frame's first control, or the next
+        control after a Label (in the order they were designed) that Tab stops at."""
+        def reachable(c):
+            return isinstance(c, _TabStop) and c.enabled and c.visible and c.widget.winfo_viewable()
+
+        def inside(name, frame):
+            while name is not None:
+                name = self._containers.get(name)
+                if name == frame:
+                    return True
+            return False
+
+        if control.is_container:
+            found = [c for c in self._tab_order() if inside(c.name, control.name) and reachable(c)]
+            return found[0] if found else None
+        after = self._design_order[self._design_order.index(control.name) + 1:]
+        return next((self.controls[n] for n in after if reachable(self.controls[n])), None)
+
     @staticmethod
     def _press(button):
         if button is None or not (button.enabled and button.visible):
@@ -423,3 +472,20 @@ def check_name(name, existing=()):
         raise ValueError(f"{name!r} is reserved by the Form class")
     if name in existing:
         raise ValueError(f"There is already a control named {name!r}")
+
+
+def _access_sequence(widget):
+    """The key events access keys come as: Alt+key, or on a Mac Control+Option+key (Option
+    alone types characters, like é, and ⌘ is for the menus)."""
+    if widget.tk.call("tk", "windowingsystem") == "aqua":
+        return "<Control-Option-KeyPress>"
+    return "<Alt-KeyPress>"
+
+
+def _access_letter(e):
+    """The letter or digit of an access key event, as a capital; "" for other keys."""
+    if sys.platform == "darwin":  # Option changes the character, so go by the key's place
+        key = menus.mac_key(e.keycode)
+        return key if key.isalnum() else ""
+    key = e.keysym if len(e.keysym) == 1 else ""
+    return key.upper() if key.isalnum() else ""

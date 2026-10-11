@@ -83,7 +83,7 @@ def test_removing_a_form_closes_it_and_deletes_its_files(app, answer):
     asked = answer(False)
     assert not app.remove_from_project("form", "Form2")
     assert (app.project.folder / "Form2.form").exists() and editor in app.editors
-    assert "This deletes Form2.form and Form2.py" in asked[0] and "forms.Form2" in asked[0]
+    assert "This moves Form2.form and Form2.py to the Trash" in asked[0].replace("Recycle Bin", "Trash") and "forms.Form2" in asked[0]
 
     answer(True)
     assert app.remove_from_project("form", "Form2")
@@ -92,7 +92,7 @@ def test_removing_a_form_closes_it_and_deletes_its_files(app, answer):
     assert app.project.forms() == ["Form1"] and app.project.startup == "Form1"
     assert "form:Form2" not in explorer_rows(app)
     assert app.explorer.tree.item("form:Form1", "text") == "Form1  (startup)"
-    assert "Deleted Form2.form and Form2.py." in app.immediate.output.get("1.0", "end")
+    assert "Moved Form2.form and Form2.py to the " in app.immediate.output.get("1.0", "end")
 
 
 def test_removing_a_module(app, answer):
@@ -167,3 +167,100 @@ def test_explorer_menu_and_delete_key(app, answer):
     assert enabled("library:rich", "Remove Library...")
     assert not enabled("libraries", "Remove Library...")
     assert explorer.menu_for("python") is explorer.python_menu
+
+
+def test_renaming_imports_of_a_module():
+    from readymade.project import rename_imports
+
+    source = """import helpers
+import os, helpers
+from helpers import greeting
+import helpers as h
+import helpers_extra
+
+print(helpers.greeting(), h.x, my_helpers.y, helpers_extra.z)
+"""
+    assert rename_imports(source, "helpers", "tools") == """import tools
+import os, tools
+from tools import greeting
+import tools as h
+import helpers_extra
+
+print(tools.greeting(), h.x, my_helpers.y, helpers_extra.z)
+"""
+    assert rename_imports("from helpers import x\nhelpers.y\n", "helpers", "tools") == (
+        "from tools import x\nhelpers.y\n")  # (only `import helpers` makes helpers.y the module)
+
+
+def test_renaming_a_module(app):
+    from test_ide import write_code
+
+    app.project.add_module("helpers")
+    write_code(app, "helpers", "def greeting():\n    return 'hi'\n")
+    write_code(app, "Form1", "from readymade import Form\nimport helpers\n\n\nclass Form1(Form):\n"
+               "    def Form_load(self):\n        self.text = helpers.greeting()\n")
+    app.project.add_module("other")
+    (app.project.folder / "other.py").write_text("from helpers import greeting\n")
+    form = app.open_form("Form1", "code")
+    module = app.open_module("helpers")
+    module.code.toggle_breakpoint(2)
+    assert app.rename_module("helpers", "tools")
+    assert not (app.project.folder / "helpers.py").exists() and (app.project.folder / "tools.py").exists()
+    assert module.path.name == "tools.py" and app.documents.tab(module.frame, "text") == "tools.py"
+    form_code = form.code.get_source()  # open: changed there, to be saved
+    assert "import tools\n" in form_code and "tools.greeting()" in form_code and form.is_dirty()
+    assert (app.project.folder / "other.py").read_text() == "from tools import greeting\n"  # not open: saved
+    assert app.project.local_settings()["breakpoints"] == {"tools.py": [2]}
+    assert app.explorer.tree.exists("module:tools") and not app.explorer.tree.exists("module:helpers")
+    assert "Renamed helpers.py to tools.py, and its imports in Form1.py, other.py." in app.immediate.output.get(
+        "1.0", "end")
+    with pytest.raises(AssertionError, match="unexpected dialog"):  # (an error message: a name that's taken)
+        app.rename_module("tools", "other")
+
+
+def test_the_projects_other_files(app, monkeypatch, answer):
+    from readymade.ide.editors import FileEditor
+
+    folder = app.project.folder
+    (folder / "README.md").write_text("# Shop\n\nNotes: (draft)\n")
+    (folder / "data").mkdir()
+    (folder / "data" / "prices.csv").write_text("tea,3.50\n")
+    (folder / "data" / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\0\0\0")
+    (folder / "pkg").mkdir()
+    (folder / "pkg" / "tools.py").write_text("def f():\n    return 1\n")
+    app.explorer_refresh()
+    tree = app.explorer.tree
+    assert [tree.item(row, "text") for row in tree.get_children("files")] == ["data/", "pkg/", "pyproject.toml",
+                                                                               "README.md"]
+    assert tree.get_children("file:data") == ("waiting:data",)  # filled when opened
+    tree.focus("file:data")
+    tree.item("file:data", open=True)
+    tree.event_generate("<<TreeviewOpen>>")
+    assert [tree.item(row, "text") for row in tree.get_children("file:data")] == ["logo.png", "prices.csv"]
+
+    readme = app.open_file("README.md")  # text: a tab, as plain text
+    assert isinstance(readme, FileEditor) and readme.plain and app.documents.tab(readme.frame, "text") == "README.md"
+    readme.code.text.insert("end", "More (notes")
+    app.root.update()
+    assert not readme.code.text.tag_ranges("keyword") and "More (notes\n" in readme.code.get_source() + "\n"
+    assert app.save() and (folder / "README.md").read_text().endswith("More (notes")
+    assert not app.open_file("pkg/tools.py").plain  # Python in a folder: code
+    opened = []
+    monkeypatch.setattr(app, "open_with_system", opened.append)
+    assert app.open_file("data/logo.png") is None and opened == [folder / "data" / "logo.png"]  # not text
+
+    menu = app.explorer.menu_for("file:data/prices.csv")  # bundling with Make EXE
+    assert menu is app.explorer.files_menu and app.explorer.bundled.get() is False
+    app.set_bundled("data", True)
+    assert app.project.include() == ["data"]
+    assert tree.item("file:data", "text") == "data/  (bundled)" and tree.item("file:data", "open")  # (still open)
+    assert tree.item("file:data/prices.csv", "text") == "prices.csv  (bundled)"
+    app.explorer.menu_for("file:data/prices.csv")
+    assert app.explorer.bundled.get() is True  # with its folder,
+    assert app.explorer.files_menu.entrycget("Bundle with Make EXE", "state") == "disabled"  # so not by itself
+
+    asked = answer(True)
+    assert app.remove_from_project("file", "data")  # (the trash is a test one: see conftest)
+    assert asked[-1].startswith("Move the data folder and everything in it to the ")
+    assert not (folder / "data").exists() and app.project.include() == []
+    assert not tree.exists("file:data")

@@ -103,7 +103,8 @@ def apply_chrome(app, chrome):
         if surface is not None:
             surface.apply_chrome(chrome)
     color_menus(app.root.nametowidget(app.root["menu"]), chrome)
-    for menu in (app.explorer.menu, app.explorer.python_menu, app.explorer.libraries_menu):
+    for menu in (app.explorer.menu, app.explorer.python_menu, app.explorer.libraries_menu,
+                 app.explorer.files_menu):
         color_menus(menu, chrome)
     dark_title_bar(app.root, chrome is not None)
 

@@ -626,10 +626,28 @@ def test_selecting_several_controls(app):
 
     # A selection box on the form selects the controls it touches.
     form.select(FORM)
-    form.surface._lasso_release(types.SimpleNamespace(x=100, y=60, state=0), (0, 0, False))
+    app.root.update()
+    canvas = form.surface.canvas
+    x, y = canvas.winfo_rootx(), canvas.winfo_rooty()
+    form.surface._lasso_release(types.SimpleNamespace(x_root=x + 100, y_root=y + 60, state=0),
+                                (x, y, False, None, None))
     assert form.selection == ["Button1", "Button2"]
     corners = [m for m in form.surface.canvas.winfo_children() if m in form.surface._markers]
     assert len(corners) == 8  # four corners each
+
+    # Ctrl+drag inside a Frame boxes the controls in it; a Ctrl+click on it (no drag) adds the Frame.
+    form.add_control("Label", 8, 48, container="Frame1")
+    app.root.update()
+    frame = form.surface.controls["Frame1"]
+    inner = frame.inner
+    x, y = inner.winfo_rootx(), inner.winfo_rooty()
+    form.surface._lasso_release(types.SimpleNamespace(x_root=x + 100, y_root=y + 80, state=0),
+                                (x + 2, y + 2, False, frame, "Frame1"))
+    assert form.selection == ["Label1", "Label2"]
+    form.select("Button1")
+    form.surface._lasso_release(types.SimpleNamespace(x_root=x + 3, y_root=y + 3, state=0),
+                                (x + 2, y + 2, False, frame, "Frame1"))
+    assert form.selection == ["Button1", "Frame1"]
 
 
 def test_moving_editing_and_deleting_a_selection(app):
@@ -1163,3 +1181,49 @@ def test_f1_in_code(app):
     form.code.text.mark_set("insert", "7.10")  # msgbox
     app.show_help()
     assert app.help.title.cget("text") == "readymade.dialogs.msgbox"
+
+
+def test_paste_with_code(app):
+    form = app.form
+    form.add_control("Button", 8, 8)
+    form.add_control("Label", 8, 48)
+    write_code(app, "Form1", """from readymade import Form
+
+
+class Form1(Form):
+    def Button1_click(self):
+        self.Label1.text = "clicked"  # the label pasted with it
+
+        self.Button1.enabled = False
+
+    def Button1_mousedown(self, x, y):
+        print(x, y)
+
+    def Other_click(self):
+        pass
+""")
+    form.select_many(["Button1", "Label1"])
+    app.form.surface.canvas.focus_set()
+    app.edit("copy")
+    assert [method for _, method, _ in app.clipboard_handlers] == ["Button1_click", "Button1_mousedown"]
+    app.edit("paste")  # plain paste: the controls only
+    assert form.design.control("Button2") is not None and "Button2_click" not in form.code.get_source()
+    form.undo()
+    app.edit("paste_code")
+    source = form.code.get_source()
+    assert '''    def Button2_click(self):
+        self.Label2.text = "clicked"  # the label pasted with it
+
+        self.Button2.enabled = False
+''' in source
+    assert "    def Button2_mousedown(self, x, y):\n        print(x, y)\n" in source
+    assert source.count("def Button1_click") == 1 and "def Other_click" in source
+    form.undo()  # one step takes away the controls and their code
+    assert "Button2" not in form.code.get_source() and form.design.control("Button2") is None
+
+    app.project.add_form("Second")
+    other = app.open_form("Second")
+    app.edit("paste_code")  # another form: the names are free, so they're kept
+    assert "def Button1_click(self):" in other.code.get_source()
+    app.edit("paste_code")  # again: renamed controls, renamed code
+    assert "def Button2_click(self):" in other.code.get_source()

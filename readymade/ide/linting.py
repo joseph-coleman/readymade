@@ -47,6 +47,8 @@ class Linter:
 
     def check(self, editor, saved=False):
         """Check an open document: everything after it's opened or saved; while typing, the stdin tools."""
+        if getattr(editor, "plain", False):
+            return  # (a README or such: not Python)
         tools = self.tools()
         editor.code.keep_problems_of({tool.name for tool in tools})
         self._keep_tools(tools)

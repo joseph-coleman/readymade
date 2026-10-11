@@ -127,6 +127,12 @@ _MAC_KEYCODES = {
 _MAC_MASKS = {"Shift": 0x1, "Ctrl": 0x8, "Alt": 0x10}  # Command is Ctrl; the Mac's Control key isn't used
 
 
+def mac_key(keycode):
+    """The key (as in _MAC_KEYCODES: "S", "5") of a Mac key event's keycode, or ""."""
+    code = keycode >> 24
+    return next((key for key, number in _MAC_KEYCODES.items() if number == code), "")
+
+
 def bind_shortcut(widget, shortcut, callback, platform=sys.platform):
     """Run callback(event) when shortcut is pressed in widget (for a window: anywhere in it).
     Raises ValueError if it isn't a shortcut, or can't work as one."""

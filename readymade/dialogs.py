@@ -38,7 +38,11 @@ ICONS = ("info", "warning", "error", "question")
 
 def msgbox(message, title=None, buttons="ok", icon="info"):
     """Show a message. Returns the button clicked: "ok", "cancel", "yes", "no",
-    "retry", "abort" or "ignore"."""
+    "retry", "abort" or "ignore".
+    
+    buttons:  ok,  okcancel, yesno, yesnocancel, retrycancel, abortretryignore
+    icons: info, warning, question, error
+    """
     if buttons not in BUTTONS:
         raise ValueError(f"buttons must be one of: {', '.join(BUTTONS)}")
     if icon not in ICONS:

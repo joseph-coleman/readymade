@@ -18,7 +18,7 @@ from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
 
-from readymade import appearance, keys, layout, pictures
+from readymade import appearance, keys, layout, menus, pictures
 from readymade import shapes as _shapes
 from readymade.shapes import Shape
 
@@ -650,18 +650,35 @@ class _Tooltip:
 
 
 class _WidgetText:
-    """A text property backed by the widget's own text option."""
+    """A text property backed by the widget's own text option. As in VB, an & marks the
+    letter of an access key, shown underlined: "&Save" is Alt+S (on a Mac Ctrl+Option+S),
+    which clicks a Button, or for a Label or Frame goes to the next control. && is an &."""
 
     widget: tk.Widget
+    _accesskey = True
 
     @property
     def text(self):
         """The text it shows: a Label's words, a Button's or CheckBox's label, a Frame's title."""
-        return self.widget.cget("text")
+        return getattr(self, "_caption", "")
 
     @text.setter
     def text(self, value):
-        self.widget["text"] = str(value)
+        self._caption = str(value)
+        shown, underline = menus.parse_text(self._caption) if self._accesskey else (self._caption, -1)
+        self.widget["text"] = shown
+        try:
+            self.widget["underline"] = underline
+        except tk.TclError:
+            pass  # (a Frame's title can't underline; its key still works)
+
+    @property
+    def access_key(self):
+        """The letter of its access key, as a capital ("S" for "&Save"), or ""."""
+        if not self._accesskey:
+            return ""
+        shown, underline = menus.parse_text(self.text)
+        return shown[underline].upper() if 0 <= underline < len(shown) else ""
 
 
 @register
@@ -672,10 +689,21 @@ class Label(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cu
     inherits_backcolor = True
     default_size = (96, 24)
     events = _MOUSE_EVENTS
-    extra_props = {"text": ""}
+    extra_props = {"text": "", "accesskey": True}
 
     def create_widget(self, parent):
         return tk.Label(parent, anchor="w", justify="left")
+
+    @property
+    def accesskey(self):
+        """Whether an & in the text marks an access key (VB's UseMnemonic). Turn it off for a
+        Label showing words that may have an & in them, like "Q&A"."""
+        return self._accesskey
+
+    @accesskey.setter
+    def accesskey(self, value):
+        self._accesskey = bool(value)
+        self.text = self.text  # shown again, with or without its underline
 
 
 SCROLLBARS = ("none", "horizontal", "vertical", "both")

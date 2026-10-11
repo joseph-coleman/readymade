@@ -179,6 +179,38 @@ class Project:
         forms = set(self.forms())
         return sorted(p.stem for p in self.folder.glob("*.py") if p.stem not in forms)
 
+    def other_files(self, folder=""):
+        """The project's other files and folders, in one of its folders ("" for the top):
+        [(path relative to the project, whether it's a folder)], folders first. Not its forms
+        and modules (shown on their own), nor hidden things (.venv, .readymade, .git), caches
+        or what builds leave."""
+        base = self.folder / folder
+        try:
+            entries = list(base.iterdir())
+        except OSError:
+            return []
+        found = []
+        for path in entries:
+            name = path.name
+            if name.startswith(".") or name in _NOT_SHOWN or name.endswith(".egg-info"):
+                continue
+            if not folder and path.suffix in (".form", ".py") and path.is_file():
+                continue
+            found.append((path.relative_to(self.folder).as_posix(), path.is_dir()))
+        return sorted(found, key=lambda entry: (not entry[1], entry[0].lower()))
+
+    def include(self):
+        """[tool.readymade] include: what Make EXE bundles besides the forms and their pictures."""
+        include = self.setting("include") or []
+        return [include] if isinstance(include, str) else list(include)
+
+    def set_bundled(self, relative, bundled):
+        """Add a file or folder (relative, like "data/prices.csv") to include, or take it out."""
+        include = [entry for entry in self.include() if entry != relative]
+        if bundled:
+            include.append(relative)
+        self.set_setting("include", include or None)
+
     def add_form(self, name):
         self._check_new_name(name)
         design = formfile.FormDesign(name=name, text=name)
@@ -189,17 +221,34 @@ class Project:
         self._check_new_name(name)
         (self.folder / f"{name}.py").write_text(f'"""{name}: code shared by the project\'s forms."""\n', encoding="utf-8")
 
-    def remove_form(self, name):
-        """Delete a form's .form and .py files. If it was the startup form, the first
-        remaining form becomes the startup form."""
+    def remove_form(self, name, discard=None):
+        """Remove a form's .form and .py files: discard(path) each (default: delete it). If it
+        was the startup form, the first remaining form becomes the startup form."""
+        for path in (self.folder / f"{name}.form", self.folder / f"{name}.py"):
+            if path.exists():
+                (discard or Path.unlink)(path)
         if self.setting("startup") == name:
             self.set_setting("startup", None)
-        for path in (self.folder / f"{name}.form", self.folder / f"{name}.py"):
-            path.unlink(missing_ok=True)
 
-    def remove_module(self, name):
-        """Delete a module's .py file."""
-        (self.folder / f"{name}.py").unlink(missing_ok=True)
+    def remove_module(self, name, discard=None):
+        """Remove a module's .py file: discard(path) (default: delete it)."""
+        path = self.folder / f"{name}.py"
+        if path.exists():
+            (discard or Path.unlink)(path)
+
+    def rename_module(self, old, new):
+        """Rename a module's file, and the imports of it in the project's other code:
+        `import old` (and old.name after it) and `from old import ...`. Returns the files
+        changed, as {path: new source} for the caller to write (or show, if they're open)."""
+        self._check_new_name(new)
+        (self.folder / f"{old}.py").rename(self.folder / f"{new}.py")
+        changed = {}
+        for path in sorted(self.folder.glob("*.py")):
+            source = path.read_text(encoding="utf-8")
+            renamed = rename_imports(source, old, new)
+            if renamed != source:
+                changed[path] = renamed
+        return changed
 
     def _check_new_name(self, name):
         if not name.isidentifier() or keyword.iskeyword(name):
@@ -208,6 +257,22 @@ class Project:
             raise ProjectError(f"{name!r} would hide Python's own {name} module. Choose another name.")
         if any(p.stem.lower() == name.lower() for p in self.folder.glob("*.py")) or name in self.forms():
             raise ProjectError(f"The project already has a form or module named {name!r}.")
+
+
+def rename_imports(source, old, new):
+    """Python code with a module's imports renamed: `import old` (and old.name where it's
+    used), `import old as x`, `from old import ...`."""
+    imported_plainly = re.search(rf"^[ \t]*import[ \t]+(?:[\w.]+[ \t]*,[ \t]*)*{re.escape(old)}\b(?![ \t]+as\b)",
+                                 source, re.M)
+    source = re.sub(rf"^([ \t]*import[ \t]+(?:[\w.]+[ \t]*,[ \t]*)*){re.escape(old)}\b(?!\.)", rf"\g<1>{new}",
+                    source, flags=re.M)
+    source = re.sub(rf"^([ \t]*from[ \t]+){re.escape(old)}\b(?=[ \t]+import\b)", rf"\g<1>{new}", source, flags=re.M)
+    if imported_plainly:
+        source = re.sub(rf"(?<![\w.]){re.escape(old)}\.(?=\w)", f"{new}.", source)
+    return source
+
+
+_NOT_SHOWN = {"__pycache__", "build", "dist", "venv", "node_modules"}  # (besides hidden ones, like .venv)
 
 
 def _machine():

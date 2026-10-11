@@ -4,6 +4,7 @@
   "text": "Howdy!",
   "width": 624,
   "height": 232,
+  "default_button": "Button1",
   "controls": [
     {
       "type": "Grid",
@@ -92,6 +93,22 @@
       "text": "Type your name in the text box, then press the button.",
       "valignment": "middle",
       "visible": true
+    }
+  ],
+  "menu": [
+    {
+      "name": "mnuFile",
+      "text": "&File",
+      "items": [
+        {
+          "name": "mnuHello",
+          "text": "&Hello"
+        },
+        {
+          "name": "mnuQA",
+          "text": "Q && A"
+        }
+      ]
     }
   ]
 }

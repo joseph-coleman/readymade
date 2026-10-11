@@ -79,6 +79,22 @@ def own_settings(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def own_trash(request, monkeypatch, tmp_path_factory):
+    """Files removed in tests go to a trash of their own, never the real Trash or Recycle Bin.
+    (test_trash.py tries the Linux trash itself, in a temporary folder.)"""
+    if request.module.__name__ == "test_trash":
+        return
+    from readymade.ide import trash
+
+    folder = tmp_path_factory.mktemp("trash")
+
+    def move_to_trash(path):
+        path.rename(folder / path.name)
+
+    monkeypatch.setattr(trash, "move_to_trash", move_to_trash)
+
+
+@pytest.fixture(autouse=True)
 def collect_garbage_here():
     """Free each test's leftover Tk objects on the main thread, before the next test's
     background threads (linting, completion, program output) could, which would crash Tk."""

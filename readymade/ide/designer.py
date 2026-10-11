@@ -53,7 +53,9 @@ class DesignSurface(tk.Frame):
         self._drag = None  # (kind, control, x_root, y_root, {name: original geometry})
         self._grid_drag = None  # [kind, control, grid, target cell] while dragging in a Grid
         self._band = None  # (container, x, y) while drawing a new control
-        self._lasso = None  # (x, y, adding) while dragging a box to select controls
+        # While dragging a box to select controls: (screen x, y, adding, the Frame it's in or None,
+        # the Frame Ctrl+clicked, toggled if the mouse doesn't move).
+        self._lasso = None
         self._form_drag = (0, 0, 0, 0)  # (x_root, y_root, width, height) while resizing the form
         self.tab_order_next = None  # in Format > Tab Order: the number the next click gives
         self._badges = []
@@ -303,7 +305,7 @@ class DesignSurface(tk.Frame):
             return "break"
         if self.app.toolbox.tool:
             return self._start_band(e)
-        self._lasso = (e.x, e.y, bool(e.state & _CONTROL_KEY))
+        self._lasso = (e.x_root, e.y_root, bool(e.state & _CONTROL_KEY), None, None)
 
     def _control_press(self, e, control):
         self.canvas.focus_set()
@@ -313,7 +315,10 @@ class DesignSurface(tk.Frame):
         if self.app.toolbox.tool:
             return self._start_band(e)
         if e.state & _CONTROL_KEY:
-            self.app.toggle_selected(control.name)
+            if control.is_container:  # Ctrl+drag inside a Frame boxes the controls in it (as in VB)
+                self._lasso = (e.x_root, e.y_root, False, control, control.name)
+            else:
+                self.app.toggle_selected(control.name)
             return "break"
         if control.name not in self.app.selection:
             self.app.select(control.name)
@@ -331,8 +336,9 @@ class DesignSurface(tk.Frame):
         elif self._drag:
             self._drag_motion(e, self._drag)
         elif self._lasso:
-            x0, y0, _ = self._lasso
-            self._draw_rect(min(x0, e.x), min(y0, e.y), abs(e.x - x0), abs(e.y - y0))
+            x0, y0 = self._lasso[0] - self.canvas.winfo_rootx(), self._lasso[1] - self.canvas.winfo_rooty()
+            x1, y1 = e.x_root - self.canvas.winfo_rootx(), e.y_root - self.canvas.winfo_rooty()
+            self._draw_rect(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
         return "break"
 
     def _release(self, e):
@@ -347,19 +353,28 @@ class DesignSurface(tk.Frame):
         return "break"
 
     def _lasso_release(self, e, lasso):
-        """Select the controls on the form that the box touches (Ctrl: add them)."""
-        x0, y0, adding = lasso
+        """Select the controls the box touches that are on the form, or in the Frame it was
+        drawn in (Ctrl on the form: add them)."""
+        x0, y0, adding, container, toggle = lasso
         self._lasso = None
         for line in self.band:
             line.place_forget()
-        left, top, right, bottom = min(x0, e.x), min(y0, e.y), max(x0, e.x), max(y0, e.y)
+        left, top, right, bottom = min(x0, e.x_root), min(y0, e.y_root), max(x0, e.x_root), max(y0, e.y_root)
         if right - left < 3 and bottom - top < 3:
-            if not adding:
+            if toggle:
+                self.app.toggle_selected(toggle)  # just a Ctrl+click on a Frame
+            elif not adding:
                 self.app.select(FORM)  # just a click on the form
             return
+        inside = container.name if container else None
+
+        def touches(c):
+            w = c.widget
+            x, y = w.winfo_rootx(), w.winfo_rooty()
+            return x < right and x + w.winfo_width() > left and y < bottom and y + w.winfo_height() > top
+
         touched = [c.name for c in self.controls.values()
-                   if self.app.design.control(c.name).get("container") is None
-                   and c.left < right and c.left + c.width > left and c.top < bottom and c.top + c.height > top]
+                   if self.app.design.control(c.name).get("container") == inside and touches(c)]
         if adding:
             touched = [n for n in self.app.selection if n in self.controls] + [n for n in touched if n not in self.app.selection]
         self.app.select_many(touched)

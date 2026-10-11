@@ -175,9 +175,10 @@ _IMPLEMENTED = "  ✓"
 class CodeView(ttk.Frame):
     """app is the editor this code belongs to. Modules have no objects, so no dropdowns."""
 
-    def __init__(self, master, app, objects=True):
+    def __init__(self, master, app, objects=True, python=True):
         super().__init__(master)
         self.app = app
+        self.python = python  # False for other text, like a README: no syntax colors or Python indenting
         self._highlight_job = None
         self._numbers_job = None
         self.on_change = None  # called soon after typing stops (the IDE checks the code then)
@@ -295,14 +296,27 @@ class CodeView(ttk.Frame):
         self.highlight()
 
     def replace_source(self, source):
-        """Replace the source as one undoable step, keeping the scroll position."""
-        if source == self.get_source():
+        """Replace the source as one undoable step, keeping the scroll position. Only the lines
+        that differ are replaced, so breakpoints (and other marks) on the rest stay where they are."""
+        current = self.get_source()
+        if source == current:
             return
         top = self.text.yview()[0]
+        old, new = current.splitlines(keepends=True), source.splitlines(keepends=True)
+        same_start = 0
+        while same_start < min(len(old), len(new)) and old[same_start] == new[same_start]:
+            same_start += 1
+        same_end = 0
+        while (same_end < min(len(old), len(new)) - same_start
+               and old[len(old) - 1 - same_end] == new[len(new) - 1 - same_end]):
+            same_end += 1
+        start = f"{same_start + 1}.0"
+        end = f"{len(old) - same_end + 1}.0" if same_end else "end-1c"
+        middle = "".join(new[same_start:len(new) - same_end])
 
         def replace():
-            self.text.delete("1.0", tk.END)
-            self.text.insert("1.0", source)
+            self.text.delete(start, end)
+            self.text.insert(start, middle)
 
         # One step: on its own, Tk starts a new undo step when deleting turns into inserting.
         self._one_step(replace)
@@ -436,6 +450,8 @@ class CodeView(ttk.Frame):
     # ----- brackets and quotes -----
 
     def _open(self, opener):
+        if not self.python:
+            return None  # (plain text: brackets and quotes are typed as they are)
         if self.text.tag_ranges("sel"):
             return self._wrap(opener, _PAIRS[opener])
         if not self._closing_fits():
@@ -451,6 +467,8 @@ class CodeView(ttk.Frame):
         return None
 
     def _quote(self, quote):
+        if not self.python:
+            return None
         if self.text.tag_ranges("sel"):
             return self._wrap(quote, quote)
         if self._step_over(quote):
@@ -684,8 +702,10 @@ class CodeView(ttk.Frame):
         base = before[: len(before) - len(before.lstrip())]
         code, open_brackets = _scan(before)
         code = code.rstrip()
-        between_pair = before[-1:] in _PAIRS and after[:1] == _PAIRS[before[-1]]
-        if between_pair:
+        between_pair = self.python and before[-1:] in _PAIRS and after[:1] == _PAIRS[before[-1]]
+        if not self.python:
+            indent = base  # plain text keeps the line's indent, nothing more
+        elif between_pair:
             indent = base  # the closer's line; the cursor goes on an indented line above it
         elif open_brackets:
             column = open_brackets[-1]
@@ -1013,6 +1033,8 @@ class CodeView(ttk.Frame):
 
     def highlight(self):
         self._highlight_job = None
+        if not self.python:
+            return
         for tag in highlight.COLORS:
             self.text.tag_remove(tag, "1.0", tk.END)
         for tag, start, end in highlight.spans(self.get_source()):
