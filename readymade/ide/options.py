@@ -18,7 +18,7 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 from readymade import appearance, usersettings
-from readymade.ide import themes
+from readymade.ide import helptext, themes, tooltips
 
 CODE_FONT = "ReadymadeCode"  # the named font code shows in; changing it changes every place at once
 INDENTS = (2, 4, 8)
@@ -236,17 +236,22 @@ class OptionsDialog(tk.Toplevel):
         choices.grid(row=2, column=1, columnspan=3, sticky="w", padx=(8, 0))
         for name, label in (("light", "Light"), ("dark", "Dark")):
             ttk.Radiobutton(choices, text=label, value=name, variable=self.theme).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Checkbutton(body, text="Break on errors in event handlers (when run from here)",
-                        variable=self.break_on_errors, command=self._errors_chosen).grid(
-            row=3, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        errors = ttk.Checkbutton(body, text="Break on errors in event handlers (when run from here)",
+                                 variable=self.break_on_errors, command=self._errors_chosen)
+        errors.grid(row=3, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        tooltips.tip(errors, "When an event handler fails, the program pauses at the line that failed, with its "
+                             "variables in Locals (instead of only printing the error)")
         self.all_errors = ttk.Checkbutton(
             body, text="Also where an error is raised, even if a try catches it (slower)", variable=self.break_on_all)
         self.all_errors.grid(row=4, column=0, columnspan=4, sticky="w", padx=(20, 0), pady=(2, 4))
+        tooltips.tip(self.all_errors, "Pause as soon as an error is raised in your code, before a try catches it: "
+                                      "for errors a try is hiding. It watches every line, so it's slower.")
         self._errors_chosen()
         ttk.Label(body, text="These are yours, for all your projects.", style="Note.TLabel").grid(
             row=5, column=0, columnspan=4, sticky="w", pady=(8, 0))
         buttons = ttk.Frame(body)
         buttons.grid(row=6, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        tooltips.help_button(self, buttons, app, lambda: helptext.dialog("options"))
         ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
         self.bind("<Return>", lambda e: self.ok())

@@ -165,6 +165,7 @@ class Debugger(bdb.Bdb):
         self.conditions = {}  # (file, line) -> BreakCondition, for breakpoints with a condition or hit count
         self._paused = {}  # while paused: what the IDE was told (sent again after Set Next Statement)
         self._at_line = False  # paused at a line event: the only time the line can be changed
+        self._fired = []  # the watches that fired, by index, at the last check
         self.break_on_all = False  # also pause where an error is raised in the project, even if a try catches it
 
     # ----- which frames count -----
@@ -299,8 +300,10 @@ class Debugger(bdb.Bdb):
         else:
             ran = self._ran.get(frame)
             self._ran[frame] = frame.f_lineno
-        fired = "; ".join(filter(None, (w.check(frame, self.extra_names) for w in self.watches
-                                         if w.traced and w.in_context(frame, self))))
+        said = [(index, watch.check(frame, self.extra_names)) for index, watch in enumerate(self.watches)
+                if watch.traced and watch.in_context(frame, self)]
+        fired = "; ".join(text for _, text in said if text)
+        self._fired = [index for index, text in said if text]  # (which watches, for the IDE to point out)
         if returning:
             for watch in self.watches:
                 watch.left(frame)
@@ -387,7 +390,8 @@ class Debugger(bdb.Bdb):
         self.selected = len(frames) - 1
         self.consoles = {}
         self._paused = {"reason": reason, "message": message, "changed_line": changed_line, "ends": ends,
-                        "stepping": not self.post_mortem_mode}
+                        "stepping": not self.post_mortem_mode,
+                        "watches_fired": self._fired if reason == "watch" else []}
         self._send_paused()
         while True:
             command = self.channel.receive()

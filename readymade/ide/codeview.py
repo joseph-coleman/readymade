@@ -14,7 +14,7 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 from readymade import codegen, menus
-from readymade.ide import highlight, options
+from readymade.ide import highlight, options, tooltips
 from readymade.ide.panels import MONO
 
 INDENT = codegen.INDENT  # the spaces Tab inserts (Tools > Options: indent width); never a tab character
@@ -192,6 +192,7 @@ class CodeView(ttk.Frame):
         self.on_gutter_menu = None  # on_gutter_menu(line, event): a right-click in the line numbers
         self.on_edited = None  # called on every change to the code (the IDE notes edits made during a run)
         self.on_hover = None  # on_hover(expression, x, y): the mouse rests on a name (screen x, y)
+        self.find_bar = None  # (made the first time Find is used)
         self._hover_job = None
         self._tip = None  # (window, expression) while a value tip shows
         self._next_breakpoint = 0
@@ -232,12 +233,14 @@ class CodeView(ttk.Frame):
         self._drag_to = None  # while dragging the arrow: the line it's over
         for sequence in menus.context_clicks(self.gutter):
             self.gutter.bind(sequence, self._gutter_menu)
+        tooltips.dynamic(self.gutter, self.gutter_tip)  # what the marks there mean
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         # Messages for problems on the cursor's line, under the code.
         self.problem_bar = tk.Label(self, anchor="w", padx=6, pady=1)
         self._underline = {"underline": True}
         self.apply_theme(options.theme())
         self.text.tag_raise("current")
+        self.text.tag_raise("found")
         self.text.tag_raise("sel")
 
         # Let the window's shortcuts (Ctrl+O, F5, ...) run before Text's own key bindings.
@@ -617,9 +620,13 @@ class CodeView(ttk.Frame):
         return {tag: int(self.text.index(f"{tag}.first").split(".")[0])
                 for tag in self._problem_tags if self.text.tag_ranges(tag)}
 
+    def problems_on(self, line):
+        """The lint tools' messages for a line: ["ruff: F401 'os' imported but unused", ...]."""
+        return [f"{self._problem_tags[tag].tool}: {self._problem_tags[tag].message}"
+                for tag, at in self._problem_lines().items() if at == line]
+
     def _show_problems_here(self, current):
-        here = [f"{self._problem_tags[tag].tool}: {self._problem_tags[tag].message}"
-                for tag, line in self._problem_lines().items() if line == current]
+        here = self.problems_on(current)
         if here:
             self.problem_bar.configure(text="   \u2022   ".join(here))
             self.problem_bar.pack(side=tk.BOTTOM, fill=tk.X, before=self._body)
@@ -746,6 +753,7 @@ class CodeView(ttk.Frame):
         self.text.tag_configure("error", background=theme.error)
         self.text.tag_configure("breakpoint", background=theme.breakpoint_bg)
         self.text.tag_configure("changed", background=theme.changed)
+        self.text.tag_configure("found", background=theme.found)
         self.text.tag_configure("current", background=theme.current)
         self.error_bar.configure(background=theme.error, foreground=theme.error_text)
         self.problem_bar.configure(background=theme.problem_bg, foreground=theme.problem)
@@ -981,6 +989,38 @@ class CodeView(ttk.Frame):
             return int(index.split(".")[0])
         return None
 
+    def gutter_tip(self, x, y):
+        """The tip for a place in the line numbers: what the mark there means."""
+        from readymade.ide.panels import describe_breakpoint
+
+        line = self._gutter_line(y)
+        if line is None or x > 24:
+            return ""
+        if x >= 15:  # the problem marks' place
+            return "\n".join(self.problems_on(line))
+        said = []
+        if line == self.paused_line():
+            said.append("The program is paused here: this line runs next. Drag the arrow to another line of this "
+                        "function to run that one next instead (Set Next Statement).")
+        settings = self.breakpoint_settings(line)
+        if settings is not None:
+            if settings.get("disabled"):
+                said.append("A breakpoint, switched off (hollow): it doesn't pause the program. Click its dot in "
+                            "View > Breakpoints to switch it back on.")
+            elif settings.get("log"):
+                said.append(f"A logpoint: instead of pausing, it writes \"{settings['log']}\" in the Immediate "
+                            "window, with the {names} in it worked out.")
+            else:
+                said.append("A breakpoint: the program pauses before this line runs.")
+            condition = describe_breakpoint({k: v for k, v in settings.items() if k != "log"})
+            if condition:
+                said.append(f"It does so only {condition} (the + on its dot).")
+            said.append("Click to remove it; right-click for its condition and more.")
+        elif not said and self.on_breakpoints is not None and self.can_break_at(line):
+            said.append("Click to set a breakpoint: the program will pause before this line runs. "
+                        "Right-click for more.")
+        return "\n".join(said)
+
     def _gutter_press(self, e):
         line = self._gutter_line(e.y)
         on_arrow = line is not None and line == self.paused_line() and self.on_set_next is not None
@@ -1031,8 +1071,25 @@ class CodeView(ttk.Frame):
         self._highlight_job = self.after(200, self.highlight)
         self.app.update_title()
 
+    def show_find(self, replace=False):
+        """Ctrl+F (or with replace, Ctrl+H): the find bar above the code."""
+        from readymade.ide.find import FindBar
+
+        if self.find_bar is None:
+            self.find_bar = FindBar(self)
+        self.find_bar.open(replace)
+
+    def find_next(self, direction=1):
+        """F3 / Shift+F3: the next or previous match of what was last looked for."""
+        if self.find_bar is None or not self.find_bar.find.get():
+            self.show_find()
+            return
+        self.find_bar.step(direction)
+
     def highlight(self):
         self._highlight_job = None
+        if self.find_bar is not None:
+            self.find_bar.refresh()  # (its matches move with the code)
         if not self.python:
             return
         for tag in highlight.COLORS:

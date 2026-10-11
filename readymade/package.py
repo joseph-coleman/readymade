@@ -16,7 +16,8 @@ what it needs (it starts quicker). On macOS it's always an .app, as PyInstaller 
 Its details (File > Make EXE's dialog) are [project] version and these [tool.readymade]
 settings: program-name, company, description, copyright, one-folder, and notices (whether
 LICENSES.txt goes beside it: see readymade.notices). Windows shows them in the program
-file's properties; on macOS they go in the app's Info.plist.
+file's properties; on macOS the version and copyright go in the app's Info.plist (Get Info
+has no place for a company or description).
 """
 
 from __future__ import annotations

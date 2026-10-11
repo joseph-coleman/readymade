@@ -813,6 +813,16 @@ def drive(d):
     _, y, _, height, _ = code.text.dlineinfo(f"{line}.0")
     d.click(code.gutter.winfo_rootx() + 7, code.gutter.winfo_rooty() + y + height // 2)
     d.check("gutter click sets a breakpoint", code.breakpoint_lines(), [line])
+    from readymade.ide import tooltips
+
+    d.xdo("mousemove", code.gutter.winfo_rootx() + 8, code.gutter.winfo_rooty() + y + height // 2 + 1)
+    deadline = time.time() + 3
+    while tooltips._Tip.window is None and time.time() < deadline:
+        d.pump(0.05)
+    shown = tooltips._Tip.window.winfo_children()[0].cget("text") if tooltips._Tip.window else ""
+    d.check("resting on the dot says what it is", shown.split(":")[0], "A breakpoint")
+    d.shot("breakpoint-tip")
+    tooltips.hide()
     code.text.focus_force()
     d.key("F5")
     d.ask("1")  # (running)
@@ -940,6 +950,24 @@ def drive(d):
     d.click(tree.winfo_rootx() + x + 20, tree.winfo_rooty() + y + h // 2, repeat=2)
     d.check("README opens in a tab", app.documents.tab(app.documents.select(), "text"), "README.md")
     d.shot("project-files")
+
+    print("Find in the code window with real keys: Ctrl+F, type, Enter, F3, Esc")
+    editor = app.open_form("Form1", "code")
+    code = editor.code
+    code.text.mark_set("insert", "1.0")
+    code.text.focus_force()
+    d.pump(0.2)
+    d.key("ctrl+f")
+    d.type("Label2")
+    d.key("Return")
+    bar = code.find_bar
+    first = code.text.index("sel.first")
+    d.key("F3")
+    d.check("Ctrl+F, typing and F3 find the next one", (code.text.get("sel.first", "sel.last"),
+                                                         code.text.index("sel.first") != first), ("Label2", True))
+    d.shot("find-bar")
+    d.key("Escape")
+    d.check("Esc closes the find bar", bar.is_open(), False)
 
 
 def main():

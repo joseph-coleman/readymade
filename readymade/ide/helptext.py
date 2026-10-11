@@ -116,6 +116,210 @@ def prop(type_name, name):
     return Topic(name, f"property of {type_name}", text)
 
 
+def _table(rows):
+    width = max(len(left) for left, _ in rows)
+    return [f"  {left.ljust(width)}   {right}" for left, right in rows]
+
+
+def finding(platform=sys.platform):
+    """F1 in the find bar or the Find tab."""
+    mac = platform == "darwin"
+
+    def keys(shortcut):
+        return menus.display(shortcut, platform)
+
+    return Topic("Find and Replace", "in the code window, and in every file", "\n".join([
+        f"{keys('Ctrl+F')} finds in the code that's showing; {keys('Ctrl+Alt+F' if mac else 'Ctrl+H')} replaces too.",
+        "What's selected is what it looks for to start with. Every match is marked; the count",
+        "says which one is chosen (2 of 5).",
+        "",
+        *_table([(f"Enter, \u2193 or {keys('Ctrl+G' if mac else 'F3')}", "the next match (after the last, the first)"),
+                 (f"Shift+Enter, \u2191 or {keys('Ctrl+Shift+G' if mac else 'Shift+F3')}", "the one before"),
+                 ("Esc or \u00d7", "close the find bar")]),
+        "",
+        "  Aa   Match case: with it on, \"Count\" doesn't find \"count\".",
+        "  ab   Whole word: \"price\" doesn't find the start of \"prices\".",
+        "  .*   Regular expression, as Python's re reads it: pric\\w+ finds price and prices,",
+        "       ^def finds def at the start of a line. Replace can use \\1, \\2 for what the",
+        "       ( ) groups found: find (\\w+) = (\\w+), replace with \\2 = \\1 to swap them.",
+        "",
+        "Replace changes the chosen match and goes to the next; Replace All changes every one",
+        "(Undo takes them all back at once).",
+        "",
+        f"Find in Files ({keys('Ctrl+Shift+F')}, the Find tab) looks in all the project's code and other text",
+        "files, open ones as they are in their tabs (changes not saved yet included), with the",
+        "same three choices. Click a result to go to it.",
+    ]))
+
+
+def panel(name, platform=sys.platform):
+    """F1 in one of the IDE's windows: "immediate", "problems", "explorer", "toolbox",
+    "locals", "watches", "call stack" or "breakpoints"."""
+    def keys(shortcut):
+        return menus.display(shortcut, platform)
+
+    topics = {
+        "immediate": ("Immediate window", "Python, typed in", [
+            "Type a line of Python and press Enter; Up and Down bring back earlier lines.",
+            "\"? expression\" prints a value, as VB's Print did: ? Label1.text",
+            "",
+            "Where it runs:",
+            *_table([("Nothing running", "in the IDE itself, to try things out"),
+                     ("The program running", "in the program: form is the startup form, its controls go by name"),
+                     ("", "(Label1.text), and so does every form that's loaded (forms.Settings)"),
+                     ("Paused", "in the paused function, with its variables (from Python 3.13 you"),
+                     ("", "can change them: count = 0); Call Stack chooses which function")]),
+            "",
+            "The program's print() output and its errors appear here too. When the prompt says",
+            "input:, the program is waiting for input(), and the next line typed answers it.",
+        ]),
+        "problems": ("Problems", "what the lint tools find", [
+            "Every problem the lint tools find in the project's code, open files or not.",
+            "Click one, or press Enter, to go to it.",
+            "",
+            "Project > Linting... chooses the tools (ruff, pyflakes and the like); they check as you",
+            "type and when you save. In the code a problem is underlined, with a dot in the line",
+            "numbers (rest the mouse on it to read it), and the bar under the code says what's",
+            "wrong on the cursor's line.",
+        ]),
+        "explorer": ("Project Explorer", "the project's parts", [
+            "Forms and Modules: the project's code. Double-click to open; right-click for more",
+            "(View Code, Set as Startup, Rename, Remove). F2 renames a module, Delete removes.",
+            "(startup) marks the form F5 shows first.",
+            "",
+            "The Python row: the interpreter that runs the program. Double-click to choose another;",
+            "right-click to create an environment (.venv) for the project.",
+            "Libraries: what the program uses (pyproject.toml's dependencies), installed in its",
+            "environment. Double-click to add one.",
+            "",
+            "Files: everything else in the project folder. Text opens in a tab; pictures and the",
+            "like in their own program. Right-click for new files and folders, renaming, removing",
+            "(to the Recycle Bin or Trash), and Bundle with Make EXE, for files the program needs.",
+            "(bundled) marks what Make EXE puts in the program, including the pictures forms show.",
+            "Changes made outside readymade show when you come back to it.",
+        ]),
+        "toolbox": ("Toolbox", "the controls to draw", [
+            "Choose a control, then drag on the form to draw it (double-click a tool to drop one in",
+            "the middle of the form). Pointer selects and moves controls; it comes back after each",
+            "control is drawn. Rest the mouse on a tool to see what it's for; F1 with one chosen",
+            "is help on it.",
+        ]),
+        "locals": ("Locals", "the paused function's variables", [
+            "While the program is paused: the variables of the function chosen in Call Stack (the",
+            "one it's paused in, to start with), with their values and types.",
+            "",
+            "Open an object, list or dict (\u25b8) to see its parts; they stay open as you step.",
+            "Double-click a value, or press F2, to change it: type any Python expression and press",
+            "Enter (a paused function's own variables can change from Python 3.13).",
+            "Resting the mouse on a name in the code shows its value too.",
+        ]),
+        "watches": ("Watches", "expressions you keep an eye on", [
+            "Debug > Add Watch... adds one. The columns: the expression, its value and type, what",
+            "it does (Watch), and where it applies (Context).",
+            "",
+            *_table([("\u0394", "it pauses the program on the line after its value changes"),
+                     ("\u25cf", "it pauses the program when its value becomes true"),
+                     ("(no mark)", "it only shows its value")]),
+            "",
+            "While the program runs, a watch not tied to a function shows its value as it changes;",
+            "a function's watch shows its value as the function left it. View > Watches shows them",
+            "when the program isn't paused. Double-click or Enter to change one, Delete to remove",
+            "it, right-click for more.",
+        ]),
+        "call stack": ("Call Stack", "how the program got here", [
+            "While the program is paused: the function it's in at the top, the one that called it",
+            "below, and so on (only your project's code; readymade's and Python's are left out).",
+            "",
+            "Click one to see its place in the code and its variables in Locals; the Immediate",
+            "window then runs Python there, and the Watches show their values there.",
+        ]),
+        "breakpoints": ("Breakpoints", "where the program pauses", [
+            "Every breakpoint in the project, and the watches that pause the program.",
+            "",
+            *_table([("\u25cf  on", "the program pauses before the line runs"),
+                     ("\u25cb  off", "switched off: it stays, but the program goes by (click to switch)"),
+                     ("\u0394  watch", "a watch that pauses the program (see Watches)")]),
+            "",
+            "Click a row to go to its line; double-click or Enter for its condition, hit count or",
+            f"message; Delete removes it; right-click for more. {keys('Ctrl+Shift+F9')} removes them all.",
+        ]),
+    }
+    title, subtitle, lines = topics[name]
+    return Topic(title, subtitle, "\n".join(lines))
+
+
+def dialog(name, platform=sys.platform):
+    """The Help button (or F1) in a dialog: "watch", "breakpoint", "options" or "make exe"."""
+    topics = {
+        "watch": ("Add Watch", "keeping an eye on an expression", [
+            "Expression: any Python expression: a name (total), a part (self.basket[0]), a test",
+            "(total > 100).",
+            "",
+            "Context: where it applies. A function: worked out only while that function runs, with",
+            "its variables. A file: its module's own names. Anywhere: what the paused function sees,",
+            "or while the program runs, the forms and controls (as the Immediate window does).",
+            "",
+            "Watch type:",
+            *_table([("Watch the expression", "shows its value when the program is paused (and while"),
+                     ("", "it runs, for watches not tied to a function)"),
+                     ("Break when true", "pauses the program as soon as it becomes true"),
+                     ("Break when it changes", "pauses on the line after its value changes; the message"),
+                     ("", "names the line that changed it, marked green (a variable first"),
+                     ("", "getting a value counts as a change)")]),
+            "",
+            "The two that break check after every line in their context, which slows the program,",
+            "so choose a function when you can. They're listed in the Breakpoints tab too.",
+        ]),
+        "breakpoint": ("Breakpoint Condition", "pausing only sometimes", [
+            "When this is true: a Python expression, like total > 100. The program pauses only when",
+            "it's true. It's checked before the line runs, so the names in it must exist then; one",
+            "that fails pauses the program and says why. Empty: whenever the line is reached.",
+            "",
+            "Hit count: how many times the line has been reached (counted from the start of each",
+            "run, and only when the condition is true):",
+            *_table([("Always", "every time"),
+                     ("is", "only that time: is 3 pauses the third time"),
+                     ("at least", "from that time on"),
+                     ("a multiple of", "every so many times: 10 pauses the 10th, 20th, ...")]),
+            "",
+            "Instead of stopping, write this (a logpoint): the program carries on, and writes the",
+            "message in the Immediate window each time, with names in {braces} worked out, as a",
+            "Python f-string does: total is {subtotal}, or {price:.2f}. It's the print() you'd add",
+            "and later remove. A logpoint is a diamond in the line numbers.",
+        ]),
+        "options": ("Options", "yours, for all your projects", [
+            "Code font and Indent: how the code looks, and how many spaces Tab puts in.",
+            "Theme: Light, or Dark throughout the IDE. The forms keep their own colors.",
+            "",
+            "Break on errors in event handlers: when an event handler fails, the program pauses",
+            "at the line that failed, with its variables in Locals, instead of just printing the",
+            "error. Continue skips the rest of that event.",
+            "",
+            "Also where an error is raised, even if a try catches it: pauses as soon as an error",
+            "is raised in your code, before any try sees it (VB's Break on All Errors). It finds",
+            "errors a try is hiding. It watches every line of your code, so the program runs a",
+            "little slower: leave it off until you need it.",
+        ]),
+        "make exe": ("Make EXE", "a program that runs without Python", [
+            "Program name: the program file's name. Version, Company, Description and Copyright:",
+            "Windows shows them in the program's Properties > Details; a Mac's Get Info shows the",
+            "version and copyright.",
+            "",
+            "One file: a single program file, easy to hand to people; it starts a little slower,",
+            "as it unpacks itself each time. One folder: the program with what it needs beside it;",
+            "it starts quicker; hand people the whole folder. On a Mac it's always an .app.",
+            "",
+            "LICENSES.txt: Python, Tcl/Tk, readymade and most libraries ask for their license",
+            "notices to come along when you give a program away; this gathers them, beside it.",
+            "",
+            "It's made in the project's dist folder, by PyInstaller in the project's own",
+            "environment (installed there the first time).",
+        ]),
+    }
+    title, subtitle, lines = topics[name]
+    return Topic(title, subtitle, "\n".join(lines))
+
+
 def home(platform=sys.platform):
     """The overview, with shortcuts as this system writes them (⌘ on a Mac)."""
     mac = platform == "darwin"
@@ -154,6 +358,8 @@ def home(platform=sys.platform):
         "Code",
         f"  F12 or {click} goes to a definition; {complete} completes a name.",
         f"  Tab and Shift+Tab indent and outdent; {keys('Ctrl+/')} comments lines out and in.",
+        f"  {keys('Ctrl+F')} finds, {keys('Ctrl+Alt+F' if mac else 'Ctrl+H')} replaces ({keys('Ctrl+G' if mac else 'F3')} for the next);"
+        f" {keys('Ctrl+Shift+F')} finds in every file.",
         f"  {keys('Shift+Alt+F')} formats the code (choose a formatter in Project > Formatting).",
         f"  {'Preferences' if mac else 'Tools > Options'}: the code font, indent width and a dark theme.",
         "",

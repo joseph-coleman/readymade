@@ -17,7 +17,7 @@ import tkinter as tk
 from readymade import menus
 from readymade.controls import GRID_CELL, Button, Grid, create, repaint_inside
 from readymade.form import FORM
-from readymade.ide import options
+from readymade.ide import options, tooltips
 
 GRID = 8
 HANDLE = 6
@@ -287,6 +287,9 @@ class DesignSurface(tk.Frame):
                              padx=3, pady=0, cursor="hand2")
             badge.place(x=x, y=y)
             badge.bind("<ButtonPress-1>", lambda e, c=control: self._tab_order_click(c))
+            tooltips.tip(badge, f"{control.name}: number {spec['tabindex']} in the Tab order"
+                         + (" (set this round)" if done else "")
+                         + ".\nClick the controls in the order Tab should visit them (green: done); Esc when finished.")
             self._badges.append(badge)
 
     def _tab_order_click(self, control):

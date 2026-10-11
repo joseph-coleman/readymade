@@ -8,7 +8,7 @@ from tkinter import ttk
 
 from readymade import menus
 from readymade.controls import REGISTRY
-from readymade.ide import options
+from readymade.ide import options, tooltips
 
 MONO = options.CODE_FONT  # code and output: Tools > Options chooses it
 
@@ -32,6 +32,7 @@ class Toolbox(ttk.Frame):
                 indicatoron=False, width=13, anchor="w", padx=6, pady=3,
             )
             button.pack(fill=tk.X, pady=1)
+            tooltips.tip(button, _tool_tip(value))
             if value:
                 tags = button.bindtags()
                 button.bindtags((tags[0], tags[1], "ToolboxDrop", *tags[2:]))
@@ -64,6 +65,13 @@ class Toolbox(ttk.Frame):
 
     def reset(self):
         self._var.set("")
+
+
+def _tool_tip(type_name):
+    if not type_name:
+        return "Select and move controls on the form (Esc gets back to it while drawing)"
+    doc = (REGISTRY[type_name].__doc__ or "").strip().split("\n\n")[0]
+    return " ".join(doc.split()) + "\nDrag on the form to draw one, or double-click here. F1 on it for more."
 
 
 class ProjectExplorer(ttk.Frame):
@@ -110,6 +118,7 @@ class ProjectExplorer(ttk.Frame):
         for menu in (self.menu, self.python_menu, self.libraries_menu, self.files_menu):
             menus.defer_commands(menu)  # or dialogs opened from them freeze on macOS
         self.tree.bind("<<TreeviewOpen>>", lambda e: self._fill_folder(self.tree.focus()))
+        tooltips.dynamic(self.tree, lambda x, y: self.tip_for(self.tree.identify_row(y)))
 
     def refresh(self):
         opened = [row for row in self._rows() if self.tree.item(row, "open")]
@@ -141,6 +150,33 @@ class ProjectExplorer(ttk.Frame):
         if chosen and self.tree.exists(chosen):
             self.tree.focus(chosen)
             self.tree.selection_set(chosen)
+
+    def tip_for(self, row):
+        """What a row's note means (startup, bundled), or what a row is for."""
+        app, text = self.app, self.tree.item(row, "text") if row else ""
+        if row == "python":
+            python, where = app.python()
+            return (f"The Python that runs the program: {python or 'the one running readymade'}.\n"
+                    "Double-click to choose another; right-click to create an environment (.venv) for the project.")
+        if row == "libraries":
+            return ("The libraries the program uses (pyproject.toml's dependencies), installed in its environment.\n"
+                    "Double-click to add one; right-click one to remove it.")
+        if row == "files":
+            return ("The project's other files and folders. Text opens here, anything else in its own program.\n"
+                    "Right-click for new files and folders, renaming, and Bundle with Make EXE.")
+        if row.startswith("form:") and text.endswith("(startup)"):
+            return "The startup form: F5 shows it first. Right-click another form > Set as Startup to change it."
+        if row.startswith("file:") and text.endswith("(bundled)"):
+            relative, include = row[5:], app.project.include()
+            if relative in include:
+                return "Make EXE puts this in the program, as you chose (right-click > Bundle with Make EXE)."
+            if any(relative.startswith(entry.rstrip("/") + "/") for entry in include):
+                return "Make EXE puts this in the program, with the folder it's in."
+            return "Make EXE puts this in the program: a form shows it (or it's the program's icon)."
+        if text in ("Forms", "Modules") and self.tree.parent(row) and not self.tree.parent(self.tree.parent(row)):
+            return ("The project's forms: double-click one to design it, right-click for its code." if text == "Forms"
+                    else "Python code the forms share: import it by name. Double-click to open; F2 renames.")
+        return ""
 
     def _rows(self, parent=""):
         for row in self.tree.get_children(parent):
@@ -769,7 +805,7 @@ class LocalsPanel(ttk.Frame):
 
     def _insert(self, parent, info):
         path = tuple(info["path"])
-        row = self.tree.insert(parent, tk.END, text=info["name"], values=self._values(info))
+        row = self.tree.insert(parent, tk.END, text=self._label(info), values=self._values(info))
         self._rows[path] = row
         self._paths[row] = path
         if info["expandable"]:
@@ -780,6 +816,9 @@ class LocalsPanel(ttk.Frame):
 
     def _values(self, info):
         return info["value"], info["type"]
+
+    def _label(self, info):
+        return info["name"]
 
     def _open(self, _):
         row = self.tree.focus()
@@ -796,11 +835,18 @@ class LocalsPanel(ttk.Frame):
         return tuple(self.tree.item(self._rows[path], "values"))
 
 
+WATCH_KINDS = {"watch": ("", "shows its value"), "true": ("\u25cf", "breaks when true"),  # ●
+               "changes": ("\u0394", "breaks when it changes")}  # Δ
+
+
 def describe_watch(watch):
-    """Where a watch applies and what it does, for the Watches window."""
-    where = " in ".join(filter(None, (watch.get("function"), watch.get("file")))) or "anywhere"
-    does = {"true": ", breaks when true", "changes": ", breaks when it changes"}.get(watch.get("kind"), "")
-    return where + does
+    """Where a watch applies, for the Watches window."""
+    return " in ".join(filter(None, (watch.get("function"), watch.get("file")))) or "anywhere"
+
+
+def watch_kind(watch):
+    """(mark, what it does): ("●", "breaks when true"); a plain watch has no mark."""
+    return WATCH_KINDS.get(watch.get("kind", "watch"), WATCH_KINDS["watch"])
 
 
 class WatchesPanel(LocalsPanel):
@@ -808,8 +854,8 @@ class WatchesPanel(LocalsPanel):
     paused. Right-click, Enter or Delete to change them: on_edit(index, or None to add one),
     on_delete(index)."""
 
-    COLUMNS = (("#0", "Expression", 120, False), ("value", "Value", 180, True), ("type", "Type", 70, False),
-               ("context", "Context", 150, True))
+    COLUMNS = (("#0", "Expression", 130, False), ("value", "Value", 170, True), ("type", "Type", 60, False),
+               ("watch", "Watch", 140, False), ("context", "Context", 130, True))
 
     def __init__(self, master, on_expand, on_edit, on_delete):
         super().__init__(master, on_expand)
@@ -825,6 +871,19 @@ class WatchesPanel(LocalsPanel):
         self.tree.bind("<Double-Button-1>", lambda e: self._edit(self.index(self.tree.identify_row(e.y))))
         self.tree.bind("<Return>", lambda e: self._edit(self.index()))
         self.tree.bind("<Delete>", lambda e: self._delete(self.index()))
+        tooltips.dynamic(self.tree, self.tip_at)
+
+    def tip_at(self, x, y):
+        """What a breaking watch's mark (Δ or ●) means, over its expression or Watch column."""
+        path = self._paths.get(self.tree.identify_row(y))
+        watch = self._watch_of(path) if path else None
+        if watch is None or self.tree.identify_column(x) not in ("#0", "#3"):
+            return ""
+        return {"true": "\u25cf This watch pauses the program when its value becomes true.",
+                "changes": "\u0394 This watch pauses the program on the line after its value changes "
+                           "(the line that changed it is marked green)."}.get(watch.get("kind"), "") + (
+            "\nDouble-click to change it; it's listed in the Breakpoints tab too." if watch.get("kind") != "watch"
+            else "")
 
     def show(self, watches, values=None):
         """watches: [{expression, function, file, kind}]; values: what the paused program said
@@ -838,9 +897,29 @@ class WatchesPanel(LocalsPanel):
     def _values(self, info):
         path = info["path"]
         value = f"{info['value']}  ({info['note']})" if info.get("note") else info["value"]  # e.g. as total left it
+        watch = self._watch_of(path)
+        if watch is not None:
+            return value, info["type"], watch_kind(watch)[1], describe_watch(watch)
+        return value, info["type"], "", ""
+
+    def _label(self, info):
+        """A watch that breaks the program is marked, so it's plain why the program paused there."""
+        watch = self._watch_of(info["path"])
+        mark = watch_kind(watch)[0] if watch is not None else ""
+        return f"{mark} {info['name']}" if mark else info["name"]
+
+    def _watch_of(self, path):
         if len(path) == 2 and path[0] == "#watch" and path[1] < len(self._watches):
-            return value, info["type"], describe_watch(self._watches[path[1]])
-        return value, info["type"], ""
+            return self._watches[path[1]]
+        return None
+
+    def choose(self, index):
+        """Select a watch's row (one that just made the program pause)."""
+        row = self._rows.get(("#watch", index))
+        if row is not None:
+            self.tree.selection_set(row)
+            self.tree.focus(row)
+            self.tree.see(row)
 
     def index(self, row=None):
         """The watch at a row (default: the chosen one), or None."""
@@ -928,9 +1007,10 @@ class BreakpointsPanel(ttk.Frame):
 
     ON, OFF = "\u25cf", "\u25cb"  # ● ○, as the line numbers show them
 
-    def __init__(self, master, on_go, on_switch, on_condition, on_remove, on_remove_all):
+    def __init__(self, master, on_go, on_switch, on_condition, on_remove, on_remove_all, on_watch=None):
         super().__init__(master, padding=(4, 2))
         self._on = {"go": on_go, "switch": on_switch, "condition": on_condition, "remove": on_remove}
+        self._on_watch = on_watch or (lambda action, index: None)  # (action, the watch's index)
         self.tree = _tree(self, (("on", "", 30, False), ("file", "File", 110, False), ("line", "Line", 50, False),
                                  ("code", "Code", 240, True), ("when", "Condition", 180, True)), "Debug.Treeview")
         self.tree.column("on", anchor="center")
@@ -948,13 +1028,16 @@ class BreakpointsPanel(ttk.Frame):
         self.menu.add_command(label="Remove All Breakpoints", command=on_remove_all)
         for sequence in menus.context_clicks(self.tree):
             self.tree.bind(sequence, self._popup)
+        tooltips.dynamic(self.tree, self.tip_at)
 
     def apply_theme(self, theme):
         _style_tree(self, "Debug.Treeview", theme)
         self.tree.tag_configure("off", foreground=theme.number)
 
-    def show(self, rows):
-        """rows: [(file, line, the line's code, settings)], settings as CodeView.breakpoints gives them."""
+    def show(self, rows, watches=()):
+        """rows: [(file, line, the line's code, settings)], settings as CodeView.breakpoints gives
+        them; watches: [(index, watch)], the watches that break the program, which act like
+        breakpoints, listed after them (their row goes to the Watches tab)."""
         chosen = self._places.get(self.tree.focus())
         self.tree.delete(*self.tree.get_children())
         self._places = {}
@@ -966,6 +1049,28 @@ class BreakpointsPanel(ttk.Frame):
             if (file, line) == chosen:
                 self.tree.focus(row)
                 self.tree.selection_set(row)
+        for index, watch in watches:
+            mark, does = watch_kind(watch)
+            row = self.tree.insert("", tk.END, values=(mark, watch.get("file") or "(any)", "",
+                                                        f"watch: {watch['expression']}",
+                                                        f"{does}, {describe_watch(watch)}"))
+            self._places[row] = ("#watch", index)
+
+    def tip_at(self, x, y):
+        """What the first column's marks mean."""
+        if self.tree.identify_column(x) != "#1":
+            return ""
+        if self.tree.identify_region(x, y) == "heading":
+            return "On or off: click a breakpoint's dot to switch it off without losing it, or back on."
+        place = self._places.get(self.tree.identify_row(y))
+        if place is None:
+            return ""
+        if place[0] == "#watch":
+            return ("A watch that pauses the program (\u25cf when true, \u0394 when it changes): it acts like a "
+                    "breakpoint. Double-click to change it.")
+        if self.tree.set(self.tree.identify_row(y), "on") == self.OFF:
+            return "Switched off: it stays, but doesn't pause the program. Click to switch it back on."
+        return "On: the program pauses here. Click to switch it off (it stays, hollow, to switch back on)."
 
     def _clicked(self, e):
         row = self.tree.identify_row(e.y)
@@ -973,8 +1078,16 @@ class BreakpointsPanel(ttk.Frame):
             self._do("switch" if self.tree.identify_column(e.x) == "#1" else "go", row)
 
     def _do(self, action, row):
-        if row in self._places:
-            self._on[action](*self._places[row])
+        place = self._places.get(row)
+        if place is None:
+            return "break"
+        if place[0] == "#watch":  # a watch: to the Watches tab, or its own dialog
+            if action == "switch":
+                self.bell()  # (a watch is changed in its dialog: it can't be switched off)
+            else:
+                self._on_watch(action, place[1])
+            return "break"
+        self._on[action](*place)
         return "break"
 
     def _popup(self, e):

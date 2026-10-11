@@ -271,7 +271,9 @@ class FormEditor:
         except OSError as e:
             messagebox.showerror("Choose a file", f"Couldn't copy {chosen}: {e}", parent=self.app.root)
             return None
-        return self.set_property(obj, prop, path)
+        name = self.set_property(obj, prop, path)
+        self.app.explorer_refresh()  # (a copy in images/, and what Make EXE bundles, show in the Files list)
+        return name
 
     def _spec(self, name) -> dict:
         spec = self.design.control(name)

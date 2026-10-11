@@ -322,3 +322,23 @@ def test_files_changed_outside_the_ide(app):
     app.immediate.output.delete("1.0", "end")
     app.check_outside_changes()
     assert "changed outside" not in app.immediate.output.get("1.0", "end")
+
+
+def test_a_chosen_picture_shows_in_the_files_list(app, tmp_path, monkeypatch):
+    from tkinter import filedialog
+
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    tk.PhotoImage(master=app.root, width=4, height=4).write(str(outside / "logo.png"), format="png")
+    monkeypatch.setattr(filedialog, "askopenfilename", lambda **kw: str(outside / "logo.png"))
+    form = app.form
+    form.add_control("Image", 8, 8)
+    form.choose_file("Image1", "picture")  # copied into images/
+    tree = app.explorer.tree
+    assert tree.exists("file:images")
+    tree.focus("file:images")
+    tree.item("file:images", open=True)
+    tree.event_generate("<<TreeviewOpen>>")
+    assert tree.item("file:images/logo.png", "text") == "logo.png"
+    app.save()
+    assert tree.item("file:images/logo.png", "text") == "logo.png  (bundled)"  # a form shows it

@@ -7,6 +7,8 @@ import tkinter as tk
 from tkinter import ttk
 
 from readymade import package
+from readymade.ide import helptext
+from readymade.ide.tooltips import help_button, tip
 
 
 class MakeExeDialog(tk.Toplevel):
@@ -36,24 +38,34 @@ class MakeExeDialog(tk.Toplevel):
             entry = ttk.Entry(body, textvariable=self.fields[key], width=40)
             entry.grid(row=row, column=1, sticky="we", padx=(8, 0), pady=2)
             first = first or entry
-        ttk.Label(body, text="Windows shows these in the program's Properties; a Mac in Get Info.",
-                  style="Note.TLabel").grid(row=5, column=1, sticky="w", padx=(8, 0))
+        where = ("A Mac's Get Info shows the version and copyright; the company and description\n"
+                 "are for Windows, which shows them all in the program's Properties."
+                 if sys.platform == "darwin" else "Windows shows these in the program's Properties.")
+        ttk.Label(body, text=where, style="Note.TLabel").grid(row=5, column=1, sticky="w", padx=(8, 0))
         kind = ttk.LabelFrame(body, text="Make it as", padding=8)
         kind.grid(row=6, column=0, columnspan=2, sticky="we", pady=(10, 0))
         if sys.platform == "darwin":
             ttk.Label(kind, text="An .app (on a Mac, a program is always one).").pack(anchor="w")
         else:
-            ttk.Radiobutton(kind, text="One file, easy to hand to people", value=False,
-                            variable=self.one_folder).pack(anchor="w")
-            ttk.Radiobutton(kind, text="One folder with the program and what it needs (it starts quicker)",
-                            value=True, variable=self.one_folder).pack(anchor="w")
-        ttk.Checkbutton(body, text="Put LICENSES.txt beside it: the notices of Python, readymade and the\n"
-                                   "libraries it carries, which their licenses ask to come along",
-                        variable=self.notices).grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
+            for text, value, said in (
+                    ("One file, easy to hand to people", False,
+                     "A single program file. It starts a little slower, as it unpacks itself each time."),
+                    ("One folder with the program and what it needs (it starts quicker)", True,
+                     "The program with its parts beside it, in a folder: hand people the whole folder.")):
+                choice = ttk.Radiobutton(kind, text=text, value=value, variable=self.one_folder)
+                choice.pack(anchor="w")
+                tip(choice, said)
+        notices = ttk.Checkbutton(body, text="Put LICENSES.txt beside it: the notices of Python, readymade and the\n"
+                                             "libraries it carries, which their licenses ask to come along",
+                                  variable=self.notices)
+        notices.grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        tip(notices, "Their licenses (MIT, BSD, the PSF's) ask for their notices to come along when you give the "
+                     "program to others: this gathers them in one file")
         self.note = ttk.Label(body, style="Note.TLabel", wraplength=440)
         self.note.grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 0))
         buttons = ttk.Frame(body)
         buttons.grid(row=9, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        help_button(self, buttons, app, lambda: helptext.dialog("make exe"))
         ttk.Button(buttons, text="Make", command=self.make).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
         self.bind("<Return>", lambda e: self.make())

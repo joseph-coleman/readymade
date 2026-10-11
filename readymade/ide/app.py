@@ -27,6 +27,7 @@ from readymade.formfile import FormFileError
 from readymade.ide import assist
 from readymade.ide.editors import FileEditor, FormEditor, ModuleEditor, ViewerEditor, bring_in
 from readymade.ide.linting import Linter
+from readymade.ide.find import FindBar, FindInFilesPanel
 from readymade.ide.makeexe import MakeExeDialog
 from readymade.ide.menueditor import MenuEditor
 from readymade.ide import helptext
@@ -44,6 +45,10 @@ _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])  # the folder containin
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")  # terminal color and cursor codes
 
 
+# Replace is Ctrl+H, as in VS Code; a Mac uses ⌘H to hide a program, so there it's Option+⌘F
+# (also VS Code's). Find Next is F3, and on a Mac ⌘G, its usual.
+REPLACE_KEY = "Ctrl+Alt+F" if sys.platform == "darwin" else "Ctrl+H"
+FIND_NEXT = "Ctrl+G" if sys.platform == "darwin" else "F3"
 # Step Into is F11, as in VS Code; macOS takes F11 for Show Desktop, so a Mac's menu shows
 # ⌘F11 (both work everywhere, and F11 does on a Mac with that system shortcut turned off).
 STEP_INTO = "Ctrl+F11" if sys.platform == "darwin" else "F11"
@@ -117,14 +122,16 @@ class App:
             self.debug_tabs, on_go=self.go_to_breakpoint, on_switch=self.switch_breakpoint,
             on_condition=lambda file, line: self.breakpoint_condition(self._open_breakpoint(file, line), line),
             on_remove=lambda file, line: self._change_breakpoint(file, line, None),
-            on_remove_all=self.clear_breakpoints)
+            on_remove_all=self.clear_breakpoints, on_watch=self._breakpoints_tab_watch)
         self.debug_tabs.add(self.breakpoints_panel, text="Breakpoints")
         self.immediate = ImmediateWindow(self.bottom, on_line=self.immediate_line)
         self.problems = ProblemsPanel(self.bottom, on_open=self.go_to_problem)
         self.help = HelpPanel(self.bottom)
+        self.find_panel = FindInFilesPanel(self.bottom, search_files=self.search_files, on_open=self.go_to_found)
         self.bottom.add(self.immediate, text="Immediate")
         self.bottom.add(self.problems, text="Problems")
         self.bottom.add(self.help, text="Help")
+        self.bottom.add(self.find_panel, text="Find")
         self.problems_changed()
         options.apply(self)  # the font, indent and colors chosen in Tools > Options
         if root.tk.call("tk", "windowingsystem") == "aqua":  # a Mac's app menu has Preferences... (⌘,)
@@ -157,6 +164,13 @@ class App:
             ("Shift+Alt+F", self.format_document),
             ("F12", self.go_to_definition),
             ("F1", self.show_help),
+            ("Ctrl+F", lambda: self.find()),
+            (REPLACE_KEY, lambda: self.find(replace=True)),
+            ("F3", lambda: self.find_next(1)),
+            ("Shift+F3", lambda: self.find_next(-1)),
+            ("Ctrl+Shift+F", self.find_in_files),
+            *([("Ctrl+G", lambda: self.find_next(1)), ("Ctrl+Shift+G", lambda: self.find_next(-1))]
+              if sys.platform == "darwin" else []),  # (a Mac's usual Find Next and Previous)
         ):
             menus.bind_shortcut(root, shortcut, lambda e, c=command: (c(), "break")[1])
         for shortcut, redo in (("Ctrl+Z", False), ("Ctrl+Y", True), ("Ctrl+Shift+Z", True)):
@@ -190,6 +204,16 @@ class App:
                                    ("Paste", "paste", "Ctrl+V"), ("Paste with Code", "paste_code", "Ctrl+Shift+V"),
                                    ("Delete", "delete", "Del")):
             edit.add_command(label=label, accelerator=menus.accelerator(key), command=lambda a=action: self.edit(a))
+        edit.add_separator()
+        edit.add_command(label="Find...", accelerator=menus.accelerator("Ctrl+F"), command=lambda: self.find())
+        edit.add_command(label="Replace...", accelerator=menus.accelerator(REPLACE_KEY),
+                         command=lambda: self.find(replace=True))
+        edit.add_command(label="Find Next", accelerator=menus.accelerator(FIND_NEXT), command=lambda: self.find_next(1))
+        edit.add_command(label="Find Previous", accelerator=menus.accelerator(f"Shift+{FIND_NEXT}" if FIND_NEXT == "F3"
+                                                                                else "Ctrl+Shift+G"),
+                         command=lambda: self.find_next(-1))
+        edit.add_command(label="Find in Files...", accelerator=menus.accelerator("Ctrl+Shift+F"),
+                         command=self.find_in_files)
         edit.add_separator()
         edit.add_command(label="Toggle Comment", accelerator=menus.accelerator("Ctrl+/"), command=self.toggle_comment)
         edit.add_command(label="Format Document", accelerator=menus.accelerator("Shift+Alt+F"), command=self.format_document)
@@ -494,6 +518,64 @@ class App:
                      "delete": "<<Clear>>"}[action]
             editor.code.text.event_generate(event)
 
+    # ----- finding -----
+
+    def _code_for_finding(self):
+        """The code to find in: the code that's showing (a form's, switched to from its design)."""
+        editor = self._current_editor()
+        if isinstance(editor, FormEditor) and editor.frame.select() != str(editor.code):
+            editor.show_code()
+        return editor
+
+    def find(self, replace=False):
+        """Edit > Find (Ctrl+F) and Replace (Ctrl+H; on a Mac Option+Command+F)."""
+        editor = self._code_for_finding()
+        if editor is not None:
+            editor.code.show_find(replace=replace and not getattr(editor, "read_only", False))
+
+    def find_next(self, direction):
+        editor = self._code_for_finding()
+        if editor is not None:
+            editor.code.find_next(direction)
+
+    def find_in_files(self):
+        """Edit > Find in Files (Ctrl+Shift+F): the Find tab, looking for the selected text."""
+        text = ""
+        editor = self._current_editor()
+        if editor is not None and editor.code.text.tag_ranges("sel"):
+            chosen = editor.code.text.get("sel.first", "sel.last")
+            text = chosen if "\n" not in chosen else ""
+        self.bottom.select(self.find_panel)
+        self.find_panel.open(text)
+
+    def search_files(self):
+        """What Find in Files looks in: [(path, text, label)], the project's code and other text
+        files (open ones as they are in their tabs), not .form files or what's hidden."""
+        if self.project is None:
+            return []
+        open_text = {Path(e.code_path): e.code.get_source() for e in self.editors
+                     if not getattr(e, "read_only", False)}
+        found = []
+        for relative in sorted(self.project.snapshot(), key=str.lower):
+            path = self.project.folder / relative
+            if relative.endswith("/") or path.suffix == ".form":
+                continue
+            if path in open_text:
+                found.append((path, open_text[path], relative))
+            elif _is_text(path):
+                try:
+                    found.append((path, path.read_text(encoding="utf-8"), relative))
+                except (OSError, UnicodeDecodeError):
+                    continue
+        return found
+
+    def go_to_found(self, path, line, column, length):
+        """A Find in Files result: open its file there, with what was found selected."""
+        relative = Path(path).relative_to(self.project.folder).as_posix()
+        editor = self.open_file(relative)
+        if editor is not None:
+            editor.code.show_location(line, column, length)
+
     def toggle_comment(self):
         """Edit > Toggle Comment, in the code that's showing."""
         editor = self._current_editor()
@@ -624,15 +706,24 @@ class App:
         self.bottom.select(self.help)
 
     def show_help(self):
-        """F1: help on whatever you're working on: a property in the Properties panel, the
-        designer's selection, the name at the cursor in the code, or else an overview."""
+        """F1: help on whatever you're working on: the window with the keyboard (a bottom tab,
+        the Project Explorer, the Toolbox), a property in the Properties panel, the designer's
+        selection, the name at the cursor in the code, or else an overview."""
         try:
             focus = self.root.focus_get()
         except KeyError:
             focus = None
         form = self.form
         prop = self.properties.prop_with_focus(focus)
-        if prop and form is not None and self.properties.current:
+        place = self._panel_with(focus)
+        if _inside(focus, (FindBar, FindInFilesPanel)) or place is self.find_panel:
+            self.show_topic(helptext.finding())
+        elif place is self.toolbox:
+            tool = self.toolbox.tool
+            self.show_topic(helptext.control(tool) if tool else helptext.panel("toolbox"))
+        elif place is not None and place is not self.help:
+            self.show_topic(helptext.panel(self._PANEL_TOPICS[type(place).__name__]))
+        elif prop and form is not None and self.properties.current:
             spec = form.design.control(form.selected)
             self.show_topic(helptext.prop(spec["type"] if spec else "Form", prop))
         elif form is not None and self._designing():
@@ -643,6 +734,24 @@ class App:
             self.show_topic(self._code_help(self._current_editor()))
         else:
             self.show_topic(helptext.home())
+
+    _PANEL_TOPICS = {"ImmediateWindow": "immediate", "ProblemsPanel": "problems", "ProjectExplorer": "explorer",
+                     "LocalsPanel": "locals", "WatchesPanel": "watches", "CallStackPanel": "call stack",
+                     "BreakpointsPanel": "breakpoints"}
+
+    def _panel_with(self, widget):
+        """The IDE window (a bottom tab, the Project Explorer, the Toolbox) a widget is in, or
+        None. A tab strip with the keyboard counts as the tab it's showing."""
+        for notebook in (self.bottom, self.debug_tabs):
+            if widget is notebook:
+                return notebook.nametowidget(notebook.select()) if notebook.select() else None
+        panels = (self.immediate, self.problems, self.help, self.find_panel, self.watches_panel, self.locals,
+                  self.call_stack, self.breakpoints_panel, self.explorer, self.toolbox)
+        while widget is not None:
+            if any(widget is panel for panel in panels):
+                return widget
+            widget = getattr(widget, "master", None)
+        return None
 
     def _code_help(self, editor):
         code = editor.code
@@ -833,6 +942,8 @@ class App:
                 self.format_code(editor)  # if it can't, the save still goes ahead
         ok = all([e.save() for e in changed])
         self._store_breakpoints()  # where they are now that lines have moved
+        if any(isinstance(e, FormEditor) for e in changed):
+            self.explorer_refresh()  # (the pictures forms show are bundled: the Files list marks them)
         for editor in changed:
             self.linter.check(editor, saved=True)
         if changed:
@@ -1152,7 +1263,18 @@ class App:
                 line, settings = _breakpoint_item(item)
                 code = lines[line - 1].strip() if 0 < line <= len(lines) else ""
                 rows.append((file, line, code, settings))
-        self.breakpoints_panel.show(rows)
+        self.breakpoints_panel.show(rows, [(i, w) for i, w in enumerate(self.watches())
+                                           if w.get("kind") in ("true", "changes")])
+
+    def _breakpoints_tab_watch(self, action, index):
+        """A watch that breaks, chosen in the Breakpoints tab: shown in the Watches tab, or edited."""
+        if action == "condition":
+            self.edit_watch(index)
+        elif action == "remove":
+            self.delete_watch(index)
+        else:
+            self.show_debug_window(self.watches_panel)
+            self.watches_panel.choose(index)
 
     def _editor_for(self, file):
         """The open editor of a project file (relative name), or None."""
@@ -1238,6 +1360,7 @@ class App:
         if self.project is None:
             return
         self.project.set_local_setting("watches", watches or None)
+        self.show_breakpoints()  # (watches that break are listed there too)
         if self.session is not None:
             self.session.send(cmd="watches", watches=watches)  # paused, it answers with their values
         if not self.in_break_mode:
@@ -1515,6 +1638,7 @@ class App:
         if self.project is None:
             return
         self.project.set_setting("icon", path)
+        self.explorer_refresh()  # (a copy in images/ shows in the Files list)
         if path is None:
             self.immediate.write("--- The program no longer has an icon of its own. ---\n")
             return
@@ -1900,6 +2024,15 @@ class _DesignTimeConsole(code.InteractiveConsole):
     def push(self, *args, **kwargs):
         with contextlib.redirect_stdout(self.stream), contextlib.redirect_stderr(self.stream):
             return super().push(*args, **kwargs)
+
+
+def _inside(widget, kinds):
+    """Whether a widget is one of kinds, or inside one."""
+    while widget is not None:
+        if isinstance(widget, kinds):
+            return True
+        widget = getattr(widget, "master", None)
+    return False
 
 
 def _is_text(path, size=8192):

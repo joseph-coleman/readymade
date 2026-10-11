@@ -18,6 +18,9 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from readymade.ide import helptext
+from readymade.ide.tooltips import help_button, tip
+
 STEPS = ("step", "next", "return", "until")  # Step Into, Step Over, Step Out, Run to Cursor
 
 
@@ -130,6 +133,9 @@ class DebugSession:
         app.call_stack.show(message.get("stack", []), self.selected)
         if message.get("reason") == "watch":
             app.immediate.write(f"--- Watch: {message.get('message', '')} ---\n")
+            app.debug_tabs.select(app.watches_panel)  # the watch that paused it, in front
+            for index in message.get("watches_fired", [])[:1]:
+                app.watches_panel.choose(index)
         editor = self.show_place()
         if editor is not None and message.get("reason") in ("error", "raised"):
             editor.code.show_error(self.where()["line"], message.get("message", ""))
@@ -242,6 +248,10 @@ class DebugSession:
 
 KINDS = (("watch", "Watch the expression"), ("true", "Break when the value is true"),
          ("changes", "Break when the value changes"))
+KIND_TIPS = {"watch": "Shows its value when the program is paused (and as it runs, if it's not a function's)",
+             "true": "Pauses the program as soon as it becomes true (a \u25cf in the Watches window)",
+             "changes": "Pauses the program on the line after its value changes, naming the line that changed it "
+                        "(a \u0394 in the Watches window)"}
 ALL_FILES = "(All files)"
 ALL_FUNCTIONS = "(All functions)"
 
@@ -298,15 +308,20 @@ class WatchDialog(tk.Toplevel):
         files = ttk.Combobox(context, textvariable=self.file, state="readonly", width=30,
                              values=[ALL_FILES, *self.files])
         files.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        tip(files, "Only in this file's code, or (All files) anywhere in the project")
         files.bind("<<ComboboxSelected>>", lambda e: self._file_chosen())
         ttk.Label(context, text="Function:").grid(row=1, column=0, sticky="w", pady=2)
         self.functions = ttk.Combobox(context, textvariable=self.function, state="readonly", width=30)
         self.functions.grid(row=1, column=1, sticky="w", padx=(8, 0))
+        tip(self.functions, "Only while this function runs, with its variables; (All functions): its file's "
+                            "names, or anywhere the program is")
         self._file_chosen(keep=True)
         kinds = ttk.LabelFrame(body, text="Watch type", padding=8)
         kinds.grid(row=2, column=0, columnspan=2, sticky="we", pady=(8, 0))
         for value, label in KINDS:
-            ttk.Radiobutton(kinds, text=label, value=value, variable=self.kind).pack(anchor="w")
+            choice = ttk.Radiobutton(kinds, text=label, value=value, variable=self.kind)
+            choice.pack(anchor="w")
+            tip(choice, KIND_TIPS[value])
         self.note = ttk.Label(body, style="Note.TLabel", wraplength=380)
         self.note.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
         for variable in (self.kind, self.function):
@@ -314,6 +329,7 @@ class WatchDialog(tk.Toplevel):
         self._update_note()
         buttons = ttk.Frame(body)
         buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        help_button(self, buttons, app, lambda: helptext.dialog("watch"))
         ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
         self.bind("<Return>", lambda e: self.ok())
@@ -415,15 +431,20 @@ class BreakpointDialog(tk.Toplevel):
         ttk.Label(body, text="An expression, like total > 100. Empty: whenever it's reached.",
                   style="Note.TLabel").grid(row=2, column=1, columnspan=2, sticky="w", padx=(8, 0))
         ttk.Label(body, text="Hit count:").grid(row=3, column=0, sticky="w", pady=(8, 4))
-        ttk.Combobox(body, textvariable=self.mode, values=[label for _, label in HIT_MODES], state="readonly",
-                     width=32).grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(8, 4))
+        modes = ttk.Combobox(body, textvariable=self.mode, values=[label for _, label in HIT_MODES],
+                             state="readonly", width=32)
+        modes.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(8, 4))
+        tip(modes, "Pause only on some of the times the line is reached (counted from the start of each run, "
+                   "when the condition is true): the nth, from the nth on, or every nth")
         self.count = ttk.Spinbox(body, from_=1, to=1_000_000, textvariable=self.hits, width=7)
         self.count.grid(row=3, column=2, sticky="w", padx=(4, 0), pady=(8, 4))
         self.mode.trace_add("write", lambda *_: self._mode_chosen())
         self._mode_chosen()
-        ttk.Checkbutton(body, text="Instead of stopping, write this in the Immediate window:",
-                        variable=self.logs, command=self._logs_chosen).grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(12, 4))
+        logs = ttk.Checkbutton(body, text="Instead of stopping, write this in the Immediate window:",
+                               variable=self.logs, command=self._logs_chosen)
+        logs.grid(row=4, column=0, columnspan=3, sticky="w", pady=(12, 4))
+        tip(logs, "A logpoint: the program carries on, writing the message each time (the print() you'd add "
+                  "and later remove). It's a diamond in the line numbers.")
         self.log_entry = ttk.Entry(body, textvariable=self.log, width=40)
         self.log_entry.grid(row=5, column=1, columnspan=2, sticky="we", padx=(8, 0))
         ttk.Label(body, text="Names in {braces} show their values: total is {subtotal}",
@@ -433,6 +454,7 @@ class BreakpointDialog(tk.Toplevel):
         self.note.grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 0))
         buttons = ttk.Frame(body)
         buttons.grid(row=8, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        help_button(self, buttons, app, lambda: helptext.dialog("breakpoint"))
         ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
         self.bind("<Return>", lambda e: self.ok())

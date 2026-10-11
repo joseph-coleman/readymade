@@ -243,8 +243,12 @@ def test_watches(app, shop):
         {"expression": "price * 2", "kind": "watch", "file": "Form1.py", "function": "add_tax"},
         {"expression": "price", "kind": "changes", "file": "Form1.py", "function": "Form_load"},
     ]
-    assert [app.watches_panel.tree.item(row, "values")[2] for row in app.watches_panel.tree.get_children()] == [
-        "add_tax in Form1.py", "Form_load in Form1.py, breaks when it changes"]
+    tree = app.watches_panel.tree
+    assert [(tree.item(row, "text"), *tree.item(row, "values")[2:]) for row in tree.get_children()] == [
+        ("price * 2", "shows its value", "add_tax in Form1.py"),
+        ("\u0394 price", "breaks when it changes", "Form_load in Form1.py")]  # marked: it pauses the program
+    breakpoints_tab = app.breakpoints_panel.tree  # it acts like a breakpoint, so it's listed there too
+    assert [breakpoints_tab.item(row, "values")[3] for row in breakpoints_tab.get_children()] == ["watch: price"]
 
     shop.toggle_breakpoint(LINES["tax = price // 10"])
     app.run()
@@ -263,6 +267,13 @@ def test_watches(app, shop):
     app.run()
     assert paused_at(app, LINES["self.text = str(price)"])  # the line after price changed
     assert app.session.paused["reason"] == "watch"
+    assert app.debug_tabs.select() == str(app.watches_panel)  # the watch that paused it, in front
+    assert app.watches_panel.tree.focus() == app.watches_panel._rows[("#watch", 0)]
+    row = app.breakpoints_panel.tree.get_children()[-1]  # its row in the Breakpoints tab goes there too
+    app.debug_tabs.select(app.breakpoints_panel)
+    app.breakpoints_panel._do("go", row)
+    assert app.debug_tabs.select() == str(app.watches_panel)
+    app.breakpoints_panel._do("switch", row)  # (a watch can't be switched off: just a beep)
     changed = LINES["price = add_tax(price)"]
     assert f"--- Watch: price changed from 100 to 110 on line {changed} ---" in output(app)
     assert str(shop.text.tag_ranges("changed")[0]) == f"{changed}.0"  # the line that changed it is marked
@@ -272,7 +283,7 @@ def test_watches(app, shop):
     assert "Form1" in quick.value.get("1.0", "end")
     quick.destroy()
     assert "--- Ended (exit code 0) ---" in finish(app)
-    assert app.watches_panel.value_of("#watch", 0) == ("", "", "Form_load in Form1.py, breaks when it changes")
+    assert app.watches_panel.value_of("#watch", 0) == ("", "", "breaks when it changes", "Form_load in Form1.py")
 
 
 def test_watches_while_running(app, shop):
