@@ -23,11 +23,11 @@ class Shape:
     center, a line's first point, a text's or picture's anchor point, otherwise the top
     left corner. Shapes that have no fill can only be clicked on their outline."""
 
-    def __init__(self, canvas, kind, item, group=""):
-        self._canvas = canvas  # the Canvas control
+    def __init__(self, shapes, kind, item, group="", photo=None):
+        self._shapes = shapes  # the ShapeSet of its Canvas
         self.kind = kind
         self._item = item
-        self._photo = None  # a picture's image (Tk forgets images nothing refers to)
+        self._photo = photo  # a picture's image (Tk forgets images nothing refers to)
         self._group = ""
         self.group = group
 
@@ -181,16 +181,16 @@ class Shape:
 
     def delete(self):
         """Remove it from the canvas."""
-        self._canvas._forget(self)
+        self._shapes.remove(self)
 
     @property
     def deleted(self):
         """Whether it has been deleted (from delete, or the canvas's clear)."""
-        return self._item not in self._canvas._items
+        return self not in self._shapes
 
     @property
     def _tk(self):
-        return self._canvas.widget
+        return self._shapes.widget
 
     def __repr__(self):
         return f"<{self.kind} at {self.x}, {self.y}{' (deleted)' if self.deleted else ''}>"
@@ -220,3 +220,27 @@ def flatten(points):
 def check_choice(name, value, choices):
     if value not in choices:
         raise ValueError(f"{name} must be one of: {', '.join(repr(c) for c in choices)}")
+
+
+class ShapeSet:
+    """A Canvas's shapes, by their Tk canvas items: the Canvas adds them as they're drawn,
+    and finds them again; a shape removes itself."""
+
+    def __init__(self, widget):
+        self.widget = widget  # the Tk canvas
+        self._by_item = {}
+
+    def add(self, kind, item, group="", photo=None):
+        shape = self._by_item[item] = Shape(self, kind, item, group, photo)
+        return shape
+
+    def get(self, item):
+        """The shape of a Tk canvas item, or None (an item that isn't a shape's)."""
+        return self._by_item.get(item)
+
+    def remove(self, shape):
+        if self._by_item.pop(shape._item, None) is not None:
+            self.widget.delete(shape._item)
+
+    def __contains__(self, shape):
+        return self._by_item.get(shape._item) is shape

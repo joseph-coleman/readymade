@@ -2,6 +2,18 @@
 
 Ideas and gaps noted along the way, roughly by area.
 
+## Cleanup
+Design debts found reviewing the code (2026-10-11), most important first. None changes what the IDE does.
+1. **`App` does too much**: `ide/app.py` is ~2,000 lines, one class with 135 methods. Move each job into its own class and module, holding a reference to the app: debugging (~330 lines), project files (~340), environments and libraries (~290), the project (~230); running, documents, F1 help and completion (~130 each).
+2. ~~**Editors have no shared interface**~~ Done: a base `Editor` in `ide/editors.py` says what each is (`read_only`, `plain`, `has_design`, `is_project_code`, `showing_design()`).
+3. **Breakpoint and watch state is spread out**: CodeView's marks, ~10 App methods (storing, sending, editing closed files, renaming), the Breakpoints tab, and local settings. One `ide/breakpoints.py` owning them; CodeView just shows them.
+4. **The IDE–program messages are unwritten**: ~25 command and event names and their fields, as plain dicts in `debugger.py`, `remote.py` and `ide/debugging.py`. One module naming every message and its fields, used by both sides.
+5. ~~**Private parts used across classes**~~ Done: what's used elsewhere is public (`one_step`, `show_above_code`, `idle`, `pip_install`, `fill_folder`, `check_new_name`, `layout.span`); the form and designer use functions in `controls.py` (`grid_of`, `focus_widget`, `option_group`, `show_as_default`), as a control's public methods are what programs see; a Canvas's shapes are a `ShapeSet` in `shapes.py`; `form.loaded_forms()` and `form.track_task()`.
+6. **The project's files are listed seven ways**: `glob("*.py")` in several places, `snapshot()`, `other_files()`, `code_files()`, `search_files()`, the Explorer, Make EXE; they differ on subfolders and hidden folders. One project method that lists files by kind.
+7. **Names are checked five ways**: `form.check_name`, `Project.check_new_name`, `package.check_name`, form renaming in `editors.py`, file names in `Project.rename_file` and New File. One module: `python_name()`, `file_name()`.
+8. **Every dialog builds its own buttons**: eight dialogs repeat OK/Cancel/Help, Enter/Esc and placement. A small base `Dialog`.
+9. **Big but not urgent**: `controls.py` (all 15 controls, ~2,000 lines) into a package when third-party controls come; the menu bar and shortcuts as a table (shorter, and a test can check no shortcut is used twice).
+
 ## Runtime
 - **Menu item `visible`**: Tk can't hide a menu entry; supporting it means rebuilding the menu.
 - **Debugging threads** (future): breaking in threads started with `in_thread` (tracing is only on the program's main thread). First, more examples that use threads, to get a feel for how pausing one thread should affect the others in this kind of program.

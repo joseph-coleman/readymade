@@ -216,7 +216,7 @@ def _parent():
         focus = None
     if focus is not None:
         return focus.winfo_toplevel()
-    showing = [f.root for f in _form._loaded if f.root.winfo_viewable()]
+    showing = [f.root for f in _form.loaded_forms() if f.root.winfo_viewable()]
     return showing[0] if showing else root
 
 

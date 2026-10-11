@@ -130,7 +130,7 @@ class CompletionList:
                 text.delete(self.start, "insert")
                 text.insert(self.start, name)
 
-            self.code._one_step(put)
+            self.code.one_step(put)
         self.close()
         return True
 
@@ -322,7 +322,7 @@ class CodeView(ttk.Frame):
             self.text.insert(start, middle)
 
         # One step: on its own, Tk starts a new undo step when deleting turns into inserting.
-        self._one_step(replace)
+        self.one_step(replace)
         self.text.yview_moveto(top)
 
     def replace_keeping_place(self, source):
@@ -387,7 +387,7 @@ class CodeView(ttk.Frame):
         last_line, last_column = map(int, self.text.index("sel.last").split("."))
         return first, (last_line - 1 if last_column == 0 and last_line > first else last_line)
 
-    def _one_step(self, change):
+    def one_step(self, change):
         """Make a change of several edits undo in one step."""
         self.text.configure(autoseparators=False)
         self.text.edit_separator()
@@ -409,7 +409,7 @@ class CodeView(ttk.Frame):
                     if self.text.get(f"{n}.0", f"{n}.end").strip():  # blank lines stay empty
                         self.text.insert(f"{n}.0", INDENT)
 
-            self._one_step(indent)
+            self.one_step(indent)
             self._select_lines(first, last)
             return "break"
         start = "sel.first" if self.text.tag_ranges("sel") else "insert"  # where the spaces will begin
@@ -428,7 +428,7 @@ class CodeView(ttk.Frame):
                 if width:
                     self.text.delete(f"{n}.0", f"{n}.{width}")
 
-        self._one_step(remove)
+        self.one_step(remove)
         if lines:
             self._select_lines(first, last)
         return "break"
@@ -502,7 +502,7 @@ class CodeView(ttk.Frame):
             self.text.insert("sel.first", opener)
             self.text.insert("sel.last", closer)
 
-        self._one_step(wrap)
+        self.one_step(wrap)
         self.text.mark_set("insert", "sel.last")
         return "break"
 
@@ -572,7 +572,7 @@ class CodeView(ttk.Frame):
                 else:
                     self.text.insert(f"{n}.{min(indent.values())}", "# ")
 
-        self._one_step(change)
+        self.one_step(change)
         if lines:
             self._select_lines(first, last)
         return "break"
@@ -737,7 +737,7 @@ class CodeView(ttk.Frame):
             else:
                 self.text.insert("insert", "\n" + indent)
 
-        self._one_step(change)
+        self.one_step(change)
         self.text.see("insert")
         return "break"
 
@@ -796,6 +796,11 @@ class CodeView(ttk.Frame):
     def clear_error(self):
         self.text.tag_remove("error", "1.0", tk.END)
         self.error_bar.pack_forget()
+
+    def show_above_code(self, widget):
+        """Show a widget (a bar, like the find bar) between the dropdowns and the code."""
+        if not widget.winfo_ismapped():
+            widget.pack(fill=tk.X, before=self._body)
 
     def show_note(self, text):
         """A note above the code, like the one saying edits during a run wait for the next."""

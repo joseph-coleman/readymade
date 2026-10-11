@@ -60,7 +60,26 @@ def _same_file_contents(a, b):
     return a.stat().st_size == b.stat().st_size and a.read_bytes() == b.read_bytes()
 
 
-class FormEditor:
+class Editor:
+    """What every document tab is. Each kind says what it is, so the IDE needn't guess:"""
+
+    read_only = False  # code from outside the project, shown by Go to Definition
+    plain = False  # not Python, like a README: no colors, completion, checking or breakpoints
+    has_design = False  # a form: a designer as well as code
+    surface = None  # (a form's designer)
+
+    @property
+    def is_project_code(self):
+        """The project's own Python: checked as you type, debugged (breakpoints and watches),
+        changed with the project when a form or module is renamed."""
+        return not self.read_only and not self.plain
+
+    def showing_design(self):
+        """Whether its designer is in front (a form's; others have none)."""
+        return False
+
+
+class FormEditor(Editor):
     def __init__(self, app, path):
         self.app = app
         self.path = path
@@ -85,9 +104,14 @@ class FormEditor:
         self._redo: list[tuple[tuple[str, str], tuple[str, str], object]] = []
         self._changing = 0
 
+    has_design = True
+
     @property
     def name(self):
         return self.path.stem
+
+    def showing_design(self):
+        return self.frame.select() == str(self.surface)
 
     @property
     def selected(self):
@@ -870,7 +894,7 @@ class FormEditor:
         return not form_changed
 
 
-class ModuleEditor:
+class ModuleEditor(Editor):
     """A plain Python module in the project."""
 
     def __init__(self, app, path):
@@ -924,7 +948,7 @@ class ModuleEditor:
 
     def changed_on_disk(self):
         """Whether its file was changed since it opened or saved it (outside the IDE)."""
-        return not getattr(self, "read_only", False) and _modified(self.path) != self._disk
+        return not self.read_only and _modified(self.path) != self._disk
 
     def seen_on_disk(self):
         self._disk = _modified(self.path)

@@ -431,6 +431,30 @@ _tip = _Tip()
 _controls: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
+# ----- for the form and the designer -----
+# (Plain functions rather than methods: a control's public methods are part of what programs
+# see, in completion and F1 help.)
+
+def grid_of(control):
+    """The Grid a control is in, or None."""
+    return control._grid()
+
+
+def focus_widget(control):
+    """The Tk widget that takes the keyboard for a control (a TextBox's text, say)."""
+    return control._focus_widget()
+
+
+def option_group(option):
+    """What an OptionButton's group is known by: the OptionButtons of a container share it."""
+    return option._group
+
+
+def show_as_default(button, default):
+    """Give a Button the heavier border of the form's default button (Enter clicks it), or not."""
+    button._set(button.widget, "default", "active" if default else None)
+
+
 def control_of(widget):
     """The control a Tk widget belongs to (say, the one with the keyboard focus), or None."""
     while widget is not None:
@@ -1654,10 +1678,10 @@ class Canvas(_BackColor, _Cursor, _Tooltip, _Anchored, Control):
     }
 
     def create_widget(self, parent):
-        self._items = {}  # Tk item -> Shape
         self._border = False
         self._pressed_at = None
         canvas = tk.Canvas(parent, highlightthickness=0, bd=0, background="#ffffff")
+        self._shape_set = _shapes.ShapeSet(canvas)
         canvas.bind("<ButtonPress-1>", lambda e: setattr(self, "_pressed_at", (e.x, e.y)), add="+")
         return canvas
 
@@ -1745,44 +1769,38 @@ class Canvas(_BackColor, _Cursor, _Tooltip, _Anchored, Control):
         """A picture from a file (see the Image control), with its anchor point at (x, y)."""
         _shapes.check_choice("anchor", anchor, _shapes.ANCHORS)
         photo, _ = pictures.load(self.folder / path, master=self.widget)
-        shape = self._add("picture", "image", (x, y), group, image=photo, anchor=anchor)
-        shape._photo = photo
-        return shape
+        return self._add("picture", "image", (x, y), group, photo=photo, image=photo, anchor=anchor)
 
     def point(self, x, y, color="#000000", group="") -> Shape:
         """A single pixel: a tiny shape, fine by the hundred. For many thousands, draw on an Image instead."""
         return self._add("point", "line", (x, y, x + 1, y), group, fill=color)
 
-    def _add(self, kind, tk_type, coords, group, **options) -> Shape:
+    def _add(self, kind, tk_type, coords, group, photo=None, **options) -> Shape:
         try:
             item = getattr(self.widget, f"create_{tk_type}")(*coords, **options)
         except tk.TclError as e:
             raise ValueError(str(e)) from None
-        shape = self._items[item] = Shape(self, kind, item, group)
-        return shape
+        return self._shape_set.add(kind, item, group, photo)
 
     # ----- finding and removing shapes -----
 
     def shapes(self, group=None) -> list[Shape]:
         """Its shapes, from the back to the front; only those in group if given."""
         items = self.widget.find_withtag(_shapes.group_tag(group)) if group else self.widget.find_all()
-        return [self._items[i] for i in items if i in self._items]
+        return [shape for shape in map(self._shape_set.get, items) if shape is not None]
 
     def shape_at(self, x, y) -> Shape | None:
         """The front-most visible shape at (x, y), or None."""
         for item in reversed(self.widget.find_overlapping(x, y, x, y)):
-            if item in self._items and self.widget.itemcget(item, "state") != tk.HIDDEN:
-                return self._items[item]
+            shape = self._shape_set.get(item)
+            if shape is not None and self.widget.itemcget(item, "state") != tk.HIDDEN:
+                return shape
         return None
 
     def clear(self, group=None):
         """Delete every shape, or every shape in group."""
         for shape in self.shapes(group):
-            self._forget(shape)
-
-    def _forget(self, shape):
-        if self._items.pop(shape._item, None) is not None:
-            self.widget.delete(shape._item)
+            shape.delete()
 
 
 def _outlined(color, fill, thickness, dashed):
@@ -1912,8 +1930,8 @@ class Grid(_BackColor, _Cursor, _Tooltip, _Anchored, Control):
 
     def cell_box(self, row, column, rowspan=1, columnspan=1):
         """(left, top, width, height) of a cell, or of several spanned, inside it."""
-        x, width = layout._span(self.column_lines, column, columnspan, self._gap)
-        y, height = layout._span(self.row_lines, row, rowspan, self._gap)
+        x, width = layout.span(self.column_lines, column, columnspan, self._gap)
+        y, height = layout.span(self.row_lines, row, rowspan, self._gap)
         return x, y, width, height
 
 

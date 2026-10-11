@@ -117,7 +117,7 @@ class ProjectExplorer(ttk.Frame):
         self.files_menu.add_command(label="Remove...", command=self._remove)
         for menu in (self.menu, self.python_menu, self.libraries_menu, self.files_menu):
             menus.defer_commands(menu)  # or dialogs opened from them freeze on macOS
-        self.tree.bind("<<TreeviewOpen>>", lambda e: self._fill_folder(self.tree.focus()))
+        self.tree.bind("<<TreeviewOpen>>", lambda e: self.fill_folder(self.tree.focus()))
         tooltips.dynamic(self.tree, lambda x, y: self.tip_for(self.tree.identify_row(y)))
 
     def refresh(self):
@@ -146,7 +146,7 @@ class ProjectExplorer(ttk.Frame):
         for row in opened:  # folders open before stay open (each filled as it opens)
             if self.tree.exists(row):
                 self.tree.item(row, open=True)
-                self._fill_folder(row)
+                self.fill_folder(row)
         if chosen and self.tree.exists(chosen):
             self.tree.focus(chosen)
             self.tree.selection_set(chosen)
@@ -194,7 +194,7 @@ class ProjectExplorer(ttk.Frame):
             if is_folder:
                 self.tree.insert(row, tk.END, iid=f"waiting:{relative}", text="...")
 
-    def _fill_folder(self, row):
+    def fill_folder(self, row):
         if row.startswith("file:") and self.tree.exists(f"waiting:{row[5:]}"):
             self.tree.delete(f"waiting:{row[5:]}")
             self._fill(row, row[5:])

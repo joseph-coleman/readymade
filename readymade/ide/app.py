@@ -474,7 +474,7 @@ class App:
     def undo(self, redo=False):
         """Edit > Undo/Redo: the designer's when a form's design is showing, otherwise the code editor's."""
         editor = self._current_editor()
-        if isinstance(editor, FormEditor) and editor.frame.select() == str(editor.surface):
+        if editor is not None and editor.showing_design():
             editor.redo() if redo else editor.undo()
         elif editor is not None:
             try:
@@ -524,7 +524,7 @@ class App:
     def _code_for_finding(self):
         """The code to find in: the code that's showing (a form's, switched to from its design)."""
         editor = self._current_editor()
-        if isinstance(editor, FormEditor) and editor.frame.select() != str(editor.code):
+        if editor is not None and editor.showing_design():
             editor.show_code()
         return editor
 
@@ -532,7 +532,7 @@ class App:
         """Edit > Find (Ctrl+F) and Replace (Ctrl+H; on a Mac Option+Command+F)."""
         editor = self._code_for_finding()
         if editor is not None:
-            editor.code.show_find(replace=replace and not getattr(editor, "read_only", False))
+            editor.code.show_find(replace=replace and not editor.read_only)
 
     def find_next(self, direction):
         editor = self._code_for_finding()
@@ -555,7 +555,7 @@ class App:
         if self.project is None:
             return []
         open_text = {Path(e.code_path): e.code.get_source() for e in self.editors
-                     if not getattr(e, "read_only", False)}
+                     if not e.read_only}
         found = []
         for relative in sorted(self.project.snapshot(), key=str.lower):
             path = self.project.folder / relative
@@ -628,7 +628,7 @@ class App:
         """Edit > Go to Definition (F12, or Ctrl+click): open the code where a name is defined.
         A form's control or menu item is shown in the designer."""
         editor = editor or self._current_editor()
-        if editor is None or getattr(editor, "plain", False) or self._assist_unavailable(manual=True):
+        if editor is None or editor.plain or self._assist_unavailable(manual=True):
             return
         code = editor.code
         line, column = map(int, code.text.index(index).split("."))
@@ -642,7 +642,7 @@ class App:
             self.root.configure(cursor="")
         if found is None:
             self.immediate.write(f"(No definition found for {word or 'that'}.)\n")
-        elif found.kind in ("control", "menu") and isinstance(editor, FormEditor):
+        elif found.kind in ("control", "menu") and editor.has_design:
             editor.show_design()
             if found.kind == "control":
                 editor.select(found.name)
@@ -669,7 +669,7 @@ class App:
             if path.with_suffix(".form").exists():
                 return self.open_form(path.stem, "code")
             return self.open_module(path.stem)
-        viewer = next((e for e in self.editors if isinstance(e, ViewerEditor) and e.path == path), None)
+        viewer = next((e for e in self.editors if e.read_only and e.path == path), None)
         if viewer is None:
             try:
                 viewer = ViewerEditor(self, path)
@@ -731,7 +731,7 @@ class App:
             spec = form.design.control(form.selected)
             topic = helptext.control(spec["type"], spec["name"]) if spec else helptext.form(form.design.name)
             self.show_topic(topic)
-        elif self._current_editor() is not None and not getattr(self._current_editor(), "plain", False):
+        elif self._current_editor() is not None and not self._current_editor().plain:
             self.show_topic(self._code_help(self._current_editor()))
         else:
             self.show_topic(helptext.home())
@@ -775,7 +775,7 @@ class App:
     def format_document(self):
         """Edit > Format Document: the code of the document that's showing."""
         editor = self._current_editor()
-        if editor is not None and self.project is not None and not getattr(editor, "read_only", False):
+        if editor is not None and self.project is not None and not editor.read_only:
             if not formatting.tools_for(self.project):
                 self.immediate.write("(No formatter is chosen for this project: see Project > Formatting...)\n")
             else:
@@ -785,7 +785,7 @@ class App:
         """Format an open document's code with the project's formatters (one undo step).
         Returns False, leaving the code as it was, if a formatter couldn't."""
         tools = formatting.tools_for(self.project)
-        if not tools or getattr(editor, "plain", False):
+        if not tools or editor.plain:
             return True
         source = editor.code.get_source()
         self.root.configure(cursor="watch")
@@ -815,7 +815,7 @@ class App:
 
     def _update_edit_menu(self, menu):
         editor = self._current_editor()
-        designing = isinstance(editor, FormEditor) and editor.frame.select() == str(editor.surface)
+        designing = editor is not None and editor.showing_design()
         selected = bool(designing and editor.selected_controls())
         for label, possible in (("Undo", editor.can_undo() if designing else editor is not None),
                                 ("Redo", editor.can_redo() if designing else editor is not None),
@@ -873,11 +873,11 @@ class App:
     def _add_tab(self, editor):
         self.editors.append(editor)
         self.documents.add(editor.frame, text=editor.title())
-        if getattr(editor, "plain", False):
+        if editor.plain:
             return  # another file, like a README: plain text
         editor.code.on_complete = lambda code, manual: self.complete(editor, manual)
         editor.code.on_goto = lambda code, index: self.go_to_definition(editor, index)
-        if not getattr(editor, "read_only", False):
+        if not editor.read_only:
             # Soon after typing stops: check the code, and show the Breakpoints tab where they've moved to.
             editor.code.on_change = lambda: (self.linter.check(editor), self.show_breakpoints())
             editor.code.on_edited = lambda code=editor.code: self._edited(code)
@@ -897,7 +897,7 @@ class App:
 
     def _tab_changed(self, _=None):
         editor = self._current_editor()
-        self.form = editor if isinstance(editor, FormEditor) else None
+        self.form = editor if editor is not None and editor.has_design else None
         self.properties.attach(self.form)
         self.update_title()
 
@@ -943,7 +943,7 @@ class App:
                 self.format_code(editor)  # if it can't, the save still goes ahead
         ok = all([e.save() for e in changed])
         self._store_breakpoints()  # where they are now that lines have moved
-        if any(isinstance(e, FormEditor) for e in changed):
+        if any(e.has_design for e in changed):
             self.explorer_refresh()  # (the pictures forms show are bundled: the Files list marks them)
         for editor in changed:
             self.linter.check(editor, saved=True)
@@ -971,7 +971,7 @@ class App:
         if self.in_break_mode:
             self.debug_go("continue")  # F5 continues a paused program
             return
-        if self.project is None or not self._idle():
+        if self.project is None or not self.idle():
             return
         if not self.save():
             return
@@ -1021,7 +1021,7 @@ class App:
         env["NO_COLOR"] = "1"
         return env
 
-    def _idle(self):
+    def idle(self):
         if self.process is None:
             return True
         self.immediate.write("(Busy: wait for the program or install to finish, or use Run > End.)\n")
@@ -1180,7 +1180,7 @@ class App:
     def _code_editor(self):
         """The editor whose code is showing, or None (a form's design, or nothing)."""
         editor = self._current_editor()
-        if isinstance(editor, FormEditor) and editor.frame.select() != str(editor.code):
+        if editor is not None and editor.showing_design():
             return None
         return editor
 
@@ -1194,7 +1194,7 @@ class App:
         """Debug > Breakpoint Condition: a condition and hit count for the breakpoint on a line
         (the cursor's), which gets one if it hasn't."""
         editor = editor or self._code_editor()
-        if editor is None or editor.code.on_breakpoints is None:
+        if editor is None or not editor.is_project_code:
             return None
         if line is None:
             line = int(editor.code.text.index("insert").split(".")[0])
@@ -1279,7 +1279,7 @@ class App:
 
     def _editor_for(self, file):
         """The open editor of a project file (relative name), or None."""
-        return next((e for e in self.editors if e.code.on_breakpoints is not None
+        return next((e for e in self.editors if e.is_project_code
                      and self._relative(e.code_path) == file), None)
 
     def _open_breakpoint(self, file, line):
@@ -1330,7 +1330,7 @@ class App:
             return {}
         found = dict(self._saved_breakpoints())
         for editor in self.editors:
-            if editor.code.on_breakpoints is not None:
+            if editor.is_project_code:
                 found[self._relative(editor.code_path)] = editor.code.breakpoints()
         return {name: lines for name, lines in found.items() if lines and (self.project.folder / name).exists()}
 
@@ -1373,7 +1373,7 @@ class App:
             return
         watch = {"expression": expression or ""}
         editor = self._code_editor()
-        if editor is not None and editor.code.on_breakpoints is not None:
+        if editor is not None and editor.is_project_code:
             text = editor.code.text
             line = int(text.index("insert").split(".")[0])
             if not expression:
@@ -1417,7 +1417,7 @@ class App:
         files = {path.name: path.read_text(encoding="utf-8", errors="replace")
                  for path in sorted(self.project.folder.glob("*.py"))}
         for editor in self.editors:
-            if editor.code.on_breakpoints is not None:
+            if editor.is_project_code:
                 files[self._relative(editor.code_path)] = editor.code.get_source()
         return files
 
@@ -1431,7 +1431,7 @@ class App:
 
     def ask_create_environment(self):
         """Choose a Python to base the project's .venv on, then create it."""
-        if self.project is None or not self._idle():
+        if self.project is None or not self.idle():
             return
         pythons = [(f"Python {describe_python(p)}   {p}", p) for p in find_pythons()]
         dialog = tk.Toplevel(self.root)
@@ -1471,7 +1471,7 @@ class App:
         """Make the project's .venv from the base interpreter with venv (or uv if venv
         fails and uv is installed), install the project's libraries, and use it."""
         project = self.project
-        if project is None or not self._idle():
+        if project is None or not self.idle():
             return
         venv = project.folder / ".venv"
 
@@ -1501,7 +1501,7 @@ class App:
                     then()
 
             if project.dependencies:
-                self._pip_install(project.dependencies, done)
+                self.pip_install(project.dependencies, done)
             else:
                 done()
 
@@ -1510,7 +1510,7 @@ class App:
 
     def add_library(self, requirement=None):
         """pip install a library into the project's environment, and list it in pyproject.toml."""
-        if self.project is None or not self._idle():
+        if self.project is None or not self.idle():
             return
         if requirement is None:
             requirement = simpledialog.askstring(
@@ -1524,7 +1524,7 @@ class App:
             return
 
         def install():
-            self._pip_install([requirement], lambda: self._library_added(requirement))
+            self.pip_install([requirement], lambda: self._library_added(requirement))
 
         if self.project.python() is not None:
             install()
@@ -1541,7 +1541,7 @@ class App:
         package the project as a program that runs without Python, using PyInstaller in the
         project's own environment (creating one, and installing PyInstaller, if needed)."""
         project = self.project
-        if project is None or not self._idle() or not self.save():
+        if project is None or not self.idle() or not self.save():
             return None
         if ask:
             return MakeExeDialog(self, on_make=lambda: self.make_exe(ask=False))
@@ -1588,7 +1588,7 @@ class App:
             # needs converting to the system's own format); install them if not.
             needs = {"PyInstaller": "pyinstaller", **({"PIL": "pillow"} if package.icon_needs_pillow(project) else {})}
             check = f"import importlib.util, sys; sys.exit(any(importlib.util.find_spec(m) is None for m in {list(needs)!r}))"
-            self._start([str(project.python()), "-c", check], on_exit=lambda code: build() if code == 0 else self._pip_install(
+            self._start([str(project.python()), "-c", check], on_exit=lambda code: build() if code == 0 else self.pip_install(
                 list(needs.values()), build, failed="pip couldn't install what Make EXE needs, so the program wasn't made."))
 
         python = project.python()
@@ -1609,7 +1609,7 @@ class App:
         self.immediate.write(f"(The project's Python, {python}, doesn't exist. Choose another in the Project menu.)\n")
         return False
 
-    def _pip_install(self, requirements, on_success, failed="pip couldn't install it, so nothing was added."):
+    def pip_install(self, requirements, on_success, failed="pip couldn't install it, so nothing was added."):
         python = self.project.python() if self.project else None
         if python is None or not self._python_exists(python):
             return
@@ -1651,7 +1651,7 @@ class App:
     def remove_from_project(self, kind, name):
         """Move a form's or module's files ("form", "module") to the Recycle Bin / Trash, or
         take a library out of the project ("library"), after asking. Returns whether it was removed."""
-        if self.project is None or not self._idle():
+        if self.project is None or not self.idle():
             return False
         if kind == "library":
             return self._remove_library(name)
@@ -1725,7 +1725,7 @@ class App:
             return None
         if path.suffix == ".py" and path.parent == self.project.folder:
             return self.open_code(path)
-        editor = next((e for e in self.editors if isinstance(e, FileEditor) and e.path == path), None)
+        editor = next((e for e in self.editors if e.path == path), None)
         if editor is None:
             if not _is_text(path):
                 self.open_with_system(path)
@@ -1784,7 +1784,7 @@ class App:
         self.explorer_refresh()
         if self.explorer.tree.exists(f"file:{folder}"):
             self.explorer.tree.item(f"file:{folder}", open=True)
-            self.explorer._fill_folder(f"file:{folder}")
+            self.explorer.fill_folder(f"file:{folder}")
         if self.explorer.tree.exists(f"file:{relative}"):
             self.explorer.tree.focus(f"file:{relative}")
             self.explorer.tree.selection_set(f"file:{relative}")
@@ -1811,7 +1811,7 @@ class App:
             return None
         new_path = self.project.folder / renamed
         for editor in self.editors:  # open files in it follow
-            if isinstance(editor, FileEditor) and (editor.path == old_path or old_path in editor.path.parents):
+            if editor.path == old_path or old_path in editor.path.parents:
                 editor.path = new_path / editor.path.relative_to(old_path) if editor.path != old_path else new_path
         self._rename_in_debug_settings(relative, renamed)
         self.explorer_refresh()
@@ -1915,7 +1915,7 @@ class App:
         if not new or new == name:
             return False
         try:
-            self.project._check_new_name(new)
+            self.project.check_new_name(new)
         except ProjectError as e:
             messagebox.showerror("Rename Form", str(e), parent=self.root)
             return False
@@ -1927,7 +1927,7 @@ class App:
         changed = []
         on_disk = {path: path.read_text(encoding="utf-8") for path in self.project.folder.glob("*.py")}
         for other in self.editors:
-            if other is editor or other.code.on_breakpoints is None:
+            if other is editor or not other.is_project_code:
                 continue
             source = other.code.get_source()
             renamed = project_module.rename_form_references(source, name, new)
@@ -1972,7 +1972,7 @@ class App:
             editor.path = self.project.folder / f"{new}.py"
         changed = []
         for open_editor in self.editors:
-            if open_editor.code.on_breakpoints is None:
+            if not open_editor.is_project_code:
                 continue  # (not the project's code)
             source = open_editor.code.get_source()
             renamed = project_module.rename_imports(source, name, new)

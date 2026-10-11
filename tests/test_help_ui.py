@@ -62,7 +62,7 @@ def test_what_the_lists_notes_say(app, tmp_path):
     (app.project.folder / "data" / "prices.csv").write_text("tea\n")
     app.set_bundled("data", True)
     explorer.tree.item("file:data", open=True)
-    explorer._fill_folder("file:data")
+    explorer.fill_folder("file:data")
     assert "as you chose" in explorer.tip_for("file:data")
     assert "with the folder it's in" in explorer.tip_for("file:data/prices.csv")
 

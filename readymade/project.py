@@ -251,13 +251,13 @@ class Project:
         self.set_setting("include", include or None)
 
     def add_form(self, name):
-        self._check_new_name(name)
+        self.check_new_name(name)
         design = formfile.FormDesign(name=name, text=name)
         formfile.save(design, self.folder / f"{name}.form")
         (self.folder / f"{name}.py").write_text(codegen.new_module(name), encoding="utf-8")
 
     def add_module(self, name):
-        self._check_new_name(name)
+        self.check_new_name(name)
         (self.folder / f"{name}.py").write_text(f'"""{name}: code shared by the project\'s forms."""\n', encoding="utf-8")
 
     def remove_form(self, name, discard=None):
@@ -279,7 +279,7 @@ class Project:
         """Rename a module's file, and the imports of it in the project's other code:
         `import old` (and old.name after it) and `from old import ...`. Returns the files
         changed, as {path: new source} for the caller to write (or show, if they're open)."""
-        self._check_new_name(new)
+        self.check_new_name(new)
         (self.folder / f"{old}.py").rename(self.folder / f"{new}.py")
         changed = {}
         for path in sorted(self.folder.glob("*.py")):
@@ -289,7 +289,7 @@ class Project:
                 changed[path] = renamed
         return changed
 
-    def _check_new_name(self, name):
+    def check_new_name(self, name):
         if not name.isidentifier() or keyword.iskeyword(name):
             raise ProjectError(f"{name!r} isn't a valid Python name.")
         if name in sys.stdlib_module_names or name == "readymade":

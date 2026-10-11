@@ -85,8 +85,8 @@ class ToolDialog(tk.Toplevel):
                     ttk.Button(self.status[name], text="Install", command=lambda t=tool: self.install(t)).pack(side=tk.LEFT, padx=4)
 
     def install(self, tool):
-        if self.app._idle():
-            self.app._pip_install([tool.package], self.refresh, failed=f"pip couldn't install {tool.name}.")
+        if self.app.idle():
+            self.app.pip_install([tool.package], self.refresh, failed=f"pip couldn't install {tool.name}.")
 
     def ok(self):
         shared = [name for name, var in self.shared.items() if var.get()]

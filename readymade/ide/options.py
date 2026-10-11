@@ -99,7 +99,7 @@ def apply_chrome(app, chrome):
     app.toolbox.apply_chrome(chrome)
     app.properties.apply_chrome(chrome)
     for editor in app.editors:
-        surface = getattr(editor, "surface", None)
+        surface = editor.surface
         if surface is not None:
             surface.apply_chrome(chrome)
     color_menus(app.root.nametowidget(app.root["menu"]), chrome)

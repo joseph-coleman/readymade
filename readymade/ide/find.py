@@ -109,8 +109,7 @@ class FindBar(ttk.Frame):
             self.replace_row.pack(fill=tk.X, pady=(2, 0))
         else:
             self.replace_row.pack_forget()
-        if not self.winfo_ismapped():
-            self.pack(fill=tk.X, before=self.code._body)
+        self.code.show_above_code(self)
         self.search(from_cursor=True)
         entry = self.replace_entry if replace and self.find.get() else self.find_entry
         entry.focus_set()
@@ -224,7 +223,7 @@ class FindBar(ttk.Frame):
             self.text.delete(start, end)
             self.text.insert(start, new)
 
-        self.code._one_step(change)
+        self.code.one_step(change)
         self.text.mark_set("insert", f"{start} +{len(new)}c")
         self.text.tag_remove("sel", "1.0", tk.END)
         self.search()

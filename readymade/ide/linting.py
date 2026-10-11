@@ -47,7 +47,7 @@ class Linter:
 
     def check(self, editor, saved=False):
         """Check an open document: everything after it's opened or saved; while typing, the stdin tools."""
-        if getattr(editor, "plain", False):
+        if editor.plain:
             return  # (a README or such: not Python)
         tools = self.tools()
         editor.code.keep_problems_of({tool.name for tool in tools})
@@ -81,7 +81,7 @@ class Linter:
     def check_all(self):
         """After the tools change: check every open document again, and the rest of the project."""
         for editor in list(self.app.editors):
-            if not getattr(editor, "read_only", False):
+            if not editor.read_only:
                 self.check(editor, saved=True)
         self.check_project()
 
@@ -93,7 +93,7 @@ class Linter:
         return {_file(project.folder / f"{name}.py") for name in [*project.forms(), *project.modules()]}
 
     def _open_files(self):
-        return {_file(e.code_path) for e in self.app.editors if not getattr(e, "read_only", False)}
+        return {_file(e.code_path) for e in self.app.editors if not e.read_only}
 
     def _keep_tools(self, tools):
         """Forget the problems of tools that are no longer chosen."""

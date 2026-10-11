@@ -135,8 +135,7 @@ class Handler:
         self.busy += 1
         if inspect.iscoroutinefunction(self.func):
             task = _event_loop().create_task(self._run_async(args))
-            self.form._tasks.add(task)
-            task.add_done_callback(self.form._tasks.discard)
+            form_module().track_task(self.form, task)
             _keep_pumping()
             return None
         _running.append(self)
@@ -177,6 +176,12 @@ def debugger_module():
     from readymade import debugger
 
     return debugger
+
+
+def form_module():
+    from readymade import form  # (here: readymade.form imports this module)
+
+    return form
 
 
 def _debugger():

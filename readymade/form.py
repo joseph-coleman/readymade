@@ -25,7 +25,8 @@ from pathlib import Path
 
 from readymade import appearance, events, formfile, forms, keys, menus, pictures
 from readymade.controls import (Button, CheckBox, Event, Grid, OptionButton, _TabIndex, _TabStop, _WidgetText,
-                                control_of, create, repaint_inside, tab_numbers)
+                                control_of, create, focus_widget, option_group, repaint_inside, show_as_default,
+                                tab_numbers)
 
 FORM = "Form"
 FORM_EVENTS = (
@@ -40,6 +41,17 @@ FORM_EVENTS = (
 
 _app: tk.Tk | None = None  # the hidden root window all forms belong to
 _folder: Path | None = None  # set by readymade.run; otherwise worked out in app_path()
+
+
+def loaded_forms():
+    """Every form that's loaded (showing, or hidden but not closed)."""
+    return set(_loaded)
+
+
+def track_task(form, task):
+    """An async event handler's task: canceled if the form closes before it's done."""
+    form._tasks.add(task)
+    task.add_done_callback(form._tasks.discard)
 
 
 def app_path(*parts):
@@ -288,7 +300,7 @@ class Form:
         self._default_button = self._button(button, "default_button")
         for control in self.controls.values():
             if isinstance(control, Button):  # the default button shows a heavier border
-                control._set(control.widget, "default", "active" if control is self._default_button else None)
+                show_as_default(control, control is self._default_button)
 
     @property
     def cancel_button(self):
@@ -321,16 +333,16 @@ class Form:
             if isinstance(control, OptionButton):
                 group = self._option_group(control)
                 chosen = next((c for c in group if c.value), group[0])
-                if control is not chosen or id(control._group) in groups:
+                if control is not chosen or id(option_group(control)) in groups:
                     continue
-                groups.add(id(control._group))
+                groups.add(id(option_group(control)))
             stops.append(control)
         return stops
 
     def _option_group(self, option):
         """The OptionButtons in option's group (the same Frame, or the form), in Tab order, that
         the keyboard can reach."""
-        return [c for c in self._tab_sequence() if isinstance(c, OptionButton) and c._group is option._group
+        return [c for c in self._tab_sequence() if isinstance(c, OptionButton) and option_group(c) is option_group(option)
                 and (c is option or (c.enabled and c.visible and c.tabstop))]
 
     def _arrow(self, step):
@@ -364,7 +376,7 @@ class Form:
 
     @staticmethod
     def _focus(control):
-        widget = control._focus_widget()
+        widget = focus_widget(control)
         widget.tk.call("tk::TabToWindow", widget)  # as Tab does: focus, and select a text box's text
 
     def _focus_get(self):

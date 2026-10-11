@@ -149,8 +149,8 @@ def arrange_grid(columns, rows, width, height, cells, gap=0, padding=0):
     rects = []
     for row, column, rowspan, columnspan, anchor, (own_width, own_height) in cells:
         edges = parse(anchor)
-        x, cell_width = _span(xs, column, columnspan, gap)
-        y, cell_height = _span(ys, row, rowspan, gap)
+        x, cell_width = span(xs, column, columnspan, gap)
+        y, cell_height = span(ys, row, rowspan, gap)
         left, width_ = _in_cell(x, cell_width, own_width, "left" in edges, "right" in edges)
         top, height_ = _in_cell(y, cell_height, own_height, "top" in edges, "bottom" in edges)
         rects.append((left, top, width_, height_))
@@ -193,8 +193,10 @@ def _lines(tracks, space, gap, padding, items):
     return GridLines(tuple(starts), tuple(int(s) for s in sizes))
 
 
-def _span(lines, first, span, gap):
-    last = first + max(1, span) - 1
+def span(lines, first, count, gap):
+    """Where count tracks from first start, and how far they reach together (gaps between
+    them included): (start, size). lines: a GridLines."""
+    last = first + max(1, count) - 1
     return lines.starts[first], sum(lines.sizes[first:last + 1]) + gap * (last - first)
 
 

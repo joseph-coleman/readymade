@@ -15,7 +15,7 @@ from __future__ import annotations
 import tkinter as tk
 
 from readymade import menus
-from readymade.controls import GRID_CELL, Button, Grid, create, repaint_inside
+from readymade.controls import GRID_CELL, Button, Grid, create, grid_of, repaint_inside, show_as_default
 from readymade.form import FORM
 from readymade.ide import options, tooltips
 
@@ -126,7 +126,7 @@ class DesignSurface(tk.Frame):
     def _mark_default(self, control):
         """The form's default button shows a heavier border, as it will when the program runs."""
         if isinstance(control, Button):
-            control._set(control.widget, "default", "active" if control.name == self.app.design.default_button else None)
+            show_as_default(control, control.name == self.app.design.default_button)
 
     def refresh_menu(self):
         for child in self.menubar.winfo_children():
@@ -182,7 +182,7 @@ class DesignSurface(tk.Frame):
         else:
             for prop, default in defaults.items():
                 setattr(control, prop, spec.get(prop, default))
-            if control._grid() is not None:
+            if grid_of(control) is not None:
                 for prop, default in GRID_CELL.items():
                     setattr(control, prop, spec.get(prop, default))
             _follow_size(spec, control)
@@ -206,7 +206,7 @@ class DesignSurface(tk.Frame):
 
     def remove(self, name):
         control = self.controls.pop(name)
-        grid = control._grid()
+        grid = grid_of(control)
         control.widget.destroy()
         if grid is not None and grid.name in self.controls:
             grid.arrange()  # the rest of the Grid may change size
@@ -455,7 +455,7 @@ class DesignSurface(tk.Frame):
     def _start_drag(self, e, kind, control=None):
         """Start moving the selection (dragging one of its controls) or resizing one control."""
         control = control or self.controls[self.app.selected]
-        grid = control._grid()
+        grid = grid_of(control)
         if grid is not None:
             # In a Grid, dragging chooses cells: a move goes to the cell under the mouse, and the
             # bottom and right handles stretch over more rows and columns.
