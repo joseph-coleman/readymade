@@ -770,7 +770,7 @@ class App:
 
     def menu_editor(self):
         """Open the Menu Editor for the form that's showing."""
-        return MenuEditor(self.root, self.form) if self.form else None
+        return MenuEditor(self, self.form) if self.form else None
 
     # ----- documents -----
 

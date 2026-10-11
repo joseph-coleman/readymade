@@ -13,22 +13,20 @@ from tkinter import messagebox, ttk
 
 from readymade import menus
 from readymade.form import check_name
+from readymade.ide.dialog import Dialog
 
 
-class MenuEditor(tk.Toplevel):
-    def __init__(self, master, editor):
-        super().__init__(master)
+class MenuEditor(Dialog):
+    def __init__(self, app, editor):
+        super().__init__(app, f"Menu Editor - {editor.design.name}", resizable=True, padding=8)
         self.editor = editor
-        self.title(f"Menu Editor - {editor.design.name}")
-        self.transient(master)
         self.items = copy.deepcopy(editor.design.menu)
         self._original = {id(i): i["name"] for i in menus.walk(self.items) if i.get("name")}
         self._auto_named = set()  # ids of items whose name still follows their text
         self._by_iid = {}
         self._loading = False
 
-        body = ttk.Frame(self, padding=8)
-        body.pack(fill=tk.BOTH, expand=True)
+        body = self.body
         self.tree = ttk.Treeview(body, columns=("shortcut",), show="tree", selectmode="browse", height=14)
         self.tree.column("#0", width=220)
         self.tree.column("shortcut", width=90)
@@ -82,11 +80,7 @@ class MenuEditor(tk.Toplevel):
         ):
             ttk.Button(buttons, text=label, command=command, width=14).pack(fill=tk.X, pady=1)
 
-        footer = ttk.Frame(self, padding=8)
-        footer.pack(fill=tk.X)
-        ttk.Button(footer, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
-        ttk.Button(footer, text="OK", command=self.ok).pack(side=tk.RIGHT, padx=(0, 4))
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.add_buttons(enter=False)
 
         self._refresh(self.items[0] if self.items else None)
         self.grab_set()

@@ -420,7 +420,7 @@ def drive(d):
     d.click(*d.at(key_box, 10))
     d.type("o")
     d.shot("menu-editor")
-    ok = next(w for w in menu_editor.winfo_children()[1].winfo_children() if w.cget("text") == "OK")
+    ok = next(w for w in menu_editor.winfo_children()[1].winfo_children()[0].winfo_children() if w.cget("text") == "OK")
     d.click(*d.at(ok))
     d.check("menu designed", editor.design.menu,
             [{"name": "mnuFile", "text": "&File", "items": [{"name": "mnuOpen", "text": "&Open...", "shortcut": "Ctrl+O"}]}])

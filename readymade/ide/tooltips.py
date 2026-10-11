@@ -89,18 +89,6 @@ def hide():
         _Tip.window = None
 
 
-def help_button(dialog, buttons, app, topic):
-    """A dialog's Help button (and F1 in it): topic() shows in the IDE's Help tab."""
-    def show(_=None):
-        app.show_topic(topic())
-        return "break"
-
-    from tkinter import ttk
-
-    ttk.Button(buttons, text="Help", command=show).pack(side=tk.LEFT, padx=(0, 12))
-    dialog.bind("<F1>", show)
-
-
 def text_of(widget):
     """The tip set for a widget, or ""."""
     return _texts.get(str(widget), "")

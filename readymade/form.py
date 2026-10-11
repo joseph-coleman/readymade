@@ -18,12 +18,11 @@ program ends when the last loaded form closes.
 from __future__ import annotations
 
 import inspect
-import keyword
 import sys
 import tkinter as tk
 from pathlib import Path
 
-from readymade import appearance, events, formfile, forms, keys, menus, pictures
+from readymade import appearance, events, formfile, forms, keys, menus, names, pictures
 from readymade.controls import (Button, CheckBox, Event, Grid, OptionButton, _TabIndex, _TabStop, _WidgetText,
                                 control_of, create, focus_widget, option_group, repaint_inside, show_as_default,
                                 tab_numbers)
@@ -572,8 +571,7 @@ _RESERVED = {name for name in dir(Form)} | {"root", "controls", "menus", "path",
 
 def check_name(name, existing=()):
     """Raise ValueError unless name can be used for a new control."""
-    if not name.isidentifier() or keyword.iskeyword(name):
-        raise ValueError(f"{name!r} is not a valid Python name")
+    names.check_python_name(name)
     if name in _RESERVED:
         raise ValueError(f"{name!r} is reserved by the Form class")
     if name in existing:

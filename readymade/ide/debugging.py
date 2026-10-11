@@ -20,7 +20,8 @@ from tkinter import ttk
 
 from readymade import protocol
 from readymade.ide import helptext
-from readymade.ide.tooltips import help_button, tip
+from readymade.ide.dialog import Dialog
+from readymade.ide.tooltips import tip
 from readymade.protocol import STEPPING, Cmd, Event, Reason
 
 
@@ -282,25 +283,20 @@ def function_at(source, line):
     return found
 
 
-class WatchDialog(tk.Toplevel):
+class WatchDialog(Dialog):
     """Debug > Add Watch (and Edit Watch): an expression, the context it's watched in (a
     function, a file, or anywhere), and whether it only shows or breaks. on_ok(watch)."""
 
     def __init__(self, app, watch, on_ok, title="Add Watch"):
-        super().__init__(app.root)
-        self.app = app
+        super().__init__(app, title)
         self.on_ok = on_ok
-        self.title(title)
-        self.transient(app.root)
-        self.resizable(False, False)
         self.files = app.files.code_files()  # {relative name: source}
         self.expression = tk.StringVar(self, watch.get("expression", ""))
         self.file = tk.StringVar(self, watch.get("file") or ALL_FILES)
         self.function = tk.StringVar(self, watch.get("function") or ALL_FUNCTIONS)
         self.kind = tk.StringVar(self, watch.get("kind", "watch"))
 
-        body = ttk.Frame(self, padding=12)
-        body.pack(fill=tk.BOTH, expand=True)
+        body = self.body
         ttk.Label(body, text="Expression:").grid(row=0, column=0, sticky="w", pady=4)
         entry = ttk.Entry(body, textvariable=self.expression, width=44)
         entry.grid(row=0, column=1, sticky="we", padx=(8, 0))
@@ -329,13 +325,7 @@ class WatchDialog(tk.Toplevel):
         for variable in (self.kind, self.function):
             variable.trace_add("write", lambda *_: self._update_note())
         self._update_note()
-        buttons = ttk.Frame(body)
-        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(12, 0))
-        help_button(self, buttons, app, lambda: helptext.dialog("watch"))
-        ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.LEFT)
-        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
-        self.bind("<Return>", lambda e: self.ok())
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.add_buttons(help=lambda: helptext.dialog("watch"))
         entry.focus_set()
         entry.select_range(0, tk.END)
 
@@ -373,16 +363,13 @@ class WatchDialog(tk.Toplevel):
         self.on_ok(watch)
 
 
-class QuickWatch(tk.Toplevel):
+class QuickWatch(Dialog):
     """Debug > Quick Watch (Shift+F9): an expression's value now, with Add Watch to keep watching it."""
 
     def __init__(self, app, info):
-        super().__init__(app.root)
-        self.title("Quick Watch")
-        self.transient(app.root)
-        body = ttk.Frame(self, padding=12)
-        body.pack(fill=tk.BOTH, expand=True)
-        expression = info.get("name", "")
+        super().__init__(app, "Quick Watch", resizable=True)
+        body = self.body
+        expression = self.expression = info.get("name", "")
         ttk.Label(body, text=expression, font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
         self.value = tk.Text(body, height=4, width=60, wrap="word", font=app.immediate.output.cget("font"),
                              highlightthickness=0)
@@ -391,13 +378,12 @@ class QuickWatch(tk.Toplevel):
         self.value.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
         if info.get("type"):
             ttk.Label(body, text=f"Type: {info['type']}", style="Note.TLabel").pack(anchor="w", pady=(4, 0))
-        buttons = ttk.Frame(body)
-        buttons.pack(anchor="e", pady=(12, 0))
-        ttk.Button(buttons, text="Add Watch", command=lambda: (self.destroy(), app.debug.add_watch(expression))).pack(
-            side=tk.LEFT)
-        ttk.Button(buttons, text="Close", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.add_buttons(ok="Add Watch", cancel="Close", tips={"Add Watch": "Keep watching it (Debug > Add Watch)"})
         self.focus_set()
+
+    def ok(self):
+        self.destroy()
+        self.app.debug.add_watch(self.expression)
 
 
 # ----- breakpoint conditions -----
@@ -406,17 +392,14 @@ HIT_MODES = (("", "Always"), ("=", "When the hit count is"), (">=", "When the hi
              ("%", "When the hit count is a multiple of"))
 
 
-class BreakpointDialog(tk.Toplevel):
+class BreakpointDialog(Dialog):
     """Breakpoint Condition: stop at a breakpoint only when an expression is true, and/or on
     some of the times it's reached (counted when the condition is true); or instead of
     stopping, write a message in the Immediate window (a logpoint). on_ok(settings)."""
 
     def __init__(self, app, line, settings, on_ok):
-        super().__init__(app.root)
+        super().__init__(app, "Breakpoint Condition")
         self.on_ok = on_ok
-        self.title("Breakpoint Condition")
-        self.transient(app.root)
-        self.resizable(False, False)
         self.condition = tk.StringVar(self, settings.get("condition", ""))
         labels = dict(HIT_MODES)
         self.mode = tk.StringVar(self, labels.get(settings.get("hit_mode", ""), labels[""]))
@@ -424,8 +407,7 @@ class BreakpointDialog(tk.Toplevel):
         self.logs = tk.BooleanVar(self, bool(settings.get("log")))
         self.log = tk.StringVar(self, settings.get("log", ""))
 
-        body = ttk.Frame(self, padding=12)
-        body.pack(fill=tk.BOTH, expand=True)
+        body = self.body
         ttk.Label(body, text=f"Stop at line {line}...").grid(row=0, column=0, columnspan=3, sticky="w")
         ttk.Label(body, text="When this is true:").grid(row=1, column=0, sticky="w", pady=(8, 4))
         entry = ttk.Entry(body, textvariable=self.condition, width=40)
@@ -454,13 +436,7 @@ class BreakpointDialog(tk.Toplevel):
         self._logs_chosen()
         self.note = ttk.Label(body, style="Note.TLabel", wraplength=420)
         self.note.grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        buttons = ttk.Frame(body)
-        buttons.grid(row=8, column=0, columnspan=3, sticky="e", pady=(12, 0))
-        help_button(self, buttons, app, lambda: helptext.dialog("breakpoint"))
-        ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.LEFT)
-        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
-        self.bind("<Return>", lambda e: self.ok())
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.add_buttons(help=lambda: helptext.dialog("breakpoint"))
         entry.focus_set()
 
     def _logs_chosen(self):

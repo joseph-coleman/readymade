@@ -11,6 +11,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from readymade import package
 from readymade.ide import PACKAGE_ROOT
+from readymade.ide.dialog import Dialog
 from readymade.ide.makeexe import MakeExeDialog
 from readymade.project import ProjectError, describe_python, find_pythons, requirement_name
 from readymade.ide.part import Part
@@ -58,12 +59,10 @@ class Environments(Part):
         if self.project is None or not self.app.runner.idle():
             return
         pythons = [(f"Python {describe_python(p)}   {p}", p) for p in find_pythons()]
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Create Environment")
-        dialog.transient(self.root)
-        ttk.Label(dialog, text="Make a .venv for this project from:").pack(anchor="w", padx=8, pady=(8, 2))
-        row = ttk.Frame(dialog)
-        row.pack(fill=tk.X, padx=8)
+        dialog = Dialog(self.app, "Create Environment", padding=8)
+        ttk.Label(dialog.body, text="Make a .venv for this project from:").pack(anchor="w", pady=(0, 2))
+        row = ttk.Frame(dialog.body)
+        row.pack(fill=tk.X)
         choice = ttk.Combobox(row, values=[label for label, _ in pythons], state="readonly", width=60)
         choice.current(0)
         choice.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -85,10 +84,8 @@ class Environments(Part):
             self.create_environment(base)
 
         ttk.Button(row, text="Browse...", command=browse).pack(side=tk.LEFT, padx=(4, 0))
-        buttons = ttk.Frame(dialog, padding=8)
-        buttons.pack(fill=tk.X)
-        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
-        ttk.Button(buttons, text="Create", command=create).pack(side=tk.RIGHT, padx=(0, 4))
+        dialog.ok = create
+        dialog.add_buttons(ok="Create")
         dialog.grab_set()
 
     def create_environment(self, base, then=None):

@@ -10,6 +10,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from readymade.names import check_python_name
+
 FORMAT_VERSION = 1
 _HEAD_KEYS = ("type", "name", "container", "left", "top", "width", "height")
 
@@ -60,8 +62,10 @@ def _check_menu(items, names, source):
         if item["text"] == "-":
             continue
         name = item.get("name")
-        if not isinstance(name, str) or not name.isidentifier():
-            raise FormFileError(f"{source}: menu item {item['text']!r} needs a 'name' that's a Python name")
+        try:
+            check_python_name(name)
+        except ValueError:
+            raise FormFileError(f"{source}: menu item {item['text']!r} needs a 'name' that's a Python name") from None
         if name in names:
             raise FormFileError(f"{source}: more than one control or menu item is named {name!r}")
         names.add(name)

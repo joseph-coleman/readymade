@@ -10,12 +10,11 @@ from __future__ import annotations
 import contextlib
 import copy
 import functools
-import keyword
 import shutil
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from readymade import appearance, codegen, dialogs, formfile, layout, menus
+from readymade import appearance, codegen, dialogs, formfile, layout, menus, names
 from readymade.controls import GRID_CELL, LOOK_CHOICES, REGISTRY, Event, Grid, tab_numbers
 from readymade.form import FORM, FORM_EVENTS, check_name
 from readymade.ide import arrange, assist
@@ -400,9 +399,8 @@ class FormEditor(Editor):
         source = self.code.get_source()
         if obj == FORM:
             # The form's files are renamed to match when it's saved.
-            if not new.isidentifier() or keyword.iskeyword(new):
-                raise ValueError(f"{new!r} is not a valid Python name")
-            if new != self.name and (self.path.with_name(f"{new}.form").exists() or self.path.with_name(f"{new}.py").exists()):
+            names.check_module_name(new)
+            if new.lower() != self.name.lower() and self.app.project.name_taken(new):
                 raise ValueError(f"The project already has a form or module named {new!r}")
             self.code.replace_source(codegen.rename_class(source, self.design.name, new))
             self.design.name = new

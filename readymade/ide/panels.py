@@ -9,6 +9,7 @@ from tkinter import ttk
 from readymade import menus
 from readymade.controls import REGISTRY
 from readymade.ide import options, tooltips
+from readymade.ide.dialog import Dialog
 
 MONO = options.CODE_FONT  # code and output: Tools > Options chooses it
 
@@ -506,13 +507,11 @@ class PropertiesPanel(ttk.Frame):
         if self.app is None or obj is None:
             return
         value = dict(self.app.props_for(obj))[prop]
-        dialog = tk.Toplevel(self)
-        dialog.title(f"{obj}.{prop}")
-        dialog.transient(self.winfo_toplevel())
+        dialog = Dialog(self.app.app, f"{obj}.{prop}", resizable=True, padding=8)
         hint = "One item per line:" if isinstance(value, list) else "Text:"
-        ttk.Label(dialog, text=hint).pack(anchor="w", padx=8, pady=(8, 2))
-        text = tk.Text(dialog, width=32, height=10, font=options.ensure_code_font(dialog), undo=True)
-        text.pack(fill=tk.BOTH, expand=True, padx=8)
+        ttk.Label(dialog.body, text=hint).pack(anchor="w", pady=(0, 2))
+        text = tk.Text(dialog.body, width=32, height=10, font=options.ensure_code_font(dialog), undo=True)
+        text.pack(fill=tk.BOTH, expand=True)
         text.insert("1.0", "\n".join(value) if isinstance(value, list) else value)
 
         def ok():
@@ -520,11 +519,8 @@ class PropertiesPanel(ttk.Frame):
             dialog.destroy()
             self.update_values()
 
-        buttons = ttk.Frame(dialog, padding=8)
-        buttons.pack(fill=tk.X)
-        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
-        ttk.Button(buttons, text="OK", command=ok).pack(side=tk.RIGHT, padx=(0, 4))
-        dialog.bind("<Escape>", lambda e: dialog.destroy())
+        dialog.ok = ok
+        dialog.add_buttons(enter=False)
         text.focus_set()
         dialog.grab_set()
 

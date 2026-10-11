@@ -314,3 +314,29 @@ def test_other_files_and_bundling(tmp_path):
     assert project.include() == ["README.md"]
     project.set_bundled("README.md", False)
     assert project.include() == [] and "include" not in (folder / "pyproject.toml").read_text()
+
+
+def test_the_projects_files(tmp_path):
+    from readymade.project import Project
+
+    project = Project.create(tmp_path / "Shop")
+    folder = project.folder
+    for name in ("helpers.py", "README.md", "data/prices.csv", "pkg/tools.py", "pkg/deep/more.py", ".venv/lib.py",
+                 "build/x.py", "__pycache__/x.pyc"):
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text("x = 1\n")
+    assert project.files() == ["Form1.form", "Form1.py", "helpers.py", "pyproject.toml", "README.md",
+                               "data/prices.csv", "pkg/tools.py", "pkg/deep/more.py"]
+    assert project.python_files() == ["Form1.py", "helpers.py", "pkg/tools.py", "pkg/deep/more.py"]
+    assert "pkg/deep/" in project.files(folders=True) and project.snapshot() == frozenset(project.files(folders=True))
+
+
+def test_renaming_a_module_reaches_code_in_folders(tmp_path):
+    from readymade.project import Project
+
+    project = Project.create(tmp_path / "Shop")
+    (project.folder / "helpers.py").write_text("x = 1\n")
+    (project.folder / "pkg").mkdir()
+    (project.folder / "pkg" / "tools.py").write_text("import helpers\n\nhelpers.x\n")
+    changed = project.rename_module("helpers", "common")
+    assert changed == {project.folder / "pkg" / "tools.py": "import common\n\ncommon.x\n"}

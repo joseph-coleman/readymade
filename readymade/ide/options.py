@@ -19,6 +19,7 @@ from tkinter import ttk
 
 from readymade import appearance, usersettings
 from readymade.ide import helptext, themes, tooltips
+from readymade.ide.dialog import Dialog
 from readymade.protocol import Cmd
 
 CODE_FONT = "ReadymadeCode"  # the named font code shows in; changing it changes every place at once
@@ -201,24 +202,19 @@ def dark_title_bar(window, dark):
         pass  # an older Windows: the title bar stays as it is
 
 
-class OptionsDialog(tk.Toplevel):
+class OptionsDialog(Dialog):
     """Tools > Options...: choose the code font, indent width, theme and whether to break on
     errors. OK saves and applies them."""
 
     def __init__(self, app):
-        super().__init__(app.root)
-        self.app = app
-        self.title("Options")
-        self.transient(app.root)
-        self.resizable(False, False)
+        super().__init__(app, "Options")
         self.font = tk.StringVar(self, code_font())
         self.indent = tk.StringVar(self, str(indent_width()))
         self.theme = tk.StringVar(self, theme().name)
         self.break_on_errors = tk.BooleanVar(self, break_on_errors())
         self.break_on_all = tk.BooleanVar(self, usersettings.get("break-on-all-errors", False) is True)
 
-        body = ttk.Frame(self, padding=12)
-        body.pack(fill=tk.BOTH, expand=True)
+        body = self.body
         ttk.Label(body, text="Code font:").grid(row=0, column=0, sticky="w", pady=4)
         shown = ttk.Label(body, width=28, relief="sunken", padding=(4, 1))
         shown.grid(row=0, column=1, sticky="w", padx=(8, 4))
@@ -250,13 +246,7 @@ class OptionsDialog(tk.Toplevel):
         self._errors_chosen()
         ttk.Label(body, text="These are yours, for all your projects.", style="Note.TLabel").grid(
             row=5, column=0, columnspan=4, sticky="w", pady=(8, 0))
-        buttons = ttk.Frame(body)
-        buttons.grid(row=6, column=0, columnspan=4, sticky="e", pady=(12, 0))
-        tooltips.help_button(self, buttons, app, lambda: helptext.dialog("options"))
-        ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.LEFT)
-        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
-        self.bind("<Return>", lambda e: self.ok())
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.add_buttons(help=lambda: helptext.dialog("options"))
 
     def _errors_chosen(self):
         self.all_errors.configure(state="normal" if self.break_on_errors.get() else "disabled")

@@ -12,22 +12,18 @@ import tkinter as tk
 from tkinter import ttk
 
 from readymade import formatting, lint, menus
+from readymade.ide.dialog import Dialog
 
 
-class ToolDialog(tk.Toplevel):
+class ToolDialog(Dialog):
     """tools: {name: tool}; shared, mine: the names chosen; switch: an optional extra row of
     two checkboxes, (label, shared, mine); on_ok(shared names, mine names, (shared, mine) switch)."""
 
     def __init__(self, app, title, intro, tools, shared, mine, on_ok, mine_heading, switch=None):
-        super().__init__(app.root)
-        self.app = app
+        super().__init__(app, f"{title} - {app.project.name}", resizable=True, padding=10)
         self.tools = tools
         self.on_ok = on_ok
-        self.title(f"{title} - {app.project.name}")
-        self.transient(app.root)
-
-        body = ttk.Frame(self, padding=10)
-        body.pack(fill=tk.BOTH, expand=True)
+        body = self.body
         ttk.Label(body, wraplength=560, justify="left", text=intro).grid(row=0, column=0, columnspan=5, sticky="w", pady=(0, 8))
         for column, heading in enumerate(("Tool", "", "For the project", mine_heading, "")):
             ttk.Label(body, text=heading, foreground="gray30").grid(row=1, column=column, sticky="w", padx=4)
@@ -57,11 +53,7 @@ class ToolDialog(tk.Toplevel):
 
         self.where = ttk.Label(body, style="Note.TLabel")
         self.where.grid(row=row + 1, column=0, columnspan=5, sticky="w", pady=(8, 0))
-        buttons = ttk.Frame(self, padding=(10, 0, 10, 10))
-        buttons.pack(fill=tk.X)
-        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
-        ttk.Button(buttons, text="OK", command=self.ok).pack(side=tk.RIGHT, padx=(0, 4))
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.add_buttons()
         self.refresh()
         self.grab_set()
 

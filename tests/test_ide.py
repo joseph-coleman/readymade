@@ -500,6 +500,42 @@ def test_menu_editor_checks_before_ok(app, change, message):
     editor.destroy()
 
 
+def test_dialogs_are_built_alike(app, monkeypatch):
+    from readymade.ide import environments
+    from readymade.ide.dialog import Dialog
+
+    def opened():
+        return next(w for w in app.root.winfo_children() if isinstance(w, Dialog) and w.winfo_exists())
+
+    def buttons(dialog):  # the row at the bottom, under the body
+        row = next(w for w in dialog.winfo_children() if w is not dialog.body)
+        return sorted(b.cget("text") for b in row.winfo_children()[0].winfo_children())
+
+    editor = app.menu_editor()
+    assert buttons(editor) == ["Cancel", "OK"]
+    assert editor.bind("<Escape>") and not editor.bind("<Return>")  # Enter types in its fields
+    editor.cancel()
+
+    app.form.add_control("ListBox", 8, 8)
+    app.properties._edit_lines("items")
+    lines = opened()
+    assert lines.title() == "ListBox1.items" and buttons(lines) == ["Cancel", "OK"]
+    next(w for w in lines.body.winfo_children() if isinstance(w, tk.Text)).insert("1.0", "Apples\nPears")
+    lines.ok()
+    assert app.form.design.control("ListBox1")["items"] == ["Apples", "Pears"]
+    assert not lines.winfo_exists()
+
+    based_on = []
+    monkeypatch.setattr(environments, "find_pythons", lambda: [Path(sys.executable)])
+    monkeypatch.setattr(environments, "describe_python", lambda python: "3.x")
+    monkeypatch.setattr(app.envs, "create_environment", lambda base, then=None: based_on.append(base))
+    app.envs.ask_create_environment()
+    create = opened()
+    assert buttons(create) == ["Cancel", "Create"] and create.bind("<Return>")
+    create.ok()
+    assert based_on == [Path(sys.executable)] and not create.winfo_exists()
+
+
 def test_shortcut_picker_shows_problems_as_you_go(app):
     editor = app.menu_editor()
     editor.add()
@@ -1245,7 +1281,7 @@ def test_the_make_exe_dialog(app, monkeypatch):
     assert dialog.fields["version"].get() == "0.1.0" and dialog.notices.get() is True
     dialog.fields["name"].set("Hello/World")
     dialog.make()
-    assert "can't be a program's name" in dialog.note.cget("text") and made == []
+    assert "it can't have / in it" in dialog.note.cget("text") and made == []
     for key, value in (("name", "Hello World"), ("version", "1.2.0"), ("company", "Tea & Co"),
                        ("description", "Says hello"), ("copyright", "(c) 2026 Tea & Co")):
         dialog.fields[key].set(value)

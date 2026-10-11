@@ -17,17 +17,15 @@ looking in the folder, so there's no file list to keep in sync.
 from __future__ import annotations
 
 import json
-import keyword
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from readymade import codegen, formfile
+from readymade import codegen, formfile, names
 
 PYPROJECT = "pyproject.toml"
 LOCAL = Path(".readymade") / "local.json"  # this machine's settings, kept out of git
@@ -108,8 +106,7 @@ class Project:
         return forms[0] if forms else None
 
     def set_startup(self, form):
-        if not form.isidentifier():
-            raise ProjectError(f"{form!r} isn't a valid form name.")
+        _checked(names.check_python_name, form)
         self.set_setting("startup", form)
 
     def python(self):
@@ -216,24 +213,39 @@ class Project:
             found.append((path.relative_to(self.folder).as_posix(), is_folder))
         return sorted(found, key=lambda entry: (not entry[1], entry[0].lower()))
 
-    def snapshot(self, most=5000):
-        """The project's files and folders as the Project Explorer would show them (forms and
-        modules included), to notice changes made outside the IDE: a frozenset of paths."""
-        found, waiting = {p.name for p in self.folder.glob("*.form")} | {p.name for p in self.folder.glob("*.py")}, [""]
+    def files(self, folders=False, most=5000):
+        """Everything in the project, as the Project Explorer shows it: [path relative to the
+        project], the forms (.form and .py), the modules, then the other files, folder by folder;
+        with folders, the folders too ("data/"). Not hidden folders, caches or what builds leave
+        (see other_files). The one listing of the project's files: the others come from it."""
+        found = [name for form in self.forms() for name in (f"{form}.form", f"{form}.py")
+                 if (self.folder / name).exists()]
+        found += [f"{module}.py" for module in self.modules()]
+        waiting = [""]
         while waiting and len(found) < most:
-            folder = waiting.pop()
+            folder = waiting.pop(0)
             for relative, is_folder in self.other_files(folder):
-                found.add(relative + "/" * is_folder)
                 if is_folder:
                     waiting.append(relative)
-        return frozenset(found)
+                    if folders:
+                        found.append(relative + "/")
+                else:
+                    found.append(relative)
+        return found
+
+    def python_files(self):
+        """The project's Python: its forms' code, its modules, and .py files in its folders."""
+        return [name for name in self.files() if name.endswith(".py")]
+
+    def snapshot(self):
+        """The project's files and folders, to notice changes made outside the IDE."""
+        return frozenset(self.files(folders=True))
 
     def rename_file(self, relative, new_name):
         """Rename one of the project's other files or folders (relative, like "data/old.csv") to
         new_name in the same folder. Returns the new relative path. Make EXE's include list
         follows it."""
-        if not new_name or new_name in (".", "..") or any(c in new_name for c in "/\\:*?\"<>|"):
-            raise ProjectError(f"{new_name!r} isn't a name for a file or folder.")
+        _checked(names.check_file_name, new_name)
         old = self.folder / relative
         new = old.with_name(new_name)
         if new.exists() and new.resolve() != old.resolve():
@@ -290,7 +302,8 @@ class Project:
         self.check_new_name(new)
         (self.folder / f"{old}.py").rename(self.folder / f"{new}.py")
         changed = {}
-        for path in sorted(self.folder.glob("*.py")):
+        for name in self.python_files():
+            path = self.folder / name
             source = path.read_text(encoding="utf-8")
             renamed = rename_imports(source, old, new)
             if renamed != source:
@@ -298,12 +311,15 @@ class Project:
         return changed
 
     def check_new_name(self, name):
-        if not name.isidentifier() or keyword.iskeyword(name):
-            raise ProjectError(f"{name!r} isn't a valid Python name.")
-        if name in sys.stdlib_module_names or name == "readymade":
-            raise ProjectError(f"{name!r} would hide Python's own {name} module. Choose another name.")
-        if any(p.stem.lower() == name.lower() for p in self.folder.glob("*.py")) or name in self.forms():
+        """Raise ProjectError unless name can be a new form's or module's (see readymade.names)."""
+        _checked(names.check_module_name, name)
+        if self.name_taken(name):
             raise ProjectError(f"The project already has a form or module named {name!r}.")
+
+    def name_taken(self, name):
+        """Whether a form or module has this name (in any case: Windows and macOS don't tell
+        Form1.py from form1.py)."""
+        return any(taken.lower() == name.lower() for taken in [*self.forms(), *self.modules()])
 
 
 def rename_imports(source, old, new):
@@ -321,6 +337,14 @@ def rename_imports(source, old, new):
 
 # (Besides hidden folders, like .venv.)
 _NOT_SHOWN = {"__pycache__", "build", "dist", "venv", "node_modules", ".DS_Store", "Thumbs.db", "desktop.ini"}
+
+
+def _checked(check, name):
+    """Run a check from readymade.names, raising its complaint as a ProjectError."""
+    try:
+        check(name)
+    except ValueError as e:
+        raise ProjectError(str(e)) from None
 
 
 def rename_form_references(source, old, new):

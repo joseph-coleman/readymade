@@ -28,7 +28,7 @@ import re
 import sys
 from pathlib import Path, PurePath
 
-from readymade import formfile, pictures
+from readymade import formfile, names, pictures
 from readymade.controls import REGISTRY
 
 LAUNCHER = "_readymade_launcher.py"
@@ -62,8 +62,10 @@ def set_details(project, chosen):
 
 def check_name(name):
     """A program's name must be one a file can have. Raises ValueError if not."""
-    if not name.strip() or name.strip() in (".", "..") or re.search(r'[/\\:*?"<>|]', name):
-        raise ValueError(f"{name!r} can't be a program's name: it's made into a file name.")
+    try:
+        names.check_file_name(name)
+    except ValueError as e:
+        raise ValueError(f"A program's name is its file's name. {e}") from None
 
 
 def exe_path(project, platform=sys.platform):

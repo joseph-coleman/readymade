@@ -11,7 +11,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog
 
-from readymade import formfile, package
+from readymade import formfile, names, package
 from readymade import project as project_module
 from readymade.controls import REGISTRY
 from readymade.form import FORM
@@ -88,9 +88,12 @@ class ProjectFiles(Part):
         if not name:
             return None
         path = self.project.folder / folder / name
-        if not name or name in (".", "..") or any(c in name for c in '/\\:*?"<>|') or path.exists():
-            messagebox.showerror(f"New {kind}", f"{name!r} can't be used: " + (
-                "there's one by that name already." if path.exists() else "it isn't a name for a file."), parent=self.root)
+        try:
+            names.check_file_name(name)
+            if path.exists():
+                raise ValueError(f"There's already a {name} there.")
+        except ValueError as e:
+            messagebox.showerror(f"New {kind}", str(e), parent=self.root)
             return None
         try:
             path.mkdir() if folder_too else path.touch()
@@ -242,7 +245,8 @@ class ProjectFiles(Part):
         if editor.set_property(FORM, "name", new) is None or not editor.save():  # (save renames its files)
             return False
         changed = []
-        on_disk = {path: path.read_text(encoding="utf-8") for path in self.project.folder.glob("*.py")}
+        on_disk = {self.project.folder / name: (self.project.folder / name).read_text(encoding="utf-8")
+                   for name in self.project.python_files()}
         for other in self.editors:
             if other is editor or not other.is_project_code:
                 continue
@@ -375,37 +379,37 @@ class ProjectFiles(Part):
         self.immediate.write(f"--- Moved {relative} to the {trash.name()}. ---\n")
         return True
 
+    def text_of(self, relative):
+        """A project file's text: as it is in its tab if it's open (changes not saved yet
+        included), else on disk; None if it isn't text."""
+        path = self.project.folder / relative
+        editor = next((e for e in self.editors if not e.read_only and Path(e.code_path) == path), None)
+        if editor is not None:
+            return editor.code.get_source()
+        if not is_text(path):
+            return None
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
     def search_files(self):
         """What Find in Files looks in: [(path, text, label)], the project's code and other text
         files (open ones as they are in their tabs), not .form files or what's hidden."""
         if self.project is None:
             return []
-        open_text = {Path(e.code_path): e.code.get_source() for e in self.editors
-                     if not e.read_only}
         found = []
-        for relative in sorted(self.project.snapshot(), key=str.lower):
-            path = self.project.folder / relative
-            if relative.endswith("/") or path.suffix == ".form":
-                continue
-            if path in open_text:
-                found.append((path, open_text[path], relative))
-            elif is_text(path):
-                try:
-                    found.append((path, path.read_text(encoding="utf-8"), relative))
-                except (OSError, UnicodeDecodeError):
-                    continue
+        for relative in sorted(self.project.files(), key=str.lower):
+            text = None if relative.endswith(".form") else self.text_of(relative)
+            if text is not None:
+                found.append((self.project.folder / relative, text, relative))
         return found
 
     def code_files(self):
-        """The project's code: {file name relative to the project: source}, open files as edited."""
+        """The project's Python: {path relative to the project: source}, open files as they are."""
         if self.project is None:
             return {}
-        files = {path.name: path.read_text(encoding="utf-8", errors="replace")
-                 for path in sorted(self.project.folder.glob("*.py"))}
-        for editor in self.editors:
-            if editor.is_project_code:
-                files[self.project.relative(editor.code_path)] = editor.code.get_source()
-        return files
+        return {name: self.text_of(name) or "" for name in self.project.python_files()}
 
     def choose_icon(self):
         """Project > Program Icon: choose the picture the program's windows, and the program

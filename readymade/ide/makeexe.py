@@ -8,28 +8,24 @@ from tkinter import ttk
 
 from readymade import package
 from readymade.ide import helptext
-from readymade.ide.tooltips import help_button, tip
+from readymade.ide.dialog import Dialog
+from readymade.ide.tooltips import tip
 
 
-class MakeExeDialog(tk.Toplevel):
+class MakeExeDialog(Dialog):
     """The name, version and details of the program to make, one file or one folder, and
     license notices. Make saves them (in pyproject.toml, for next time) and calls on_make()."""
 
     def __init__(self, app, on_make):
-        super().__init__(app.root)
-        self.app = app
+        super().__init__(app, "Make EXE")
         self.on_make = on_make
-        self.title("Make EXE")
-        self.transient(app.root)
-        self.resizable(False, False)
         d = package.details(app.project)
         self.fields = {key: tk.StringVar(self, d[key]) for key in ("name", "version", "company", "description",
                                                                    "copyright")}
         self.one_folder = tk.BooleanVar(self, d["one_folder"])
         self.notices = tk.BooleanVar(self, d["notices"])
 
-        body = ttk.Frame(self, padding=12)
-        body.pack(fill=tk.BOTH, expand=True)
+        body = self.body
         first = None
         for row, (key, label) in enumerate((("name", "Program name:"), ("version", "Version:"),
                                             ("company", "Company:"), ("description", "Description:"),
@@ -63,18 +59,15 @@ class MakeExeDialog(tk.Toplevel):
                      "program to others: this gathers them in one file")
         self.note = ttk.Label(body, style="Note.TLabel", wraplength=440)
         self.note.grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        buttons = ttk.Frame(body)
-        buttons.grid(row=9, column=0, columnspan=2, sticky="e", pady=(12, 0))
-        help_button(self, buttons, app, lambda: helptext.dialog("make exe"))
-        ttk.Button(buttons, text="Make", command=self.make).pack(side=tk.LEFT)
-        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
-        self.bind("<Return>", lambda e: self.make())
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.add_buttons(ok="Make", help=lambda: helptext.dialog("make exe"))
         first.focus_set()
 
     def chosen(self):
         return {**{key: var.get().strip() for key, var in self.fields.items()},
                 "one_folder": self.one_folder.get(), "notices": self.notices.get()}
+
+    def ok(self):
+        self.make()
 
     def make(self):
         chosen = self.chosen()
