@@ -16,7 +16,7 @@ from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from readymade import appearance, codegen, dialogs, formfile, layout, menus
-from readymade.controls import GRID_CELL, LOOK_CHOICES, REGISTRY, Event, Grid
+from readymade.controls import GRID_CELL, LOOK_CHOICES, REGISTRY, Event, Grid, tab_numbers
 from readymade.form import FORM, FORM_EVENTS, check_name
 from readymade.ide import arrange, assist
 from readymade.ide.codeview import CodeView
@@ -65,6 +65,8 @@ class FormEditor:
         self.app = app
         self.path = path
         self.design = formfile.load(path)
+        for name, number in (tab_numbers(self.design.controls) or {}).items():  # (Labels and Frames from before)
+            self.design.control(name)["tabindex"] = number
         code_path = path.with_suffix(".py")
         saved_source = code_path.read_text(encoding="utf-8") if code_path.exists() else None
         self.selection = [FORM]  # selected objects; the last is the reference control
@@ -501,7 +503,8 @@ class FormEditor:
     # ----- tab order -----
 
     def tab_stops(self):
-        """The specs of the controls Tab moves through, in order: by tabindex, then as designed."""
+        """The specs of the controls with a place in the Tab order (those Tab stops at, and
+        Labels and Frames, which pass it on), in order: by tabindex, then as designed."""
         stops = [s for s in self.design.controls if "tabindex" in REGISTRY[s["type"]].prop_defaults()]
         return sorted(stops, key=lambda s: s.get("tabindex", 0))  # a stable sort: ties stay in design order
 

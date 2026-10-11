@@ -2,6 +2,9 @@
 
 Ideas and gaps noted along the way, roughly by area.
 
+## Bug
+- **Project Files**:  When an Image widget gets the .picture property set, the image gets copied to the /images location.  The Project files listing doesn't update or refresh the file listing.  Actually, any file added to the project directory outside of the IDE doesn't refresh.   
+
 ## Runtime
 - **Menu item `visible`**: Tk can't hide a menu entry; supporting it means rebuilding the menu.
 - **Debugging threads** (future): breaking in threads started with `in_thread` (tracing is only on the program's main thread). First, more examples that use threads, to get a feel for how pausing one thread should affect the others in this kind of program.

@@ -176,7 +176,7 @@ class Control:
             **({"anchor": layout.DEFAULT} if issubclass(cls, _Anchored) else {}),
             "enabled": True,
             "visible": True,
-            **({"tabindex": 0} if issubclass(cls, _TabStop) else {}),
+            **({"tabindex": 0} if issubclass(cls, _TabIndex) else {}),
             **({"cursor": "default"} if issubclass(cls, _Cursor) else {}),
             **({"tooltip": ""} if issubclass(cls, _Tooltip) else {}),
             "tag": "",
@@ -557,8 +557,8 @@ class _Cursor:
         self._apply_cursor()
 
 
-class _TabStop:
-    """A tabindex property, for controls the keyboard can reach."""
+class _TabIndex:
+    """A tabindex property: a place in the form's Tab order."""
 
     widget: tk.Widget
     _tabindex: int
@@ -566,12 +566,36 @@ class _TabStop:
     @property
     def tabindex(self):
         """Its place in the order Tab moves through the form's controls, counting from 0
-        (Shift+Tab goes backwards). The designer's Format > Tab Order sets them by clicking."""
+        (Shift+Tab goes backwards). The designer's Format > Tab Order sets them by clicking.
+        Tab doesn't stop at a Label or Frame, but as in VB they have a place in the order:
+        a Label's access key (an & in its text) goes to the control after it."""
         return self._tabindex
 
     @tabindex.setter
     def tabindex(self, value):
         self._tabindex = int(value)
+
+
+def tab_numbers(specs):
+    """For a form's controls (.form specs, in the order they were drawn) where some have no
+    tabindex yet, like a Label or Frame from before they had one: {name: number} for all
+    that have a place in the Tab order. One without is put just before the next numbered
+    control drawn after it (where a Label's access key went then), or at the end. None if
+    every one has its number."""
+    placed = [s for s in specs if issubclass(REGISTRY[s["type"]], _TabIndex)]
+    if all("tabindex" in s for s in placed):
+        return None
+    numbered = [s for s in placed if "tabindex" in s]
+    ordered = sorted(numbered, key=lambda s: s["tabindex"])  # (ties: as drawn)
+    for i, spec in enumerate(placed):
+        if "tabindex" not in spec:
+            following = next((s for s in placed[i + 1:] if "tabindex" in s), None)
+            ordered.insert(ordered.index(following) if following is not None else len(ordered), spec)
+    return {spec["name"]: number for number, spec in enumerate(ordered)}
+
+
+class _TabStop(_TabIndex):
+    """A control the keyboard can reach: Tab stops at it."""
 
     def _focus_widget(self):
         """The widget that takes the keyboard focus."""
@@ -682,7 +706,8 @@ class _WidgetText:
 
 
 @register
-class Label(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _Cursor, _Tooltip, _Anchored, Control):
+class Label(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _VAligned, _TabIndex, _Cursor, _Tooltip, _Anchored,
+            Control):
     """Text on a form, such as a caption or a result. It can't be typed in, but it can be clicked."""
 
     type_name = "Label"
@@ -947,7 +972,7 @@ class TextBox(_BackColor, _ForeColor, _Font, _Aligned, _TabStop, _Cursor, _Toolt
 
 
 @register
-class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _Cursor, _Tooltip, _Anchored, Control):
+class Frame(_WidgetText, _BackColor, _ForeColor, _Font, _Aligned, _TabIndex, _Cursor, _Tooltip, _Anchored, Control):
     """A captioned box that groups controls. Controls drawn inside it belong to it: they're
     positioned relative to it and move with it, and its OptionButtons form their own group."""
 

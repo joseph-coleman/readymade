@@ -24,8 +24,8 @@ import tkinter as tk
 from pathlib import Path
 
 from readymade import appearance, events, formfile, forms, menus, pictures
-from readymade.controls import (Button, CheckBox, Event, Grid, OptionButton, _TabStop, _WidgetText, control_of,
-                                create, repaint_inside)
+from readymade.controls import (Button, CheckBox, Event, Grid, OptionButton, _TabIndex, _TabStop, _WidgetText,
+                                control_of, create, repaint_inside, tab_numbers)
 
 FORM = "Form"
 FORM_EVENTS = (
@@ -151,6 +151,8 @@ class Form:
         if self.loaded:
             return
         design = formfile.load(self.path)
+        for name, number in (tab_numbers(design.controls) or {}).items():  # (a form from before Labels had one)
+            design.control(name)["tabindex"] = number
         self._handlers = {}  # "Form_load" etc. -> events.Handler
         self._tasks = set()  # running async handlers, canceled when the form closes
         self.root = tk.Toplevel(self._master or app_root())
@@ -306,8 +308,12 @@ class Form:
 
     def _tab_order(self):
         """The controls Tab moves through, in order: by tabindex, then as designed."""
-        stops = [c for c in self.controls.values() if isinstance(c, _TabStop)]
-        return sorted(stops, key=lambda c: (c.tabindex, self._design_order.index(c.name) if c.name in self._design_order else 0))
+        return [c for c in self._tab_sequence() if isinstance(c, _TabStop)]
+
+    def _tab_sequence(self):
+        """Every control with a place in the Tab order, Labels and Frames too, in that order."""
+        placed = [c for c in self.controls.values() if isinstance(c, _TabIndex)]
+        return sorted(placed, key=lambda c: (c.tabindex, self._design_order.index(c.name) if c.name in self._design_order else 0))
 
     def _tab(self, step):
         reachable = [c for c in self._tab_order() if c.enabled and c.visible and c.widget.winfo_viewable()]
@@ -370,7 +376,7 @@ class Form:
 
     def _after(self, control):
         """Where a Label's or Frame's access key goes: a Frame's first control, or the next
-        control after a Label (in the order they were designed) that Tab stops at."""
+        control after a Label in the Tab order that Tab stops at (as in VB)."""
         def reachable(c):
             return isinstance(c, _TabStop) and c.enabled and c.visible and c.widget.winfo_viewable()
 
@@ -384,8 +390,9 @@ class Form:
         if control.is_container:
             found = [c for c in self._tab_order() if inside(c.name, control.name) and reachable(c)]
             return found[0] if found else None
-        after = self._design_order[self._design_order.index(control.name) + 1:]
-        return next((self.controls[n] for n in after if reachable(self.controls[n])), None)
+        sequence = self._tab_sequence()
+        after = sequence[sequence.index(control) + 1:] if control in sequence else []
+        return next((c for c in after if reachable(c)), None)
 
     @staticmethod
     def _press(button):

@@ -280,18 +280,19 @@ def test_designer_tab_indexes(app):
     editor = app.form
     for type_name in ("TextBox", "Label", "Button", "CheckBox"):
         editor.add_control(type_name, 16, 16)
-    assert tab_indexes(editor) == {"TextBox1": 0, "Button1": 1, "CheckBox1": 2}  # new controls go last
+    # New controls go last. A Label has a place too (Tab passes it by; its access key uses it).
+    assert tab_indexes(editor) == {"TextBox1": 0, "Label1": 1, "Button1": 2, "CheckBox1": 3}
     editor.set_property("CheckBox1", "tabindex", "0")  # the others make room
-    assert tab_indexes(editor) == {"CheckBox1": 0, "TextBox1": 1, "Button1": 2}
-    assert editor.surface.controls["Button1"].tabindex == 2
+    assert tab_indexes(editor) == {"CheckBox1": 0, "TextBox1": 1, "Label1": 2, "Button1": 3}
+    assert editor.surface.controls["Button1"].tabindex == 3
     assert app.properties._rows["tabindex"][0].get() == "0"
     editor.set_property("CheckBox1", "tabindex", "99")
-    assert tab_indexes(editor)["CheckBox1"] == 2
+    assert tab_indexes(editor)["CheckBox1"] == 3
     editor.delete_control("TextBox1")
-    assert tab_indexes(editor) == {"Button1": 0, "CheckBox1": 1}
+    assert tab_indexes(editor) == {"Label1": 0, "Button1": 1, "CheckBox1": 2}
     editor.select("Button1")
     editor.paste(editor.copy_selection())
-    assert tab_indexes(editor) == {"Button1": 0, "CheckBox1": 1, "Button2": 2}
+    assert tab_indexes(editor) == {"Label1": 0, "Button1": 1, "CheckBox1": 2, "Button2": 3}
 
 
 def test_tab_order_mode(app):
@@ -302,17 +303,17 @@ def test_tab_order_mode(app):
     app.toggle_tab_order()
     surface = editor.surface
     assert surface.tab_order_next == 0
-    assert sorted(b.cget("text") for b in surface._badges) == ["0", "1", "2"]
+    assert sorted(b.cget("text") for b in surface._badges) == ["0", "1", "2", "3"]
     surface._control_press(None, surface.controls["CheckBox1"])
-    surface._control_press(None, surface.controls["Label1"])  # not a tab stop: just a beep
+    surface._control_press(None, surface.controls["Label1"])  # a Label gets its place too, as in VB
     surface._control_press(None, surface.controls["Button1"])
-    assert tab_indexes(editor) == {"CheckBox1": 0, "Button1": 1, "TextBox1": 2}
+    assert tab_indexes(editor) == {"CheckBox1": 0, "Label1": 1, "Button1": 2, "TextBox1": 3}
     assert editor.selected == "CheckBox1"  # still the last control added: clicks number, they don't select
     greens = sorted(b.cget("text") for b in surface._badges if b.cget("bg") == "#208020")
-    assert greens == ["0", "1"]
+    assert greens == ["0", "1", "2"]
     editor.undo()
-    assert tab_indexes(editor) == {"CheckBox1": 0, "TextBox1": 1, "Button1": 2}
-    assert len(surface._badges) == 3  # still numbered after undo rebuilt the form
+    assert tab_indexes(editor) == {"CheckBox1": 0, "Label1": 1, "TextBox1": 2, "Button1": 3}
+    assert len(surface._badges) == 4  # still numbered after undo rebuilt the form
     surface.canvas.focus_force()
     surface.canvas.update()
     surface.canvas.event_generate("<Escape>")
@@ -374,3 +375,35 @@ def test_mac_access_keys_go_by_the_keys_place(monkeypatch):
     monkeypatch.setattr(form_module.sys, "platform", "darwin")
     event = type("Key", (), {"keycode": 1 << 24, "keysym": "ß"})()  # Option+S types ß; the key is S's
     assert form_module._access_letter(event) == "S"
+
+
+def test_a_labels_access_key_follows_the_tab_order(make_form):
+    form = make_form(
+        ("TextBox", "Name", {"tabindex": 3}),
+        ("TextBox", "Email", {"tabindex": 1}),
+        ("Label", "lblEmail", {"text": "&Email:", "tabindex": 0}),  # drawn last, but first in the order
+        ("Label", "lblName", {"text": "&Name:", "tabindex": 2}),
+    )
+    assert [c.name for c in form._tab_order()] == ["Email", "Name"]  # Tab passes Labels by
+    press(form, "<Alt-KeyPress-n>")
+    assert focused(form) == "Name"
+    press(form, "<Alt-KeyPress-e>")
+    assert focused(form) == "Email"
+    form.lblEmail.tabindex = 2  # (it reads the order as it is then)
+    form.lblName.tabindex = 0
+    press(form, "<Alt-KeyPress-e>")
+    assert focused(form) == "Name"
+
+
+def test_forms_from_before_labels_had_a_tab_index():
+    from readymade.controls import tab_numbers
+
+    specs = [{"type": "Label", "name": "lblName"}, {"type": "TextBox", "name": "Name", "tabindex": 1},
+             {"type": "Button", "name": "OK", "tabindex": 0}, {"type": "Label", "name": "lblNotes"},
+             {"type": "Frame", "name": "fraSize"}, {"type": "TextBox", "name": "Notes", "tabindex": 2},
+             {"type": "Image", "name": "Image1"}]
+    # Each goes just before the next numbered control drawn after it: where its access key went before.
+    assert tab_numbers(specs) == {"OK": 0, "lblName": 1, "Name": 2, "lblNotes": 3, "fraSize": 4, "Notes": 5}
+    assert tab_numbers([{"type": "TextBox", "name": "T", "tabindex": 0}, {"type": "Label", "name": "L"}]) == {
+        "T": 0, "L": 1}  # (nothing after it: at the end)
+    assert tab_numbers([{"type": "Label", "name": "L", "tabindex": 0}]) is None  # (all numbered already)
