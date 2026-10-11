@@ -259,7 +259,7 @@ def app(tmp_path):
     root = tk.Tk()
     app = App(root, tmp_path / "Colors")
     yield app
-    app.stop()
+    app.runner.stop()
     root.destroy()
 
 

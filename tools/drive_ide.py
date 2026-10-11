@@ -170,7 +170,7 @@ class Driver:
     def ask(self, expression, timeout=10):
         """Evaluate an expression in the running program via the Immediate window."""
         marker = f"@@{self.step}{time.time_ns()}@@"
-        self.app.immediate_line(f"print({marker!r}, repr({expression}))")
+        self.app.runner.immediate_line(f"print({marker!r}, repr({expression}))")
         deadline = time.time() + timeout
         while time.time() < deadline:
             self.pump(0.05)
@@ -479,9 +479,9 @@ def drive(d):
     d.shot("running-more-controls")
 
     print("Use the menu in the running program, by mouse and by shortcut")
-    app.immediate_line("Label2.text = ''")
+    app.runner.immediate_line("Label2.text = ''")
     # On X11 Tk shows copies ("clones") of menus, so find the menus actually on screen.
-    app.immediate_line(
+    app.runner.immediate_line(
         "exec(\"def shown_menus(tk):\\n out, todo = [], ['.']\\n while todo:\\n  p = todo.pop()\\n"
         "  todo += tk.splitlist(tk.call('winfo', 'children', p))\\n"
         "  if tk.call('winfo', 'class', p) == 'Menu' and tk.call('winfo', 'ismapped', p):\\n"
@@ -497,20 +497,20 @@ def drive(d):
     _, x, y, _, entry_y = next(m for m in shown if m[0] != bar)  # the File menu
     d.click(x + 20, y + entry_y + 8)
     d.check("File > Open clicked", d.ask("Label2.text"), "Opened from the menu")
-    app.immediate_line("Label2.text = ''")
+    app.runner.immediate_line("Label2.text = ''")
     d.click(*in_form(button1))  # put the keyboard focus in the form
     d.key("ctrl+o")
     d.check("Ctrl+O", d.ask("Label2.text"), "Opened from the menu")
     d.shot("running-menu")
 
     print("Open the second form from the Immediate window, and close it with its button")
-    app.immediate_line("forms.Settings.show()")
+    app.runner.immediate_line("forms.Settings.show()")
     d.check("Settings shown", d.ask("forms.Settings.root.state()"), "normal")
     x, y = d.ask("(lambda w: (w.winfo_rootx() + 20, w.winfo_rooty() + 10))(forms.Settings.Button1.widget)")
     d.click(x, y)
     d.check("Settings closed by its own code", d.ask("forms.Settings.loaded"), False)
 
-    app.immediate_line("form.close()")
+    app.runner.immediate_line("form.close()")
     deadline = time.time() + 10
     while app.process is not None and time.time() < deadline:
         d.pump(0.05)
@@ -569,7 +569,7 @@ def drive(d):
     d.check("drag paints the Image's pixels", d.ask("[Image1.pixel(px, 16) for px in (2, 16, 28)]"),
             ["#3060c0", "#ff0000", "#ff0000"])
     d.shot("canvas-running")
-    app.immediate_line("form.close()")
+    app.runner.immediate_line("form.close()")
     deadline = time.time() + 10
     while app.process is not None and time.time() < deadline:
         d.pump(0.05)
@@ -602,7 +602,7 @@ def drive(d):
     d.key("F5")
     d.check("the running program shows them", d.ask("(Label1.widget['background'], str(Label1.widget['anchor']), Label1.font)"),
             ("#ffe080", "e", family))
-    app.immediate_line("form.close()")
+    app.runner.immediate_line("form.close()")
     deadline = time.time() + 10
     while app.process is not None and time.time() < deadline:
         d.pump(0.05)
@@ -626,11 +626,11 @@ def drive(d):
     d.check("Tab goes to the next", d.ask(focus), "Button1")
     d.key("shift+Tab")
     d.check("Shift+Tab goes back", d.ask(focus), "Button2")
-    app.immediate_line("Label2.text = ''")
+    app.runner.immediate_line("Label2.text = ''")
     d.ask("Label2.text")  # wait until it's done, so it can't undo what Enter does
     d.key("Return")
     d.check("Enter presses the focused button", d.ask("Label2.text"), "Drawn and wired by xdotool")
-    app.immediate_line("form.close()")
+    app.runner.immediate_line("form.close()")
     deadline = time.time() + 10
     while app.process is not None and time.time() < deadline:
         d.pump(0.05)
@@ -674,7 +674,7 @@ def drive(d):
     d.check("moving away hides it", d.ask(tip), None)
     d.type("abcdefgh")
     d.check("maxlength stops typing", d.ask("TextBox1.text"), "abcde")
-    app.immediate_line("form.close()")
+    app.runner.immediate_line("form.close()")
     deadline = time.time() + 10
     while app.process is not None and time.time() < deadline:
         d.pump(0.05)
@@ -765,13 +765,13 @@ def drive(d):
     d.check("running at the designed place", d.ask("(Button2.left, Button2.top)"), after)
     # A person resizes the window through the window manager, and this display has none (Tk keeps its
     # window at the size it asked for when another program resizes it), so the program's Tk does it.
-    app.immediate_line(f"form.root.geometry('{editor.design.width + 100}x{editor.design.height + 60}')")
+    app.runner.immediate_line(f"form.root.geometry('{editor.design.width + 100}x{editor.design.height + 60}')")
     deadline = time.time() + 5
     while d.ask("Button2.left") == after[0] and time.time() < deadline:
         d.pump(0.1)
     d.check("resizing the program's window moves it", d.ask("(Button2.left, Button2.top)"), (after[0] + 100, after[1] + 60))
     d.shot("anchors-running")
-    app.immediate_line("form.close()")
+    app.runner.immediate_line("form.close()")
     deadline = time.time() + 10
     while app.process is not None and time.time() < deadline:
         d.pump(0.05)
@@ -826,7 +826,7 @@ def drive(d):
     code.text.focus_force()
     d.key("F5")
     d.ask("1")  # (running)
-    app.immediate_line("_ = Button1.widget.invoke()")
+    app.runner.immediate_line("_ = Button1.widget.invoke()")
     deadline = time.time() + 10
     while code.paused_line() != line and time.time() < deadline:
         d.pump(0.05)
@@ -889,8 +889,8 @@ def drive(d):
         d.pump(0.05)
     d.check("F5 continues, with the changed value", (app.in_break_mode, d.ask("Label2.text")), (False, "Hello, Ada!"))
     print("Watches while running (View > Watches)")
-    app.show_debug_window(app.watches_panel)
-    app.set_watches([{"expression": "Label2.text", "kind": "watch", "file": "", "function": ""},
+    app.debug.show_debug_window(app.watches_panel)
+    app.debug.set_watches([{"expression": "Label2.text", "kind": "watch", "file": "", "function": ""},
                      {"expression": "name", "kind": "watch", "file": "Form1.py", "function": "Button1_click"}])
     deadline = time.time() + 10
     while app.watches_panel.value_of("#watch", 0)[0] != "'Hello, Ada!'" and time.time() < deadline:
@@ -924,7 +924,7 @@ def drive(d):
     d.check("pasted with its handler", f"def {pasted}_click(self):" in editor.code.get_source() and pasted != "Button1", True)
 
     print("An access key: &Say Hello is Alt+S in the running program")
-    app.clear_breakpoints()  # (the break mode step's breakpoint would stop the click)
+    app.debug.clear_breakpoints()  # (the break mode step's breakpoint would stop the click)
     editor.set_property("Button1", "text", "&Say Hello")
     d.key("F5")
     left, top = d.ask("(form.root.winfo_rootx(), form.root.winfo_rooty())")
@@ -996,7 +996,7 @@ def main():
         try:
             drive(driver)
         finally:
-            app.stop()
+            app.runner.stop()
             root.destroy()
     finally:
         server.terminate()

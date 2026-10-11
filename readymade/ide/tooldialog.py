@@ -69,10 +69,10 @@ class ToolDialog(tk.Toplevel):
         """Show which tools the project's environment has, with Install for the others."""
         if not self.winfo_exists():
             return
-        python, _ = self.app.python()
-        found = lint.installed(python, self.tools.values(), self.app.environment())
+        python, _ = self.app.envs.python()
+        found = lint.installed(python, self.tools.values(), self.app.runner.environment())
         has_environment = self.app.project.python() is not None
-        self.where.configure(text=f"Checked with {self.app.python_label()}." + (
+        self.where.configure(text=f"Checked with {self.app.envs.python_label()}." + (
             "" if has_environment else " To install tools, first create an environment (Project > Create Environment)."))
         for name, tool in self.tools.items():
             for child in self.status[name].winfo_children():
@@ -85,8 +85,8 @@ class ToolDialog(tk.Toplevel):
                     ttk.Button(self.status[name], text="Install", command=lambda t=tool: self.install(t)).pack(side=tk.LEFT, padx=4)
 
     def install(self, tool):
-        if self.app.idle():
-            self.app.pip_install([tool.package], self.refresh, failed=f"pip couldn't install {tool.name}.")
+        if self.app.runner.idle():
+            self.app.envs.pip_install([tool.package], self.refresh, failed=f"pip couldn't install {tool.name}.")
 
     def ok(self):
         shared = [name for name, var in self.shared.items() if var.get()]

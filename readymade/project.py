@@ -188,6 +188,14 @@ class Project:
         forms = set(self.forms())
         return sorted(p.stem for p in self.folder.glob("*.py") if p.stem not in forms)
 
+    def relative(self, path):
+        """A path as the project names it, from its folder: "Form1.py", "data/prices.csv" (a path
+        outside the project stays as it is)."""
+        try:
+            return Path(path).resolve().relative_to(self.folder.resolve()).as_posix()
+        except ValueError:
+            return str(path)
+
     def other_files(self, folder=""):
         """The project's other files and folders, in one of its folders ("" for the top):
         [(path relative to the project, whether it's a folder)], folders first. Not its forms

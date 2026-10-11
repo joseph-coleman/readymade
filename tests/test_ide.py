@@ -23,7 +23,7 @@ def app(tmp_path):
     root = tk.Tk()
     app = App(root, tmp_path / "Hello")  # a new project
     yield app
-    app.stop()
+    app.runner.stop()
     root.destroy()
 
 
@@ -86,16 +86,16 @@ def test_properties_panel_edits_the_design(app):
 
 
 def test_design_time_immediate_window(app):
-    app.immediate_line("? 6 * 7")
+    app.runner.immediate_line("? 6 * 7")
     assert "42" in app.immediate.output.get("1.0", "end")
 
 
 def test_run_and_talk_to_the_program(app):
     app.form.add_control("Label", 8, 8)
-    app.run()
+    app.runner.run()
     assert app.process is not None
-    app.immediate_line("? Label1.text")
-    app.immediate_line("form.close()")
+    app.runner.immediate_line("? Label1.text")
+    app.runner.immediate_line("form.close()")
     output = wait_for_exit(app)
     assert "Label1\n" in output
     assert "--- Ended (exit code 0) ---" in output
@@ -155,9 +155,9 @@ def test_run_uses_the_startup_form(app):
     app.project.add_form("Settings")
     app.set_startup("Settings")
     assert app.explorer.tree.item("form:Settings", "text") == "Settings  (startup)"
-    app.run()
-    app.immediate_line("? type(form).__name__")
-    app.immediate_line("form.close()")
+    app.runner.run()
+    app.runner.immediate_line("? type(form).__name__")
+    app.runner.immediate_line("form.close()")
     output = wait_for_exit(app)
     assert "Settings\n" in output and "--- Ended (exit code 0) ---" in output
 
@@ -249,13 +249,13 @@ def test_project_runs_with_its_own_venv(app):
     assert app.explorer.tree.item("python", "text").endswith("(IDE)")
     # A real venv; its python can use the base installation's tkinter.
     subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(app.project.folder / ".venv")], check=True)
-    app.set_python(None)  # refreshes the Explorer, as choosing would
+    app.envs.set_python(None)  # refreshes the Explorer, as choosing would
     label = app.explorer.tree.item("python", "text")
     assert label == "Python %d.%d.%d  (.venv)" % sys.version_info[:3]
 
-    app.run()
-    app.immediate_line("? __import__('sys').prefix")
-    app.immediate_line("form.close()")
+    app.runner.run()
+    app.runner.immediate_line("? __import__('sys').prefix")
+    app.runner.immediate_line("form.close()")
     output = wait_for_exit(app)
     assert "Python: .venv" in output
     assert str(app.project.folder / ".venv") in output
@@ -263,9 +263,9 @@ def test_project_runs_with_its_own_venv(app):
 
 
 def test_missing_interpreter_is_reported_not_run(app):
-    app.set_python(app.project.folder / "nowhere" / "python")
+    app.envs.set_python(app.project.folder / "nowhere" / "python")
     assert "can't run it" in app.explorer.tree.item("python", "text")
-    app.run()
+    app.runner.run()
     assert app.process is None
     assert "doesn't exist" in app.immediate.output.get("1.0", "end")
 
@@ -303,35 +303,35 @@ def test_create_environment_then_add_a_library(app, tmp_path, monkeypatch):
     monkeypatch.setenv("PIP_NO_INDEX", "1")  # pip reads its options from the environment too
     monkeypatch.setenv("PIP_FIND_LINKS", str(tmp_path / "wheels"))
 
-    app.create_environment(Path(sys.executable))
+    app.envs.create_environment(Path(sys.executable))
     output = wait_until_idle(app)
     assert "The environment is ready." in output, output
     assert app.project.python() == app.project.venv_python()
     assert app.explorer.tree.item("python", "text").endswith("(.venv)")
 
-    app.add_library("tinypkg")
+    app.envs.add_library("tinypkg")
     output = wait_until_idle(app)
     assert "Added tinypkg to the project." in output, output
     assert app.project.dependencies == ["tinypkg"]
     libraries = [app.explorer.tree.item(i, "text") for i in app.explorer.tree.get_children("libraries")]
     assert libraries == ["tinypkg"]
 
-    app.run()  # the program can import it
-    app.immediate_line("? __import__('tinypkg').VALUE")
-    app.immediate_line("form.close()")
+    app.runner.run()  # the program can import it
+    app.runner.immediate_line("? __import__('tinypkg').VALUE")
+    app.runner.immediate_line("form.close()")
     assert "42\n" in wait_for_exit(app)
 
     # A copy of the project on another machine: creating its environment installs the libraries.
     import shutil
 
     shutil.rmtree(app.project.folder / ".venv")
-    app.create_environment(Path(sys.executable))
+    app.envs.create_environment(Path(sys.executable))
     output = wait_until_idle(app)
     assert output.count("--- Installing tinypkg ---") == 2 and output.rstrip().endswith("The environment is ready. ---")
 
     # Removing it takes it out of the list and uninstalls it from the project's environment.
     monkeypatch.setattr(messagebox, "askyesno", lambda *a, **kw: True)
-    assert app.remove_from_project("library", "tinypkg")
+    assert app.files.remove_from_project("library", "tinypkg")
     output = wait_until_idle(app)
     assert "Removed tinypkg from the project." in output, output
     assert app.project.dependencies == []
@@ -346,9 +346,9 @@ def test_failed_pip_install_changes_nothing(app, tmp_path, monkeypatch):
     import sys
 
     monkeypatch.setenv("PIP_NO_INDEX", "1")
-    app.create_environment(Path(sys.executable))
+    app.envs.create_environment(Path(sys.executable))
     wait_until_idle(app)
-    app.add_library("no-such-package-anywhere")
+    app.envs.add_library("no-such-package-anywhere")
     assert "nothing was added" in wait_until_idle(app)
     assert app.project.dependencies == []
 
@@ -362,7 +362,7 @@ def test_uv_is_the_fallback_when_venv_fails(app, tmp_path, monkeypatch):
     fake_uv.chmod(0o755)
     monkeypatch.setattr("shutil.which", lambda name: str(fake_uv) if name == "uv" else None)
 
-    app.create_environment(broken)
+    app.envs.create_environment(broken)
     output = wait_until_idle(app)
     assert "trying uv instead" in output
     assert (tmp_path / "uv-args").read_text().split() == ["venv", "--seed", "--python", str(broken), str(app.project.folder / ".venv")]
@@ -373,7 +373,7 @@ def test_add_library_offers_to_create_an_environment_first(app, monkeypatch):
 
     asked = []
     monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a) or False)
-    app.add_library("tinypkg")
+    app.envs.add_library("tinypkg")
     assert asked and app.process is None  # declined, so nothing went into the IDE's Python
 
 
@@ -392,8 +392,8 @@ def test_run_time_error_is_shown_at_its_line(app):
     write_code(app, "Form1", "from readymade import Form\n\n\nclass Form1(Form):\n"
                "    def Button1_click(self):\n        total = 0\n        self.text = str(1 / total)\n")
     app.open_form("Form1", "design")
-    app.run()
-    app.immediate_line("_ = Button1.widget.invoke()")
+    app.runner.run()
+    app.runner.immediate_line("_ = Button1.widget.invoke()")
     deadline = time.time() + 15
     while "ZeroDivisionError" not in app.form.code.error_bar.cget("text") and time.time() < deadline:
         app.root.update()
@@ -404,9 +404,9 @@ def test_run_time_error_is_shown_at_its_line(app):
     assert code.text.tag_ranges("error") and str(code.text.tag_ranges("error")[0]) == "7.0"
     assert "--- ZeroDivisionError: division by zero  (Form1.py, line 7) ---" in app.immediate.output.get("1.0", "end")
     assert wait_for(app, lambda: app.in_break_mode)  # paused at the error (see test_debugging.py)
-    app.run()  # continue: the program goes on without the rest of the event
+    app.runner.run()  # continue: the program goes on without the rest of the event
     assert wait_for(app, lambda: not app.in_break_mode)
-    app.immediate_line("form.close()")
+    app.runner.immediate_line("form.close()")
     assert "--- Ended (exit code 0) ---" in wait_for_exit(app)
 
     code.text.insert("7.0", "# ")  # editing clears the highlight
@@ -419,14 +419,14 @@ def test_startup_errors_in_modules_open_the_module(app):
     write_code(app, "helpers", "def greeting():\n    return GREETING\n")
     write_code(app, "Form1", "from readymade import Form\nimport helpers\n\n\nclass Form1(Form):\n"
                "    def Form_load(self):\n        self.text = helpers.greeting()\n")
-    app.run()
+    app.runner.run()
     assert wait_for(app, lambda: app.in_break_mode)  # paused at the error in Form_load (see test_debugging.py)
     module = next(e for e in app.editors if e.name == "helpers")
     assert app.documents.select() == str(module.frame)
     assert module.code.error_bar.cget("text") == "Line 2: NameError: name 'GREETING' is not defined"
-    app.run()  # continue: the rest of Form_load is skipped
+    app.runner.run()  # continue: the rest of Form_load is skipped
     assert wait_for(app, lambda: not app.in_break_mode)
-    app.immediate_line("form.close()")
+    app.runner.immediate_line("form.close()")
     assert "--- Ended (exit code 0) ---" in wait_for_exit(app)
 
 
@@ -834,9 +834,9 @@ def fake_python(folder, pyinstaller_installed=False, build_fails=False):
 @pytest.mark.skipif(sys.platform == "win32", reason="the stand-in python is a shell script")
 def test_make_exe_installs_pyinstaller_then_builds(app, tmp_path):
     fake = fake_python(tmp_path / "fake")
-    app.set_python(fake)
+    app.envs.set_python(fake)
     (tmp_path / "fake" / "calls").unlink()  # the Explorer asked it for its version; not part of this
-    app.make_exe(ask=False)
+    app.envs.make_exe(ask=False)
     output = wait_until_idle(app)
     calls = (tmp_path / "fake" / "calls").read_text().splitlines()
     assert [c.split()[:2] for c in calls] == [["-c", "import"], ["-m", "pip"], ["-m", "PyInstaller"],
@@ -852,8 +852,8 @@ def test_make_exe_installs_pyinstaller_then_builds(app, tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the stand-in python is a shell script")
 def test_make_exe_reports_a_failed_build(app, tmp_path):
-    app.set_python(fake_python(tmp_path / "fake", pyinstaller_installed=True, build_fails=True))
-    app.make_exe(ask=False)
+    app.envs.set_python(fake_python(tmp_path / "fake", pyinstaller_installed=True, build_fails=True))
+    app.envs.make_exe(ask=False)
     output = wait_until_idle(app)
     assert "--- Installing" not in output
     assert "PyInstaller couldn't make the program; its messages are above." in output
@@ -864,13 +864,13 @@ def test_make_exe_offers_an_environment_first(app, monkeypatch):
 
     asked = []
     monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a) or False)
-    app.make_exe(ask=False)
+    app.envs.make_exe(ask=False)
     assert asked and app.process is None  # declined: nothing runs in the IDE's own Python
 
 
 def test_make_exe_stops_when_the_projects_python_is_missing(app):
-    app.set_python("D:/miniforge3/envs/app/python.exe")  # chosen on another machine
-    app.make_exe(ask=False)
+    app.envs.set_python("D:/miniforge3/envs/app/python.exe")  # chosen on another machine
+    app.envs.make_exe(ask=False)
     output = wait_until_idle(app)
     assert "doesn't exist. Choose another in the Project menu." in output
     assert "Installing" not in output and app.process is None
@@ -1099,7 +1099,7 @@ def test_go_to_definition(app):
     assert form.code.text.index("insert") == "8.8" and form.code.text.get("sel.first", "sel.last") == "greeting"
 
     app.go_to_definition(form, f"1.{len('from readymade import ') + 1}")  # Form, in readymade itself: read-only
-    viewer = app._current_editor()
+    viewer = app.current_editor()
     assert viewer.title() == "form.py (read-only)" and str(viewer.code.text.cget("state")) == "disabled"
     assert viewer.code.text.get("insert linestart", "insert lineend").startswith("class Form")
     assert viewer.code.on_change is None  # never linted
@@ -1113,12 +1113,12 @@ def test_completion_says_when_jedi_is_missing(app, monkeypatch):
 
 def test_programs_and_tools_run_without_color(app, monkeypatch):
     monkeypatch.setenv("FORCE_COLOR", "3")  # as some terminals set it
-    env = app.environment()
+    env = app.runner.environment()
     assert "FORCE_COLOR" not in env and env["PYTHON_COLORS"] == "0" and env["NO_COLOR"] == "1"
     app.form.add_control("Label", 8, 8)
     write_code(app, "Form1", "from readymade import Form\n\n\nclass Form1(Form):\n"
                "    def Form_load(self):\n        print('\\x1b[31mred\\x1b[0m')\n        self.close()\n")
-    app.run()
+    app.runner.run()
     output = wait_for_exit(app)
     assert "red\n" in output and "\x1b" not in output  # color a program prints itself is dropped too
 
@@ -1166,9 +1166,9 @@ def test_f1_in_the_designer_and_properties(app):
 def test_running_shows_the_immediate_window_again(app):
     app.show_topic(__import__("readymade.ide.helptext", fromlist=["home"]).home())
     assert app.bottom.select() == str(app.help)
-    app.run()
+    app.runner.run()
     assert app.bottom.select() == str(app.immediate)
-    app.immediate_line("form.close()")
+    app.runner.immediate_line("form.close()")
     wait_for_exit(app)
 
 
@@ -1238,8 +1238,8 @@ def test_the_make_exe_dialog(app, monkeypatch):
     from readymade.ide.makeexe import MakeExeDialog
 
     made = []
-    real = app.make_exe
-    monkeypatch.setattr(app, "make_exe", lambda ask=True: real() if ask else made.append("made"))  # (no build)
+    real = app.envs.make_exe
+    monkeypatch.setattr(app.envs, "make_exe", lambda ask=True: real() if ask else made.append("made"))  # (no build)
     dialog = real()
     assert isinstance(dialog, MakeExeDialog) and dialog.fields["name"].get() == "hello"
     assert dialog.fields["version"].get() == "0.1.0" and dialog.notices.get() is True

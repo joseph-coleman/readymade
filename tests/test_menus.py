@@ -191,7 +191,7 @@ def test_every_ide_menu_command_is_deferred(tmp_path, monkeypatch):
         root.update_idletasks()
         assert asked == ["Add Form", "Add Library"]
     finally:
-        app.stop()
+        app.runner.stop()
         root.destroy()
 
 
@@ -230,7 +230,7 @@ def test_project_explorer_opens_its_menu_on_a_right_click(tmp_path, monkeypatch)
         tree.event_generate("<Button-3>", x=x + 5, y=y + h // 2)
         assert shown == [app.explorer.menu] and tree.focus() == "form:Form1"
     finally:
-        app.stop()
+        app.runner.stop()
         root.destroy()
 
 

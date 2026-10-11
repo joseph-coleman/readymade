@@ -26,7 +26,7 @@ def app(tmp_path):
     code = (folder / "Form2.py").read_text(encoding="utf-8")
     (folder / "Form2.py").write_text(code.replace("pass", "pass  # bad", 1), encoding="utf-8")
     yield app
-    app.stop()
+    app.runner.stop()
     root.destroy()
 
 
@@ -97,7 +97,7 @@ def test_removed_files_and_tools_leave_the_list(app, monkeypatch):
     app.linter.check_all()
     assert wait_for(app, lambda: settled(app) and len(rows(app)) == 3)
     monkeypatch.setattr(messagebox, "askyesno", lambda *a, **kw: True)
-    app.remove_from_project("module", "helpers")
+    app.files.remove_from_project("module", "helpers")
     assert wait_for(app, lambda: settled(app) and [row[0] for row in rows(app)] == ["Form2.py"])
     lint.set_choices(app.project, [], [])
     app.linter.check_all()

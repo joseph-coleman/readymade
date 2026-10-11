@@ -19,7 +19,7 @@ def app(tmp_path):
     root = tk.Tk()
     app = App(root, tmp_path / "Shop")
     yield app
-    app.stop()
+    app.runner.stop()
     root.destroy()
     codeview.set_indent(4)  # the editor's indent is shared by every editor: put it back
 
@@ -129,7 +129,7 @@ def test_usual_font_and_starting_with_saved_options(tmp_path):
         dialog.ok()
         usual = tkfont.nametofont("TkFixedFont", root=root).actual()
         assert tkfont.nametofont(options.CODE_FONT, root=root).actual("size") == usual["size"]
-        app.stop()
+        app.runner.stop()
     finally:
         root.destroy()
         codeview.set_indent(4)

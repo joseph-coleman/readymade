@@ -98,11 +98,11 @@ class ProjectExplorer(ttk.Frame):
         self.menu.add_command(label="Rename...", command=self._rename)
         self.menu.add_command(label="Remove...", command=self._remove)
         self.python_menu = tk.Menu(self, tearoff=False)
-        self.python_menu.add_command(label="Create Environment...", command=app.ask_create_environment)
-        self.python_menu.add_command(label="Choose Python Interpreter...", command=app.choose_python)
-        self.python_menu.add_command(label="Use Default Python", command=lambda: app.set_python(None))
+        self.python_menu.add_command(label="Create Environment...", command=app.envs.ask_create_environment)
+        self.python_menu.add_command(label="Choose Python Interpreter...", command=app.envs.choose_python)
+        self.python_menu.add_command(label="Use Default Python", command=lambda: app.envs.set_python(None))
         self.libraries_menu = tk.Menu(self, tearoff=False)
-        self.libraries_menu.add_command(label="Add Library...", command=app.add_library)
+        self.libraries_menu.add_command(label="Add Library...", command=app.envs.add_library)
         self.libraries_menu.add_command(label="Remove Library...", command=self._remove)
         self.bundled = tk.BooleanVar(self)
         self.files_menu = tk.Menu(self, tearoff=False)
@@ -110,8 +110,8 @@ class ProjectExplorer(ttk.Frame):
         self.files_menu.add_command(label="Open with System Program", command=self._open_with_system)
         self.files_menu.add_checkbutton(label="Bundle with Make EXE", variable=self.bundled, command=self._bundle)
         self.files_menu.add_separator()
-        self.files_menu.add_command(label="New File...", command=lambda: self.app.new_file(self._folder()))
-        self.files_menu.add_command(label="New Folder...", command=lambda: self.app.new_folder(self._folder()))
+        self.files_menu.add_command(label="New File...", command=lambda: self.app.files.new_file(self._folder()))
+        self.files_menu.add_command(label="New Folder...", command=lambda: self.app.files.new_folder(self._folder()))
         self.files_menu.add_command(label="Rename...", command=self._rename)
         self.files_menu.add_separator()
         self.files_menu.add_command(label="Remove...", command=self._remove)
@@ -128,7 +128,7 @@ class ProjectExplorer(ttk.Frame):
         if project is None:
             return
         top = self.tree.insert("", tk.END, text=project.name, open=True)
-        self.tree.insert(top, tk.END, iid="python", text=self.app.python_label())
+        self.tree.insert(top, tk.END, iid="python", text=self.app.envs.python_label())
         startup = project.startup
         forms = self.tree.insert(top, tk.END, text="Forms", open=True)
         for name in project.forms():
@@ -140,7 +140,7 @@ class ProjectExplorer(ttk.Frame):
         libraries = self.tree.insert(top, tk.END, iid="libraries", text="Libraries", open=True)
         for requirement in project.dependencies:
             self.tree.insert(libraries, tk.END, iid=f"library:{requirement}", text=requirement)
-        self._bundled = self.app.bundled_paths()
+        self._bundled = self.app.files.bundled_paths()
         self.tree.insert(top, tk.END, iid="files", text="Files", open=True)
         self._fill("files", "")
         for row in opened:  # folders open before stay open (each filled as it opens)
@@ -155,7 +155,7 @@ class ProjectExplorer(ttk.Frame):
         """What a row's note means (startup, bundled), or what a row is for."""
         app, text = self.app, self.tree.item(row, "text") if row else ""
         if row == "python":
-            python, where = app.python()
+            python, where = app.envs.python()
             return (f"The Python that runs the program: {python or 'the one running readymade'}.\n"
                     "Double-click to choose another; right-click to create an environment (.venv) for the project.")
         if row == "libraries":
@@ -188,7 +188,7 @@ class ProjectExplorer(ttk.Frame):
         """Show a folder's files under a row: folders get a placeholder, filled when opened."""
         for relative, is_folder in self.app.project.other_files(folder):
             name = relative.rsplit("/", 1)[-1]
-            bundled = self.app.is_bundled(relative, self._bundled)
+            bundled = self.app.files.is_bundled(relative, self._bundled)
             row = self.tree.insert(parent, tk.END, iid=f"file:{relative}",
                                    text=f"{name}{'/' if is_folder else ''}{'  (bundled)' if bundled else ''}")
             if is_folder:
@@ -205,10 +205,10 @@ class ProjectExplorer(ttk.Frame):
 
     def _open(self, view):
         if self.tree.focus() == "python":
-            self.app.choose_python()
+            self.app.envs.choose_python()
             return "break"
         if self.tree.focus() == "libraries":
-            self.app.add_library()
+            self.app.envs.add_library()
             return "break"
         kind, name = self._selected()
         if kind == "form":
@@ -216,24 +216,24 @@ class ProjectExplorer(ttk.Frame):
         elif kind == "module":
             self.app.open_module(name)
         elif kind == "file":
-            self.app.open_file(name)
+            self.app.files.open_file(name)
         return "break"
 
     def _open_with_system(self):
         kind, name = self._selected()
         if kind == "file":
-            self.app.open_with_system(self.app.project.folder / name)
+            self.app.files.open_with_system(self.app.project.folder / name)
 
     def _bundle(self):
         kind, name = self._selected()
         if kind == "file":
-            self.app.set_bundled(name, self.bundled.get())
+            self.app.files.set_bundled(name, self.bundled.get())
 
     def _remove(self):
         """Remove the selected form, module, library or file (the app asks first)."""
         kind, name = self._selected()
         if kind in ("form", "module", "library", "file"):
-            self.app.remove_from_project(kind, name)
+            self.app.files.remove_from_project(kind, name)
         return "break"
 
     def _popup(self, e):
@@ -257,7 +257,7 @@ class ProjectExplorer(ttk.Frame):
             enable(self.files_menu, "Open", relative and not folder)
             for label in ("Open with System Program", "Rename...", "Remove..."):
                 enable(self.files_menu, label, bool(relative))
-            self.bundled.set(bool(relative) and self.app.is_bundled(relative, self.app.bundled_paths()))
+            self.bundled.set(bool(relative) and self.app.files.is_bundled(relative, self.app.files.bundled_paths()))
             # Bundled with its folder, or as a form's picture: it can't be left out by itself.
             enable(self.files_menu, "Bundle with Make EXE",
                    bool(relative) and (relative in self.app.project.include() or not self.bundled.get()))
@@ -274,11 +274,11 @@ class ProjectExplorer(ttk.Frame):
     def _rename(self):
         kind, name = self._selected()
         if kind == "module":
-            self.app.rename_module(name)
+            self.app.files.rename_module(name)
         elif kind == "form":
-            self.app.rename_form(name)
+            self.app.files.rename_form(name)
         elif kind == "file":
-            self.app.rename_file(name)
+            self.app.files.rename_file(name)
         return "break"
 
     def _folder(self):

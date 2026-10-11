@@ -30,7 +30,7 @@ def app(tmp_path):
     app.form.show_code()
     root.update()
     yield app
-    app.stop()
+    app.runner.stop()
     root.destroy()
 
 
@@ -49,7 +49,7 @@ def test_what_the_line_numbers_marks_say(app):
     code.set_breakpoint_settings(7, {"condition": "total > 1", "log": "total is {total}"})
     assert 'A logpoint: instead of pausing, it writes "total is {total}"' in tip(7)
     assert "only when total > 1" in tip(7)
-    app.switch_breakpoint("Form1.py", 6)
+    app.debug.switch_breakpoint("Form1.py", 6)
     assert tip(6).startswith("A breakpoint, switched off (hollow)")
     assert tip(6, x=200) == ""  # (over the numbers themselves: nothing)
 
@@ -60,15 +60,15 @@ def test_what_the_lists_notes_say(app, tmp_path):
     assert explorer.tip_for("python").startswith("The Python that runs the program")
     (app.project.folder / "data").mkdir()
     (app.project.folder / "data" / "prices.csv").write_text("tea\n")
-    app.set_bundled("data", True)
+    app.files.set_bundled("data", True)
     explorer.tree.item("file:data", open=True)
     explorer.fill_folder("file:data")
     assert "as you chose" in explorer.tip_for("file:data")
     assert "with the folder it's in" in explorer.tip_for("file:data/prices.csv")
 
-    app.set_watches([{"expression": "total", "kind": "changes", "file": "Form1.py", "function": "Form_load"},
+    app.debug.set_watches([{"expression": "total", "kind": "changes", "file": "Form1.py", "function": "Form_load"},
                      {"expression": "total", "kind": "watch", "file": "", "function": ""}])
-    app.show_debug_window(app.watches_panel)
+    app.debug.show_debug_window(app.watches_panel)
     app.root.update()
     tree = app.watches_panel.tree
     x, y, _, h = tree.bbox(tree.get_children()[0], "#0")
@@ -77,7 +77,7 @@ def test_what_the_lists_notes_say(app, tmp_path):
     assert app.watches_panel.tip_at(x + 5, y + h // 2) == ""  # (a plain watch has no mark)
 
     app.form.code.toggle_breakpoint(6)
-    app.show_debug_window(app.breakpoints_panel)
+    app.debug.show_debug_window(app.breakpoints_panel)
     app.root.update()
     tree = app.breakpoints_panel.tree
     rows = tree.get_children()
@@ -97,7 +97,7 @@ def test_what_the_lists_notes_say(app, tmp_path):
     ("breakpoints_panel", "Breakpoints"), ("toolbox", "Toolbox"),
 ])
 def test_f1_in_each_window(app, panel, title):
-    app.show_debug_window(app.locals)
+    app.debug.show_debug_window(app.locals)
     widget = getattr(app, panel)
     if panel == "immediate":
         target = widget.entry
@@ -128,7 +128,7 @@ def test_the_dialogs_help(app):
     from readymade.ide import options
     from readymade.ide.makeexe import MakeExeDialog
 
-    for dialog, title in ((app.add_watch(), "Add Watch"), (app.breakpoint_condition(app.form, 6), "Breakpoint Condition"),
+    for dialog, title in ((app.debug.add_watch(), "Add Watch"), (app.debug.breakpoint_condition(app.form, 6), "Breakpoint Condition"),
                           (options.OptionsDialog(app), "Options"), (MakeExeDialog(app, lambda: None), "Make EXE")):
         app.help.title.configure(text="")
         dialog.focus_force()

@@ -105,8 +105,8 @@ class Linter:
     def _start(self, jobs, tools):
         """Run each tool on each (file, source, editor or None), in a background thread."""
         project = self.app.project
-        python = self.app.python()[0]
-        env, folder = self.app.environment(), project.folder
+        python = self.app.envs.python()[0]
+        env, folder = self.app.runner.environment(), project.folder
         work_list = []
         for path, source, editor in jobs:
             for tool in tools:

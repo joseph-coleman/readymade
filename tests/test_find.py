@@ -38,7 +38,7 @@ def app(tmp_path):
     module = app.open_module("tools")
     module.code.set_source(CODE)
     yield app, module.code
-    app.stop()
+    app.runner.stop()
     root.destroy()
 
 
@@ -107,7 +107,7 @@ def test_find_in_files(app):
     assert panel.status.cget("text") == "6 in 2 files"
     readme = tree.get_children(tree.get_children()[0])[0]
     panel._open(readme)
-    editor = app._current_editor()
+    editor = app.current_editor()
     assert editor.path == folder / "README.md" and editor.code.text.get("sel.first", "sel.last") == "Count"
 
 

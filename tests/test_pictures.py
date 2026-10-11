@@ -288,5 +288,5 @@ def test_choosing_a_picture_in_the_designer(tmp_path, monkeypatch):
         editor.undo()
         assert editor._spec(name)["picture"] == ""
     finally:
-        app.stop()
+        app.runner.stop()
         root.destroy()

@@ -101,14 +101,14 @@ class DebugSession:
         elif event == "frame" and self.paused is not None:
             self.selected = message.get("selected", self.selected)
             self.app.locals.show(message.get("locals", []))
-            self.app.watches_panel.show(self.app.watches(), message.get("watches"))
+            self.app.watches_panel.show(self.app.debug.breakpoints.watches(), message.get("watches"))
             self.app.call_stack.select(self.selected)
         elif event == "children":
             path = message.get("path") or [""]
             panel = self.app.watches_panel if path[0] == "#watch" else self.app.locals
             panel.add_children(path, message.get("items", []))
         elif event == "watch_values" and self.paused is None and not self.app.in_break_mode:
-            watches = self.app.watches()
+            watches = self.app.debug.breakpoints.watches()
             values = message.get("watches", [])
             if [v["name"] for v in values] == [w["expression"] for w in watches]:  # (not from before a change)
                 self.app.watches_panel.show(watches, values)
@@ -127,9 +127,9 @@ class DebugSession:
         app = self.app
         self.paused = message
         self.selected = message.get("selected", 0)
-        app.show_break_mode(True)
+        app.debug.show_break_mode(True)
         app.locals.show(message.get("locals", []))
-        app.watches_panel.show(app.watches(), message.get("watches"))
+        app.watches_panel.show(app.debug.breakpoints.watches(), message.get("watches"))
         app.call_stack.show(message.get("stack", []), self.selected)
         if message.get("reason") == "watch":
             app.immediate.write(f"--- Watch: {message.get('message', '')} ---\n")
@@ -158,9 +158,9 @@ class DebugSession:
         for editor in self.app.editors:
             editor.code.clear_paused()
         self.app.locals.clear()
-        self.app.watches_panel.show(self.app.watches())
+        self.app.watches_panel.show(self.app.debug.breakpoints.watches())
         self.app.call_stack.clear()
-        self.app.show_break_mode(False)
+        self.app.debug.show_break_mode(False)
 
     def where(self):
         """The chosen frame while paused: {file, line, function}."""
@@ -291,7 +291,7 @@ class WatchDialog(tk.Toplevel):
         self.title(title)
         self.transient(app.root)
         self.resizable(False, False)
-        self.files = app.code_files()  # {relative name: source}
+        self.files = app.files.code_files()  # {relative name: source}
         self.expression = tk.StringVar(self, watch.get("expression", ""))
         self.file = tk.StringVar(self, watch.get("file") or ALL_FILES)
         self.function = tk.StringVar(self, watch.get("function") or ALL_FUNCTIONS)
@@ -391,7 +391,7 @@ class QuickWatch(tk.Toplevel):
             ttk.Label(body, text=f"Type: {info['type']}", style="Note.TLabel").pack(anchor="w", pady=(4, 0))
         buttons = ttk.Frame(body)
         buttons.pack(anchor="e", pady=(12, 0))
-        ttk.Button(buttons, text="Add Watch", command=lambda: (self.destroy(), app.add_watch(expression))).pack(
+        ttk.Button(buttons, text="Add Watch", command=lambda: (self.destroy(), app.debug.add_watch(expression))).pack(
             side=tk.LEFT)
         ttk.Button(buttons, text="Close", command=self.destroy).pack(side=tk.LEFT, padx=(4, 0))
         self.bind("<Escape>", lambda e: self.destroy())

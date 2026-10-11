@@ -235,5 +235,5 @@ def test_designing_a_canvas(tmp_path, monkeypatch):
         editor.goto_handler("Canvas1", "click")
         assert "def Canvas1_click(self, x, y, shape):" in editor.code.get_source()
     finally:
-        app.stop()
+        app.runner.stop()
         root.destroy()

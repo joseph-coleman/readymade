@@ -279,22 +279,22 @@ def app(tmp_path):
     root = tk.Tk()
     app = App(root, tmp_path / "Shop")
     yield app
-    app.stop()
+    app.runner.stop()
     root.destroy()
 
 
 def test_choosing_the_program_icon(app, tmp_path, monkeypatch):
     chosen = write_png(tmp_path / "Downloads" / "logo.png")
     monkeypatch.setattr(filedialog, "askopenfilename", lambda **kw: str(chosen))
-    app.choose_icon()
+    app.files.choose_icon()
     assert app.project.setting("icon") == "images/logo.png"
     assert (app.project.folder / "images" / "logo.png").exists()
-    app.set_icon("images/app.ico")
+    app.files.set_icon("images/app.ico")
     assert "need the Pillow library" in app.immediate.output.get("1.0", "end")
-    app.set_icon(None)
+    app.files.set_icon(None)
     assert app.project.setting("icon") is None
     monkeypatch.setattr(filedialog, "askopenfilename", lambda **kw: "")  # canceled: no change
-    app.choose_icon()
+    app.files.choose_icon()
     assert app.project.setting("icon") is None
 
 
