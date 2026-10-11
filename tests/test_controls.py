@@ -230,3 +230,118 @@ def test_scrollbars_are_ignored_on_single_line_boxes(tmp_path, closing):
 def test_unknown_scrollbars_value_is_rejected(tmp_path):
     with pytest.raises(ValueError, match="none, horizontal, vertical, both"):
         make_form(tmp_path, ("TextBox", "TextBox1", None, {"multiline": True, "scrollbars": "sideways"}))
+
+
+# ----- ScrollBar, Slider, UpDown, ProgressBar: a whole number from min to max -----
+
+@pytest.mark.parametrize("type_name", ["ScrollBar", "Slider", "UpDown", "ProgressBar"])
+def test_ranged_values(tmp_path, closing, type_name):
+    form = make_form(tmp_path, (type_name, "It", None, {"min": 10, "max": 20, "value": 15}))
+    closing(form)
+    it = form.It
+    assert (it.min, it.max, it.value) == (10, 20, 15)
+    it.value = 20.0  # (a whole number, even as a float)
+    assert it.value == 20 and isinstance(it.value, int)
+    for bad in (21, 9, 12.5, "lots", True):
+        with pytest.raises(ValueError):
+            it.value = bad
+    it.max = 12  # the value comes along
+    assert it.value == 12
+    it.min = 12
+    with pytest.raises(ValueError, match="min can't be more than max"):
+        it.min = 13
+    with pytest.raises(ValueError, match="max can't be less than min"):
+        it.max = 11
+
+
+def test_change_runs_for_code_and_users(tmp_path, closing):
+    changes = []
+
+    class Form1(Form):
+        def ScrollBar1_change(self):
+            changes.append(("scroll", self.ScrollBar1.value))
+
+        def Slider1_change(self):
+            changes.append(("slide", self.Slider1.value))
+
+        def UpDown1_change(self):
+            changes.append(("updown", self.UpDown1.value))
+
+    form = make_form(tmp_path, ("ScrollBar", "ScrollBar1", None, {"max": 50, "smallchange": 2, "largechange": 10}),
+                     ("Slider", "Slider1", None, {"max": 10}), ("UpDown", "UpDown1", None, {"max": 5, "increment": 2}),
+                     cls=Form1)
+    closing(form)
+    form.ScrollBar1.value = 3
+    form.ScrollBar1.value = 3  # (no change, so no event)
+    bar = form.ScrollBar1.widget
+    pump(form, 0.05)
+    x = next(x for x in range(bar.winfo_width() - 1, 0, -1) if "rightarrow" in bar.identify(x, 8))
+    bar.event_generate("<ButtonPress-1>", x=x, y=8)  # its right arrow, clicked
+    bar.event_generate("<ButtonRelease-1>", x=x, y=8)
+    form.ScrollBar1._scrolled("scroll", -1, "pages")  # a click beside the thumb
+    form.ScrollBar1._scrolled("moveto", "0.5")  # the thumb dragged halfway: of 0..50 plus a page of 10
+    assert [v for kind, v in changes if kind == "scroll"] == [3, 5, 0, 30]
+    form.Slider1.widget.set(6.4)  # the knob dragged: to the nearest whole number
+    assert form.Slider1.value == 6 and float(form.Slider1.widget.get()) == 6
+    form.UpDown1.widget.event_generate("<<Increment>>")  # its up arrow
+    pump(form, 0.05)
+    assert form.UpDown1.value == 2 and form.UpDown1.widget.get() == "2"
+    form.UpDown1.widget.delete(0, "end")
+    form.UpDown1.widget.insert(0, "4")  # typed
+    assert form.UpDown1.value == 4
+    form.UpDown1.widget.insert("end", "9")  # "49": out of range, so the value stays
+    assert form.UpDown1.value == 4
+    assert ("slide", 6) in changes and [v for kind, v in changes if kind == "updown"] == [2, 4]
+
+
+def test_slider_keys(tmp_path, closing):
+    form = make_form(tmp_path, ("Slider", "Slider1", None, {"max": 20, "value": 10, "smallchange": 2,
+                                                             "largechange": 5}))
+    closing(form)
+    slider = form.Slider1
+    slider.widget.focus_force()
+    pump(form, 0.05)
+    for key, expected in (("Right", 12), ("Left", 10), ("Next", 15), ("Prior", 10), ("End", 20), ("Home", 0)):
+        slider.widget.event_generate(f"<KeyPress-{key}>")
+        assert slider.value == expected, key
+    slider.enabled = False
+    slider.widget.event_generate("<KeyPress-End>")
+    assert slider.value == 0 and slider.widget.instate(["disabled"])
+
+
+def test_updown_wraps_and_shows_its_value_after_typing(tmp_path, closing):
+    form = make_form(tmp_path, ("UpDown", "UpDown1", None, {"min": 1, "max": 3, "value": 3, "wrap": True}),
+                     ("TextBox", "TextBox1", None, {}))
+    closing(form)
+    updown = form.UpDown1
+    updown.widget.event_generate("<<Increment>>")
+    assert updown.value == 1  # round to min
+    updown.widget.focus_force()
+    pump(form, 0.05)
+    updown.widget.delete(0, "end")
+    updown.widget.insert(0, "x")
+    form.TextBox1.editor.focus_force()
+    pump(form, 0.05)
+    assert updown.widget.get() == "1"  # leaving puts back the value
+
+
+def test_progressbar(tmp_path, closing):
+    form = make_form(tmp_path, ("ProgressBar", "ProgressBar1", None, {"min": 100, "max": 300, "value": 150}))
+    closing(form)
+    bar = form.ProgressBar1
+    assert (float(bar.widget.cget("maximum")), float(bar.widget.cget("value"))) == (200, 50)
+    bar.marquee = True
+    assert str(bar.widget.cget("mode")) == "indeterminate"
+    bar.marquee = False
+    assert str(bar.widget.cget("mode")) == "determinate" and float(bar.widget.cget("value")) == 50
+
+
+def test_orientation_is_set_in_the_designer(tmp_path, closing):
+    form = make_form(tmp_path, ("Slider", "Slider1", None, {"orientation": "vertical", "width": 24, "height": 160}),
+                     ("ProgressBar", "ProgressBar1", None, {"orientation": "vertical"}))
+    closing(form)
+    assert str(form.Slider1.widget.cget("orient")) == "vertical"
+    assert str(form.ProgressBar1.widget.cget("orient")) == "vertical"
+    form.Slider1.orientation = "vertical"  # (no change)
+    with pytest.raises(AttributeError, match="designer"):
+        form.Slider1.orientation = "horizontal"

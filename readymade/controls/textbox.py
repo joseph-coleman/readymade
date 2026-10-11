@@ -35,6 +35,12 @@ class TextBox(BackColor, ForeColor, Font, Aligned, TabStop, Cursor, Tooltip, Anc
             raise ValueError(f"scrollbars must be one of: {', '.join(SCROLLBARS)}")
         super().__init__(parent, spec, design, folder)
 
+    @classmethod
+    def designer_changed(cls, spec, prop):
+        super().designer_changed(spec, prop)
+        if prop == "multiline" and not spec.get("multiline") and "\n" in spec.get("text", ""):
+            spec["text"] = " ".join(spec["text"].splitlines())  # a single line can't hold line breaks
+
     def create_widget(self, parent):
         self._readonly = self._password = False
         self._maxlength = 0

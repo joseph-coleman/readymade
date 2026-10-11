@@ -127,9 +127,22 @@ _STANDARD_STYLES = (
 )
 
 
+# The form's ttk controls in the designer keep the light look (their Preview. styles): they show
+# the running program, not the IDE.
+_PREVIEWED = ("TCombobox", "TSpinbox", "Horizontal.TScrollbar", "Vertical.TScrollbar", "Horizontal.TScale",
+              "Vertical.TScale", "Horizontal.TProgressbar", "Vertical.TProgressbar")
+_PREVIEW_COLORS = ("background", "foreground", "fieldbackground", "troughcolor", "bordercolor", "lightcolor",
+                   "darkcolor", "arrowcolor", "insertcolor")
+_ELEMENT_DEFAULTS = {"fieldbackground": "white", "arrowcolor": "black", "insertcolor": "black"}  # (unset in clam's styles)
+
+
 def _create_dark_theme(style, c, light):
-    # The form's ComboBoxes in the designer keep the light look: they show the running program.
-    preview = {key: style.lookup("TCombobox", key) for key in ("fieldbackground", "foreground", "background", "arrowcolor")}
+    previews = {f"Preview.{name}": {"configure": {key: value for key in _PREVIEW_COLORS
+                                                  if (value := str(style.lookup(name, key)) or _ELEMENT_DEFAULTS.get(key))}}
+                for name in _PREVIEWED}  # (the light theme is the one in use here)
+    combo = previews["Preview.TCombobox"]["configure"]  # (and as it looks when it can't be typed in)
+    previews["Preview.TCombobox"]["map"] = {key: [("readonly", combo[key])] for key in ("fieldbackground", "foreground")
+                                            if key in combo}
     copied = {name: {"configure": style.configure(name) or {}, "map": style.map(name) or {}}
               for name in _STANDARD_STYLES}  # (the light theme is the one in use here)
     style.theme_create(DARK_TTK, parent=light, settings=copied)
@@ -147,9 +160,6 @@ def _create_dark_theme(style, c, light):
         "TCombobox": {"configure": {"fieldbackground": c.field, "background": c.button},
                       "map": {"fieldbackground": [("readonly", c.field)], "foreground": [("readonly", c.text)],
                               "background": [("active", c.button_active)]}},
-        "Preview.TCombobox": {"configure": preview,
-                              "map": {"fieldbackground": [("readonly", preview["fieldbackground"])],
-                                      "foreground": [("readonly", preview["foreground"])]}},
         "Treeview": {"configure": {"background": c.field, "fieldbackground": c.field, "foreground": c.text},
                      "map": {"background": [("selected", c.selection)], "foreground": [("selected", c.text)]}},
         "Treeview.Heading": {"configure": {"background": c.button, "foreground": c.text},
@@ -159,6 +169,7 @@ def _create_dark_theme(style, c, light):
                           "map": {"background": [("selected", c.window), ("active", c.button_active)]}},
         "TScrollbar": {"configure": {"background": c.button, "troughcolor": c.trough, "bordercolor": c.border},
                        "map": {"background": [("active", c.button_active)]}},
+        **previews,
         "TCheckbutton": {"configure": {"indicatorbackground": c.field, "indicatorforeground": c.text},
                          "map": {"background": [("active", c.window)]}},
         "TRadiobutton": {"configure": {"indicatorbackground": c.field, "indicatorforeground": c.text},

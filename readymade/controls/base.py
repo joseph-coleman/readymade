@@ -199,6 +199,11 @@ class Control:
             spec["text"] = name
         return spec
 
+    @classmethod
+    def designer_changed(cls, spec, prop):
+        """The designer changed prop in spec (a .form control entry): tidy the others to suit,
+        like a value that must stay within a new max. Raise ValueError to refuse the change."""
+
     def create_widget(self, parent):
         raise NotImplementedError
 

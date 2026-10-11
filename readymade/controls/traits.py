@@ -8,8 +8,10 @@ import tkinter as tk
 from readymade import appearance, layout, menus
 
 
+ORIENTATIONS = ("horizontal", "vertical")
 LOOK_CHOICES = {"alignment": appearance.ALIGNMENTS, "valignment": appearance.VALIGNMENTS,
-                "cursor": tuple(appearance.CURSORS), "anchor": layout.CHOICES}
+                "cursor": tuple(appearance.CURSORS), "anchor": layout.CHOICES,
+                "orientation": ORIENTATIONS}
 
 
 class BackColor:
@@ -260,3 +262,126 @@ class WidgetText:
             return ""
         shown, underline = menus.parse_text(self.text)
         return shown[underline].upper() if 0 <= underline < len(shown) else ""
+
+
+class Ranged:
+    """min, max and value properties: a whole number from min to max (a ProgressBar's,
+    Slider's, UpDown's or ScrollBar's). A control lists them in its extra_props, with its
+    defaults, shows them in _show_value(), and calls _user_value() when the user changes it."""
+
+    _min: int
+    _max: int
+    _value: int
+
+    def __init__(self, parent, spec, design=False, folder=None):
+        # (Set together first, so any order of setting them below is within range.)
+        self._min, self._max = (_whole(spec.get(p, self.extra_props[p]), p) for p in ("min", "max"))
+        if self._min > self._max:
+            raise ValueError(f"min ({self._min}) can't be more than max ({self._max})")
+        self._value = min(max(_whole(spec.get("value", self.extra_props["value"]), "value"), self._min), self._max)
+        self._on_change = []
+        super().__init__(parent, spec, design, folder)
+
+    @classmethod
+    def designer_changed(cls, spec, prop):
+        super().designer_changed(spec, prop)
+        low, high = (spec.get(p, cls.extra_props[p]) for p in ("min", "max"))
+        if low > high:
+            raise ValueError(f"min ({low}) can't be more than max ({high})")
+        if prop != "value":  # a new min or max takes the value along, as in VB
+            spec["value"] = min(max(spec.get("value", cls.extra_props["value"]), low), high)
+
+    @property
+    def min(self):
+        """The smallest value."""
+        return self._min
+
+    @min.setter
+    def min(self, value):
+        value = _whole(value, "min")
+        if value > self._max:
+            raise ValueError(f"min can't be more than max ({self._max})")
+        self._min = value
+        self._set_value(max(self._value, value))
+
+    @property
+    def max(self):
+        """The largest value."""
+        return self._max
+
+    @max.setter
+    def max(self, value):
+        value = _whole(value, "max")
+        if value < self._min:
+            raise ValueError(f"max can't be less than min ({self._min})")
+        self._max = value
+        self._set_value(min(self._value, value))
+
+    @property
+    def value(self):
+        """The number it shows, from min to max."""
+        return self._value
+
+    @value.setter
+    def value(self, value):
+        value = _whole(value, "value")
+        if not self._min <= value <= self._max:
+            raise ValueError(f"value must be from {self._min} to {self._max}, not {value}")
+        self._set_value(value)
+
+    def _set_value(self, value):
+        changed = value != self._value
+        self._value = value
+        self._show_value()
+        if changed:
+            for handler in self._on_change:
+                handler()
+
+    def _user_value(self, value):
+        """The user moved it: value, kept within min and max."""
+        self._set_value(min(max(int(round(value)), self._min), self._max))
+
+    def _show_value(self):
+        raise NotImplementedError
+
+    def bind_event(self, event, handler):
+        if event == "change":
+            self._on_change.append(handler)
+        else:
+            super().bind_event(event, handler)
+
+
+def _whole(value, name):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != int(value):
+        try:
+            value = int(str(value).strip())
+        except ValueError:
+            raise ValueError(f"{name} must be a whole number, not {value!r}") from None
+    return int(value)
+
+
+class Oriented:
+    """An orientation property, set in the designer: "horizontal" or "vertical"."""
+
+    def __init__(self, parent, spec, design=False, folder=None):
+        self._orientation = spec.get("orientation", "horizontal")
+        if self._orientation not in ORIENTATIONS:
+            raise ValueError(f"orientation must be horizontal or vertical, not {self._orientation!r}")
+        super().__init__(parent, spec, design, folder)
+
+    @classmethod
+    def designer_changed(cls, spec, prop):
+        super().designer_changed(spec, prop)
+        if prop == "orientation" and "width" in spec:
+            # Turned on its side: long the other way (a 160 x 20 bar becomes 20 x 160).
+            if (spec["orientation"] == "vertical") == (spec["width"] > spec["height"]):
+                spec["width"], spec["height"] = spec["height"], spec["width"]
+
+    @property
+    def orientation(self):
+        """Whether it lies "horizontal" or stands "vertical". Set in the designer."""
+        return self._orientation
+
+    @orientation.setter
+    def orientation(self, value):
+        self._design_only("orientation", self._orientation, value)

@@ -378,13 +378,14 @@ class FormEditor(Editor):
                 if prop == "tabindex":
                     self._order_tabs(obj, value)  # the others make room
                     value = spec["tabindex"]
+                before = dict(spec)
                 spec[prop] = value
-                if prop == "multiline" and not value and "\n" in spec.get("text", ""):
-                    spec["text"] = " ".join(spec["text"].splitlines())  # a single line can't hold line breaks
                 try:
+                    REGISTRY[spec["type"]].designer_changed(spec, prop)  # (it may tidy the others to suit)
                     self.surface.refresh_control(obj)
                 except ValueError:  # the control refused it (like a backcolor that isn't a color)
-                    spec[prop] = current
+                    spec.clear()
+                    spec.update(before)
                     self.surface.refresh_control(obj)
                     raise
                 if prop in _TIDIED:  # keep what the control made of it: "auto,250" is saved as "auto, 250"

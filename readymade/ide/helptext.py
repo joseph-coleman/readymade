@@ -33,7 +33,7 @@ EVENTS = {
     "gotfocus": "it gets the keyboard focus",
     "lostfocus": "it loses the keyboard focus",
     "keypress": "a key is pressed while it has the focus; key is the character typed, or a name like \"Enter\", \"Esc\" or \"Ctrl+S\"",
-    "change": "its contents change",
+    "change": "its contents or value change",
     "timer": "interval milliseconds have passed",
     "load": "the form is loaded, before it's first shown",
     "unload": "the form is closing; return True to keep it open",

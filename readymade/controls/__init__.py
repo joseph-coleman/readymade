@@ -8,8 +8,8 @@ available everywhere.
 
     base.py     Control, Event, the registry, and functions for the form and designer
     traits.py   properties controls share, as mixins: BackColor, Font, TabStop, Anchored...
-    label.py, textbox.py, frame.py, buttons.py, lists.py, image.py, canvas.py, grid.py,
-    timer.py    the controls
+    label.py, textbox.py, frame.py, buttons.py, lists.py, ranges.py, image.py, canvas.py,
+    grid.py, timer.py    the controls
 
 A control class lists the traits it has before Control, and registers itself:
 
@@ -26,7 +26,7 @@ from __future__ import annotations
 from readymade.controls.base import (REGISTRY, Control, Event, control_of, create, focus_widget, grid_of,
                                      option_group, register, repaint_inside, show_as_default, tab_numbers)
 from readymade.controls.traits import (GRID_CELL, LOOK_CHOICES, Aligned, Anchored, BackColor, Cursor, Font,
-                                       ForeColor, TabIndex, TabStop, Tooltip, VAligned, WidgetText)
+                                       ForeColor, Oriented, Ranged, TabIndex, TabStop, Tooltip, VAligned, WidgetText)
 
 # isort: off
 # (The order they register in is the Toolbox's order.)
@@ -35,6 +35,7 @@ from readymade.controls.textbox import TextBox
 from readymade.controls.frame import Frame
 from readymade.controls.buttons import Button, CheckBox, OptionButton
 from readymade.controls.lists import ComboBox, ListBox
+from readymade.controls.ranges import ProgressBar, ScrollBar, Slider, UpDown
 from readymade.controls.image import Image
 from readymade.controls.canvas import Canvas
 from readymade.controls.grid import Grid
@@ -45,7 +46,7 @@ __all__ = [
     "REGISTRY", "Control", "Event", "control_of", "create", "focus_widget", "grid_of", "option_group", "register",
     "repaint_inside", "show_as_default", "tab_numbers",
     "GRID_CELL", "LOOK_CHOICES", "Aligned", "Anchored", "BackColor", "Cursor", "Font", "ForeColor", "TabIndex",
-    "TabStop", "Tooltip", "VAligned", "WidgetText",
-    "Label", "TextBox", "Frame", "Button", "CheckBox", "OptionButton", "ComboBox", "ListBox", "Image", "Canvas",
-    "Grid", "Timer",
+    "Oriented", "Ranged", "TabStop", "Tooltip", "VAligned", "WidgetText",
+    "Label", "TextBox", "Frame", "Button", "CheckBox", "OptionButton", "ComboBox", "ListBox", "ScrollBar", "Slider",
+    "UpDown", "ProgressBar", "Image", "Canvas", "Grid", "Timer",
 ]

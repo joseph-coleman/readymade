@@ -237,6 +237,30 @@ def test_scrollbars_choice_in_the_designer(app):
     assert all(w in control.design_widgets() for w in control.widget.winfo_children())
 
 
+def test_range_controls_in_the_designer(app):
+    form = app.form
+    for type_name in ("ScrollBar", "Slider", "UpDown", "ProgressBar"):
+        form.add_control(type_name, 8, 8)
+    assert form.set_property("Slider1", "value", "8") == "Slider1"
+    form.set_property("Slider1", "max", "5")  # the value comes along, as in VB
+    assert form.design.control("Slider1")["value"] == 5 and form.surface.controls["Slider1"].value == 5
+    with pytest.raises(AssertionError, match=r"min \(9\) can't be more than max \(5\)"):  # (the error box)
+        form.set_property("Slider1", "min", "9")
+    assert (form.design.control("Slider1")["min"], form.design.control("Slider1")["value"]) == (0, 5)
+
+    assert form.choices_for("ProgressBar1", "orientation") == ("horizontal", "vertical")
+    form.set_property("ProgressBar1", "orientation", "vertical")  # turned on its side
+    spec = form.design.control("ProgressBar1")
+    assert (spec["width"], spec["height"]) == (20, 160)
+    assert str(form.surface.controls["ProgressBar1"].widget.cget("orient")) == "vertical"
+    form.undo()
+    spec = form.design.control("ProgressBar1")
+    assert (spec["orientation"], spec["width"], spec["height"]) == ("horizontal", 160, 20)
+    assert app.save()
+    reloaded = formfile.load(form.path)
+    assert reloaded.control("Slider1")["value"] == 5 and reloaded.control("UpDown1")["max"] == 100
+
+
 def _row(app, prop):
     labels = {w.cget("text"): w for w in app.properties.grid_frame.grid_slaves(column=0)}
     return labels[prop].grid_info()["row"]
