@@ -162,6 +162,8 @@ def home(platform=sys.platform):
         f"  same function. F10 or {step_into} with nothing running starts it, pausing as its first event starts.",
         "  Right-click a line number for a breakpoint's condition (stop when total > 100) or hit",
         "  count (stop on the 5th time); those breakpoints show a +.",
+        "  While paused, rest the mouse on a name to see its value. View > Breakpoints lists them",
+        "  all: click a dot there to switch one off (hollow) without losing it.",
         "  Debug > Add Watch: an expression to watch in a function or file, which can break the",
         "  program when it becomes true or changes. Shift+F9 shows a value at once.",
         "  View > Watches shows them while the program runs too; a function's watch shows its",

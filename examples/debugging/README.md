@@ -62,14 +62,21 @@ Try it again with a bad number: type `free` as the price and click **Add**.
    click one to see its variables and its place in the code.
 5. Press **F10** a few times to go around the loop, watching `subtotal`, `item` and
    `cost` change in **Locals**. Open `basket` there to see the items in it.
-6. While it's paused, try the **Immediate window**: `? subtotal`, `? item["name"]`,
+6. While it's paused, rest the mouse on `subtotal` in the code: a tip shows its value.
+   Or try the **Immediate window**: `? subtotal`, `? item["name"]`,
    `? [i["name"] for i in basket]`.
 7. Put the cursor on `taxed = (subtotal - discount) * (1 + TAX_RATE)` and press
    **Ctrl+F10** to run to it.
 8. Press **Shift+F11** to step out, back to `show_total`, then **F5** to continue.
 
 Breakpoints are remembered with the project (on this computer), and move with the code
-as you edit it. **Ctrl+Shift+F9** clears them all.
+as you edit it. **View > Breakpoints** lists them all: click one to go to it, or click its
+dot to switch it off without losing it (it turns hollow; click again to switch it back
+on). **Ctrl+Shift+F9** clears them all.
+
+Changing the code while the program runs is fine, but the program carries on with the
+code it started with; a note above the code says so. Your changes count from the next
+run.
 
 ## 3. A breakpoint with a condition, or a hit count
 

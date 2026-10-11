@@ -1,5 +1,5 @@
 """The IDE's side panels: Toolbox, Properties, and the Immediate, Problems and Help tabs,
-and while a program is paused, Locals, Watches and Call Stack."""
+and while a program is paused, Locals, Watches, Call Stack and Breakpoints."""
 
 from __future__ import annotations
 
@@ -775,3 +775,79 @@ class CallStackPanel(ttk.Frame):
         if row in self._indexes:
             self._on_select(self._indexes[row])
         return "break"
+
+
+def describe_breakpoint(settings):
+    """A breakpoint's condition and hit count, for the Breakpoints window."""
+    said = [f"when {settings['condition']}"] if settings.get("condition") else []
+    hits = settings.get("hits") or 1
+    said += {"=": [f"on hit {hits}"], ">=": [f"from hit {hits} on"], "%": [f"every {hits} hits"]}.get(
+        settings.get("hit_mode", ""), [])
+    return ", ".join(said)
+
+
+class BreakpointsPanel(ttk.Frame):
+    """Every breakpoint in the project. Clicking its dot switches one off and on (it stays,
+    hollow and grayed, to switch back on); clicking elsewhere in a row goes to it; Enter or a double-click edits its condition;
+    Delete removes it. The callbacks each get (file, line), file relative to the project."""
+
+    ON, OFF = "\u25cf", "\u25cb"  # ● ○, as the line numbers show them
+
+    def __init__(self, master, on_go, on_switch, on_condition, on_remove, on_remove_all):
+        super().__init__(master, padding=(4, 2))
+        self._on = {"go": on_go, "switch": on_switch, "condition": on_condition, "remove": on_remove}
+        self.tree = _tree(self, (("on", "", 30, False), ("file", "File", 110, False), ("line", "Line", 50, False),
+                                 ("code", "Code", 240, True), ("when", "Condition", 180, True)), "Debug.Treeview")
+        self.tree.column("on", anchor="center")
+        self._places = {}  # row -> (file, line)
+        self.tree.bind("<ButtonRelease-1>", self._clicked)
+        self.tree.bind("<Double-Button-1>", lambda e: self._do("condition", self.tree.identify_row(e.y)))
+        self.tree.bind("<Return>", lambda e: self._do("condition", self.tree.focus()))
+        self.tree.bind("<Delete>", lambda e: self._do("remove", self.tree.focus()))
+        self.tree.bind("<space>", lambda e: self._do("switch", self.tree.focus()))
+        self.menu = tk.Menu(self, tearoff=False)
+        for label, action in (("Go to Breakpoint", "go"), ("Switch Off or On", "switch"),
+                              ("Breakpoint Condition...", "condition"), ("Remove Breakpoint", "remove")):
+            self.menu.add_command(label=label, command=lambda a=action: self._do(a, self.tree.focus()))
+        self.menu.add_separator()
+        self.menu.add_command(label="Remove All Breakpoints", command=on_remove_all)
+        for sequence in menus.context_clicks(self.tree):
+            self.tree.bind(sequence, self._popup)
+
+    def apply_theme(self, theme):
+        _style_tree(self, "Debug.Treeview", theme)
+        self.tree.tag_configure("off", foreground=theme.number)
+
+    def show(self, rows):
+        """rows: [(file, line, the line's code, settings)], settings as CodeView.breakpoints gives them."""
+        chosen = self._places.get(self.tree.focus())
+        self.tree.delete(*self.tree.get_children())
+        self._places = {}
+        for file, line, code, settings in rows:
+            off = bool(settings.get("disabled"))
+            row = self.tree.insert("", tk.END, values=(self.OFF if off else self.ON, file, line, code,
+                                                        describe_breakpoint(settings)), tags=("off",) if off else ())
+            self._places[row] = (file, line)
+            if (file, line) == chosen:
+                self.tree.focus(row)
+                self.tree.selection_set(row)
+
+    def _clicked(self, e):
+        row = self.tree.identify_row(e.y)
+        if row:
+            self._do("switch" if self.tree.identify_column(e.x) == "#1" else "go", row)
+
+    def _do(self, action, row):
+        if row in self._places:
+            self._on[action](*self._places[row])
+        return "break"
+
+    def _popup(self, e):
+        row = self.tree.identify_row(e.y)
+        if row:
+            self.tree.focus(row)
+            self.tree.selection_set(row)
+        on = tk.NORMAL if row in self._places else tk.DISABLED
+        for index in range(4):
+            self.menu.entryconfigure(index, state=on)
+        self.menu.tk_popup(e.x_root, e.y_root)

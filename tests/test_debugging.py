@@ -369,7 +369,8 @@ def test_breakpoint_conditions(app, shop):
     menu = app._gutter_menu(app.form, line, type("Click", (), {"x_root": 0, "y_root": 0})())
     menu.unpost()
     labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) != "separator"]
-    assert labels == ["Remove Breakpoint", "Breakpoint Condition...", "Run to Here", "Set Next Statement"]
+    assert labels == ["Remove Breakpoint", "Switch Breakpoint Off", "Breakpoint Condition...", "Run to Here",
+                      "Set Next Statement"]
     assert "--- Ended (exit code 0) ---" in finish(app)
     app.close_document(app.form)
     code = app.open_form("Form1", "code").code  # remembered, condition and all
@@ -382,3 +383,98 @@ def test_step_into_has_a_key_a_mac_leaves_alone(app):
     for shortcut in ("F11", "Ctrl+F11"):  # macOS takes F11 for Show Desktop; Ctrl is ⌘ there
         assert app.root.bind(menus.shortcut_sequence(shortcut))
     assert menus.accelerator("Ctrl+F11", platform="darwin") == "Command-F11"
+
+
+# ----- edits during a run, values under the mouse, the Breakpoints tab -----
+
+def test_a_note_when_code_changes_during_a_run(app, shop):
+    shop.text.insert("end", "\n# a change\n")
+    app.root.update()
+    assert not shop.note_bar.winfo_ismapped()  # (not running: nothing to say)
+    app.run()
+    assert wait_for(app, lambda: app.session is not None and app.root.title().endswith("[run]"))
+    shop.text.insert("end", "# another\n")
+    assert wait_for(app, lambda: shop.note_bar.winfo_ismapped())
+    assert "changes take effect the next time it runs" in shop.note_bar.cget("text")
+    assert "--- Ended (exit code 0) ---" in finish(app)
+    app.root.update()
+    assert not shop.note_bar.winfo_ismapped()
+
+
+def test_the_name_under_the_mouse(app, shop):
+    def at(line_text, word, offset=1):
+        line = LINES[line_text]
+        column = shop.text.get(f"{line}.0", f"{line}.end").index(word) + offset
+        shop.text.see(f"{line}.{column}")
+        app.root.update()
+        x, y, w, h = shop.text.bbox(f"{line}.{column}")
+        return shop.expression_at(x + 1, y + h // 2)
+
+    assert at("price = add_tax(price)", "add_tax") == "add_tax"
+    assert at("self.text = str(price)", "text") == "self.text"  # with the dotted names before it
+    assert at("self.text = str(per_jar)", "self") == "self"
+    assert at('per_jar = basket["tea"] / basket["jam"]', '"tea"') == ""  # in a string
+    assert at("def Form_load(self):", "def") == ""  # a keyword
+    assert at("tax = price // 10", "10") == ""  # a number
+
+
+def test_values_under_the_mouse_while_paused(app, shop):
+    shop.toggle_breakpoint(LINES["tax = price // 10"])
+    app.run()
+    assert paused_at(app, LINES["tax = price // 10"])
+    app._hovered(shop, "price", 100, 100)
+    assert wait_for(app, lambda: shop._tip is not None)
+    label = shop._tip[0].winfo_children()[0]
+    assert label.cget("text") == "price = 100"
+    app._hovered(shop, "not_a_name_here", 100, 100)  # nothing shows for a name the function hasn't got
+    app.root.update()
+    assert wait_for(app, lambda: app.session._tip is None) and shop._tip[1] == "price"
+    app.run()
+    assert wait_for(app, lambda: not app.in_break_mode) and shop._tip is None  # going on hides it
+    assert "--- Ended (exit code 0) ---" in finish(app)
+
+
+def test_the_breakpoints_tab(app, shop):
+    from readymade.ide.panels import BreakpointsPanel
+
+    first, second = LINES["tax = price // 10"], LINES["price = add_tax(price)"]
+    shop.toggle_breakpoint(first)
+    shop.set_breakpoint_settings(second, {"condition": "price > 1000", "hit_mode": ">=", "hits": 2})
+
+    def rows():
+        tree = app.breakpoints_panel.tree
+        return [tuple(tree.item(row, "values")) for row in tree.get_children()]
+
+    assert rows() == [
+        (BreakpointsPanel.ON, "Form1.py", str(first), "tax = price // 10", ""),
+        (BreakpointsPanel.ON, "Form1.py", str(second), "price = add_tax(price)", "when price > 1000, from hit 2 on"),
+    ]
+    app.switch_breakpoint("Form1.py", first)  # the box: off
+    assert rows()[0][0] == BreakpointsPanel.OFF
+    assert shop.breakpoint_settings(first) == {"disabled": True} and shop.breakpoint_lines() == [first, second]
+    assert app._breakpoint_files() == {str(app.project.folder / "Form1.py"): [
+        {"line": second, "condition": "price > 1000", "hit_mode": ">=", "hits": 2}]}  # (the program never sees it)
+    app.run()
+    app.immediate_line("? form.text")  # it ran through: no stop at the switched-off breakpoint
+    assert wait_for(app, lambda: "\n110\n" in output(app))
+    assert "--- Ended (exit code 0) ---" in finish(app)
+
+    shop.text.insert("1.0", "# moved\n")  # rows follow the code as it moves
+    shop._changed()
+    assert [row[2] for row in rows()] == [str(first + 1), str(second + 1)]
+    app.save()
+    app.close_document(app.form)  # a file that isn't open is changed where it's remembered
+    app.switch_breakpoint("Form1.py", first + 1)
+    app._change_breakpoint("Form1.py", second + 1, None)
+    assert app.project.local_settings()["breakpoints"] == {"Form1.py": [first + 1]}
+    assert rows() == [(BreakpointsPanel.ON, "Form1.py", str(first + 1), "tax = price // 10", "")]
+    app.go_to_breakpoint("Form1.py", first + 1)  # opens the code there
+    assert app.form.code.text.index("insert") == f"{first + 1}.0"
+
+
+def test_breakpoints_stay_with_the_saved_code_when_changes_are_thrown_away(app, shop):
+    line = LINES["tax = price // 10"]
+    shop.toggle_breakpoint(line)
+    shop.text.insert("1.0", "\n\n")  # not saved
+    app.close_document(app.form, ask=False)  # (thrown away)
+    assert app.project.local_settings()["breakpoints"] == {"Form1.py": [line]}

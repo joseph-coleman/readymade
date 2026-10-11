@@ -28,8 +28,8 @@ from readymade.ide.editors import FormEditor, ModuleEditor, ViewerEditor, bring_
 from readymade.ide.linting import Linter
 from readymade.ide.menueditor import MenuEditor
 from readymade.ide import helptext
-from readymade.ide.panels import (CallStackPanel, HelpPanel, ImmediateWindow, LocalsPanel, ProblemsPanel,
-                                  ProjectExplorer, PropertiesPanel, Toolbox, WatchesPanel)
+from readymade.ide.panels import (BreakpointsPanel, CallStackPanel, HelpPanel, ImmediateWindow, LocalsPanel,
+                                  ProblemsPanel, ProjectExplorer, PropertiesPanel, Toolbox, WatchesPanel)
 from readymade.ide import options
 from readymade.ide.tooldialog import formatting_dialog, linting_dialog
 from readymade.ide.debugging import STEPS, BreakpointDialog, DebugSession, WatchDialog, function_at
@@ -107,6 +107,12 @@ class App:
         self.debug_tabs.add(self.locals, text="Locals")
         self.debug_tabs.add(self.watches_panel, text="Watches")
         self.debug_tabs.add(self.call_stack, text="Call Stack")
+        self.breakpoints_panel = BreakpointsPanel(
+            self.debug_tabs, on_go=self.go_to_breakpoint, on_switch=self.switch_breakpoint,
+            on_condition=lambda file, line: self.breakpoint_condition(self._open_breakpoint(file, line), line),
+            on_remove=lambda file, line: self._change_breakpoint(file, line, None),
+            on_remove_all=self.clear_breakpoints)
+        self.debug_tabs.add(self.breakpoints_panel, text="Breakpoints")
         self.immediate = ImmediateWindow(self.bottom, on_line=self.immediate_line)
         self.problems = ProblemsPanel(self.bottom, on_open=self.go_to_problem)
         self.help = HelpPanel(self.bottom)
@@ -201,6 +207,7 @@ class App:
         view.add_command(label="Locals", command=lambda: self.show_debug_window(self.locals))
         view.add_command(label="Watches", command=lambda: self.show_debug_window(self.watches_panel))
         view.add_command(label="Call Stack", command=lambda: self.show_debug_window(self.call_stack))
+        view.add_command(label="Breakpoints", command=lambda: self.show_debug_window(self.breakpoints_panel))
         tools = tk.Menu(menubar, tearoff=False)
         tools.add_command(label="Menu Editor...", accelerator=menus.accelerator("Ctrl+E"), command=self.menu_editor)
         tools.add_separator()
@@ -269,6 +276,7 @@ class App:
             self.open_form(form)
         self.linter.check_project()
         self.watches_panel.show(self.watches())
+        self.show_breakpoints()
         self.update_title()
         return True
 
@@ -736,7 +744,10 @@ class App:
         editor.code.on_complete = lambda code, manual: self.complete(editor, manual)
         editor.code.on_goto = lambda code, index: self.go_to_definition(editor, index)
         if not getattr(editor, "read_only", False):
-            editor.code.on_change = lambda: self.linter.check(editor)  # soon after typing stops
+            # Soon after typing stops: check the code, and show the Breakpoints tab where they've moved to.
+            editor.code.on_change = lambda: (self.linter.check(editor), self.show_breakpoints())
+            editor.code.on_edited = lambda code=editor.code: self._edited(code)
+            editor.code.on_hover = lambda expression, x, y, code=editor.code: self._hovered(code, expression, x, y)
             self.linter.check(editor, saved=True)
             editor.code.on_breakpoints = self.breakpoints_changed
             editor.code.on_gutter_menu = lambda line, e, editor=editor: self._gutter_menu(editor, line, e)
@@ -766,11 +777,13 @@ class App:
                 return False
         if self.properties.app is editor:
             self.properties.attach(None)
-        self._store_breakpoints()
+        if not editor.is_dirty():  # (changes thrown away: its breakpoints stay where the saved code has them)
+            self._store_breakpoints()
         self.editors.remove(editor)
         self.documents.forget(editor.frame)
         editor.frame.destroy()
         self._tab_changed()
+        self.show_breakpoints()
         if self.project is not None:
             self.linter.check_project()  # its problems are now the saved file's
         return True
@@ -932,7 +945,19 @@ class App:
             self.session.close()
             self.session = None
         self.immediate.input_done()
+        for editor in self.editors:
+            editor.code.clear_note()  # (edits made during the run now count)
         self.update_title()
+
+    def _edited(self, code):
+        """Code changed: during a run, say the program won't see it until the next."""
+        if self.session is not None:
+            code.show_note("The program is running this code as it was when it started: "
+                           "changes take effect the next time it runs.")
+
+    def _hovered(self, code, expression, x, y):
+        if self.session is not None and self.in_break_mode:
+            self.session.ask_tip(code, expression, x, y)
 
     # ----- debugging -----
 
@@ -1038,8 +1063,9 @@ class App:
         if not editor.code.can_break_at(line):
             self.root.bell()
             return None
-        return BreakpointDialog(self, line, editor.code.breakpoint_settings(line) or {},
-                                lambda settings: editor.code.set_breakpoint_settings(line, settings))
+        current = editor.code.breakpoint_settings(line) or {}
+        return BreakpointDialog(self, line, current, lambda settings: editor.code.set_breakpoint_settings(
+            line, {**settings, "disabled": current.get("disabled", False)}))  # (switched off stays off)
 
     def set_next_statement(self, editor=None, line=None):
         """Ctrl+Shift+F10, while paused: go on from another line (the cursor's) of the paused function."""
@@ -1059,6 +1085,10 @@ class App:
         has = editor.code.breakpoint_settings(line) is not None
         menu.add_command(label="Remove Breakpoint" if has else "Add Breakpoint",
                          command=lambda: editor.code.toggle_breakpoint(line))
+        if has:
+            off = editor.code.breakpoint_settings(line).get("disabled")
+            menu.add_command(label="Switch Breakpoint On" if off else "Switch Breakpoint Off",
+                             command=lambda: self.switch_breakpoint(self._relative(editor.code_path), line))
         menu.add_command(label="Breakpoint Condition...", command=lambda: self.breakpoint_condition(editor, line))
         if self.session is not None and self.session.paused is not None and self.session.can_step():
             menu.add_separator()
@@ -1079,8 +1109,71 @@ class App:
     def breakpoints_changed(self):
         """A breakpoint was set or cleared: remember it, and tell the running program."""
         self._store_breakpoints()
+        self.show_breakpoints()
         if self.session is not None:
             self.session.send(cmd="breakpoints", breakpoints=self._breakpoint_files())
+
+    def show_breakpoints(self):
+        """Fill the Breakpoints tab: every breakpoint, with its line's code."""
+        rows = []
+        for file, items in sorted(self.breakpoints().items()):
+            editor = self._editor_for(file)
+            if editor is not None:
+                lines = editor.code.get_source().splitlines()
+            else:
+                lines = (self.project.folder / file).read_text(encoding="utf-8", errors="replace").splitlines()
+            for item in items:
+                line, settings = _breakpoint_item(item)
+                code = lines[line - 1].strip() if 0 < line <= len(lines) else ""
+                rows.append((file, line, code, settings))
+        self.breakpoints_panel.show(rows)
+
+    def _editor_for(self, file):
+        """The open editor of a project file (relative name), or None."""
+        return next((e for e in self.editors if e.code.on_breakpoints is not None
+                     and self._relative(e.code_path) == file), None)
+
+    def _open_breakpoint(self, file, line):
+        editor = self.open_code(self.project.folder / file)
+        if editor is not None:
+            editor.code.show_location(line, 0)
+        return editor
+
+    def go_to_breakpoint(self, file, line):
+        """The Breakpoints tab's choice: show its line."""
+        self._open_breakpoint(file, line)
+
+    def switch_breakpoint(self, file, line):
+        """Switch a breakpoint off (it stays, hollow, but doesn't stop the program) or back on."""
+        self._change_breakpoint(file, line, lambda settings: {**settings, "disabled": not settings.get("disabled")})
+
+    def _change_breakpoint(self, file, line, change):
+        """Change a breakpoint: change(settings) -> new settings, or with change None, remove it.
+        A file that isn't open is changed where it's remembered."""
+        editor = self._editor_for(file)
+        if editor is not None:
+            settings = editor.code.breakpoint_settings(line)
+            if settings is None:
+                return
+            if change is None:
+                editor.code.toggle_breakpoint(line)
+            else:
+                editor.code.set_breakpoint_settings(line, change(settings))
+            return
+        saved = {name: list(items) for name, items in self._saved_breakpoints().items()}
+        items = saved.get(file, [])
+        for index, item in enumerate(items):
+            at, settings = _breakpoint_item(item)
+            if at == line:
+                new = None if change is None else {k: v for k, v in change(settings).items() if v}
+                if new is None:
+                    del items[index]
+                else:
+                    items[index] = {"line": line, **new} if new else line
+                break
+        saved[file] = items
+        self.project.set_local_setting("breakpoints", {k: v for k, v in saved.items() if v} or None)
+        self.breakpoints_changed()
 
     def breakpoints(self):
         """Every breakpoint in the project: {file name (relative to the project): [line, ...]}."""
@@ -1103,8 +1196,13 @@ class App:
                 self.project.set_local_setting("breakpoints", found or None)
 
     def _breakpoint_files(self):
-        """The breakpoints as the program wants them: {full path: [line, ...]}."""
-        return {str(self.project.folder / name): lines for name, lines in self.breakpoints().items()}
+        """The breakpoints switched on, as the program wants them: {full path: [line, ...]}."""
+        found = {}
+        for name, items in self.breakpoints().items():
+            on = [item for item in items if not (isinstance(item, dict) and item.get("disabled"))]
+            if on:
+                found[str(self.project.folder / name)] = on
+        return found
 
     def watches(self):
         """The project's watches (remembered on this machine): [{expression, function, file, kind}]."""
@@ -1496,6 +1594,13 @@ class _DesignTimeConsole(code.InteractiveConsole):
     def push(self, *args, **kwargs):
         with contextlib.redirect_stdout(self.stream), contextlib.redirect_stderr(self.stream):
             return super().push(*args, **kwargs)
+
+
+def _breakpoint_item(item):
+    """A remembered breakpoint (a line, or {line, condition, ...}) as (line, settings)."""
+    if isinstance(item, dict):
+        return item["line"], {k: v for k, v in item.items() if k != "line"}
+    return item, {}
 
 
 def _pump(stream, output):

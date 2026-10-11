@@ -70,7 +70,8 @@ def apply(app):
     apply_chrome(app, chosen.chrome)
     for editor in app.editors:
         editor.code.apply_theme(chosen)
-    for panel in (app.immediate, app.help, app.problems, app.locals, app.watches_panel, app.call_stack):
+    for panel in (app.immediate, app.help, app.problems, app.locals, app.watches_panel, app.call_stack,
+                  app.breakpoints_panel):
         panel.apply_theme(chosen)
 
 

@@ -36,6 +36,8 @@ class DebugSession:
         self.paused = None  # while the program is paused: what it said ({reason, message, stack, stepping, ...})
         self.selected = 0  # the call stack frame chosen (0 is the outermost)
         self._said_ends = False
+        self._tip = None  # (id, code view, expression, x, y): the value tip asked for last
+        self._tips = 0
         threading.Thread(target=self._serve, daemon=True).start()
 
     def _serve(self):
@@ -109,6 +111,8 @@ class DebugSession:
                 self.app.watches_panel.show(watches, values)
         elif event == "note":  # e.g. why Set Next Statement couldn't
             self.app.immediate.write(f"--- {message.get('text', '')} ---\n")
+        elif event == "tip":
+            self._tip_answered(message)
         elif event == "quick":
             QuickWatch(self.app, message.get("info", {}))
 
@@ -137,6 +141,9 @@ class DebugSession:
 
     def _running(self):
         self.paused = None
+        self._tip = None
+        for editor in self.app.editors:
+            editor.code.hide_tip()
         for editor in self.app.editors:
             editor.code.clear_paused()
         self.app.locals.clear()
@@ -170,6 +177,23 @@ class DebugSession:
     def expand(self, path):
         if self.paused is not None or path[:1] == ["#watch"]:  # (watches have values while running too)
             self.send(cmd="expand", path=path)
+
+    def ask_tip(self, code, expression, x, y):
+        """The mouse rests on a name in some code: ask the paused program for its value."""
+        if self.paused is None:
+            return
+        self._tips += 1
+        self._tip = (self._tips, code, expression, x, y)
+        self.send(cmd="tip", id=self._tips, expression=expression)
+
+    def _tip_answered(self, message):
+        if self._tip is None or message.get("id") != self._tip[0] or self.paused is None:
+            return  # the mouse moved on, or the program went on
+        _, code, expression, x, y = self._tip
+        self._tip = None
+        info = message.get("info", {})
+        if not info.get("failed"):  # (a name the paused function doesn't have shows nothing)
+            code.show_tip(expression, f"{expression} = {info.get('value', '')}", x, y)
 
     def can_step(self):
         """Stepping is possible when paused, except at an error (the failed line can't go on)."""

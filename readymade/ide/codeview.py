@@ -7,6 +7,7 @@ a handler are marked with a check.
 
 from __future__ import annotations
 
+import keyword
 import re
 import tkinter as tk
 from tkinter import font as tkfont
@@ -188,6 +189,10 @@ class CodeView(ttk.Frame):
         # condition and hit count, if it has them ({condition, hit_mode, hits}, see readymade.debugger.BreakCondition).
         self._breakpoints = {}
         self.on_gutter_menu = None  # on_gutter_menu(line, event): a right-click in the line numbers
+        self.on_edited = None  # called on every change to the code (the IDE notes edits made during a run)
+        self.on_hover = None  # on_hover(expression, x, y): the mouse rests on a name (screen x, y)
+        self._hover_job = None
+        self._tip = None  # (window, expression) while a value tip shows
         self._next_breakpoint = 0
 
         bar = ttk.Frame(self, padding=(0, 2))
@@ -203,6 +208,8 @@ class CodeView(ttk.Frame):
         # Shown above the code while a run-time error is being pointed out.
         options.ensure_code_font(self)
         self.error_bar = tk.Label(self, anchor="w", padx=6, pady=2)
+        # Shown above the code when it's changed while the program runs (see show_note).
+        self.note_bar = tk.Label(self, anchor="w", padx=6, pady=2)
         body = ttk.Frame(self)
         self._body = body
         body.pack(fill=tk.BOTH, expand=True)
@@ -263,6 +270,10 @@ class CodeView(ttk.Frame):
         self.text.bind(f"<{menus.tk_modifier('Ctrl')}-Button-1>", self._control_click)  # ⌘-click on a Mac
         for sequence in ("<Configure>", "<KeyRelease>", "<ButtonRelease-1>"):  # resized, or the cursor moved
             self.text.bind(sequence, lambda e: self._show_numbers(), add="+")
+        # While the program is paused, resting the mouse on a name shows its value (on_hover asks).
+        self.text.bind("<Motion>", self._mouse_moved, add="+")
+        for sequence in ("<Leave>", "<KeyPress>", "<ButtonPress>", "<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.text.bind(sequence, lambda e: self.hide_tip(), add="+")
 
     # ----- source -----
 
@@ -608,9 +619,11 @@ class CodeView(ttk.Frame):
         current = int(self.text.index("insert").split(".")[0])
         problem_lines = set(self._problem_lines().values())
         breakpoints = set(self.breakpoint_lines())
-        conditional = {item["line"] for item in self.breakpoints() if isinstance(item, dict)}
+        items = [item for item in self.breakpoints() if isinstance(item, dict)]
+        disabled = {item["line"] for item in items if item.get("disabled")}
+        conditional = {item["line"] for item in items if item.get("condition") or item.get("hit_mode")}
         self.text.tag_remove("breakpoint", "1.0", tk.END)
-        for n in breakpoints:
+        for n in breakpoints - disabled:
             self.text.tag_add("breakpoint", f"{n}.0", f"{n}.0 lineend +1c")
         paused = self.paused_line()
         self._show_problems_here(current)
@@ -621,9 +634,10 @@ class CodeView(ttk.Frame):
                                     fill=self.theme.number_current if n == current else self.theme.number)
             middle = place[1] + place[3] // 2
             if n in breakpoints:
-                self.gutter.create_oval(2, middle - 5, 12, middle + 5, fill=self.theme.breakpoint, outline="",
-                                        tags="breakpoint")
-                if n in conditional:  # a + on it, as Visual Studio marks a condition or hit count
+                off = n in disabled  # switched off in the Breakpoints tab: hollow
+                self.gutter.create_oval(2, middle - 5, 12, middle + 5, fill="" if off else self.theme.breakpoint,
+                                        outline=self.theme.breakpoint, width=2 if off else 1, tags="breakpoint")
+                if n in conditional and not off:  # a + on it, as Visual Studio marks a condition or hit count
                     self.gutter.create_line(4, middle, 11, middle, fill="#ffffff", width=2, tags="breakpoint")
                     self.gutter.create_line(7, middle - 3, 7, middle + 4, fill="#ffffff", width=2, tags="breakpoint")
             if n == paused:
@@ -701,6 +715,7 @@ class CodeView(ttk.Frame):
         self.text.tag_configure("current", background=theme.current)
         self.error_bar.configure(background=theme.error, foreground=theme.error_text)
         self.problem_bar.configure(background=theme.problem_bg, foreground=theme.problem)
+        self.note_bar.configure(background=theme.gutter, foreground=theme.number_current)
         try:
             self.text.tag_configure("problem", underline=True, underlinefg=theme.problem)
             self._underline = {"underline": True, "underlinefg": theme.problem}
@@ -725,6 +740,88 @@ class CodeView(ttk.Frame):
     def clear_error(self):
         self.text.tag_remove("error", "1.0", tk.END)
         self.error_bar.pack_forget()
+
+    def show_note(self, text):
+        """A note above the code, like the one saying edits during a run wait for the next."""
+        self.note_bar.configure(text=text)
+        if not self.note_bar.winfo_ismapped():
+            self.note_bar.pack(fill=tk.X, before=self._body)
+
+    def clear_note(self):
+        self.note_bar.pack_forget()
+
+    # ----- values under the mouse, while paused -----
+
+    def expression_at(self, x, y):
+        """The name under the mouse at (x, y) in the text, with the dotted names before it
+        (self.basket.append over "basket" is self.basket), or "" if it isn't on one."""
+        index = self.text.index(f"@{x},{y}")
+        box = self.text.bbox(index)
+        if box is None or not (box[0] <= x < box[0] + box[2] and box[1] <= y < box[1] + box[3]):
+            return ""  # past the end of the line, or below the last
+        tags = self.text.tag_names(index)
+        if "comment" in tags or "string" in tags:
+            return ""
+        text = self.text.get(f"{index} linestart", f"{index} lineend")
+        column = int(index.split(".")[1])
+
+        def name_char(c):
+            return c.isalnum() or c == "_"
+
+        if column >= len(text) or not name_char(text[column]):
+            return ""
+        end = column
+        while end < len(text) and name_char(text[end]):
+            end += 1
+        start = column
+        while start > 0 and (name_char(text[start - 1]) or text[start - 1] == "."):
+            start -= 1
+        found = text[start:end]
+        # Not after a call or an index (f().x), not a number, not a keyword like "for".
+        if found.startswith(".") or ".." in found or found[0].isdigit() or keyword.iskeyword(found):
+            return ""
+        if start > 0 and text[start - 1] in ")]\"'":
+            return ""
+        return found
+
+    def _mouse_moved(self, e):
+        if self.on_hover is None:
+            return
+        expression = self.expression_at(e.x, e.y)
+        if self._tip is not None and self._tip[1] == expression:
+            return  # still on the same name
+        self.hide_tip()
+        if expression:
+            x, y = e.x_root, e.y_root
+            self._hover_job = self.after(450, lambda: self._hover(expression, x, y))
+
+    def _hover(self, expression, x, y):
+        self._hover_job = None
+        if self.on_hover is not None:
+            self.on_hover(expression, x, y)
+
+    def show_tip(self, expression, text, x, y):
+        """Show a value under the mouse (the IDE's answer to on_hover)."""
+        self.hide_tip()
+        window = tk.Toplevel(self)
+        window.wm_overrideredirect(True)  # no title bar or border from the window manager
+        chrome = self.theme.chrome
+        tk.Label(window, text=text, font=MONO, justify="left", wraplength=640, padx=4, pady=2, relief="solid", bd=1,
+                 background=chrome.window if chrome else "#ffffe1",
+                 foreground=chrome.text if chrome else "#000000").pack()
+        window.wm_geometry(f"+{x + 12}+{y + 16}")
+        self._tip = (window, expression)
+
+    def hide_tip(self):
+        if self._hover_job is not None:
+            self.after_cancel(self._hover_job)
+            self._hover_job = None
+        if self._tip is not None:
+            try:
+                self._tip[0].destroy()
+            except tk.TclError:
+                pass
+            self._tip = None
 
     # ----- debugging -----
 
@@ -866,6 +963,8 @@ class CodeView(ttk.Frame):
             return
         self.text.edit_modified(False)
         self.clear_error()  # once the code changes, the error may no longer be there
+        if self.on_edited is not None:
+            self.on_edited()
         self._show_numbers()
         if self.on_change:
             if self._change_job:

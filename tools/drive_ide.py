@@ -830,6 +830,14 @@ def drive(d):
         d.pump(0.05)
     d.check("F10 steps over", code.paused_line(), line + 1)
     d.check("Locals shows name", app.locals.value_of("name"), ("'World'", "str"))
+    x, y, w, h = code.text.bbox(f"{line}.{code.text.get(f'{line}.0', f'{line}.end').index('name') + 1}")
+    d.xdo("mousemove", code.text.winfo_rootx() + x + 2, code.text.winfo_rooty() + y + h // 2)
+    deadline = time.time() + 5
+    while code._tip is None and time.time() < deadline:
+        d.pump(0.05)
+    d.check("resting the mouse on a name shows its value",
+            code._tip and code._tip[0].winfo_children()[0].cget("text"), "name = 'World'")
+    d.shot("value-tip")
     d.click(*d.at(app.immediate.entry))
     d.type("? name.upper()")
     d.key("Return")
@@ -838,6 +846,8 @@ def drive(d):
     d.shot("break-mode")
     d.click(*d.tab_at(app.debug_tabs, app.call_stack))
     d.shot("break-mode-call-stack")
+    d.click(*d.tab_at(app.debug_tabs, app.breakpoints_panel))
+    d.shot("breakpoints-tab")
     code.text.focus_force()
     d.pump(0.2)
     d.key("F5")

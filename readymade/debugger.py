@@ -363,6 +363,8 @@ class Debugger(bdb.Bdb):
                 self._send_frame()
             elif kind == "quick":
                 self.channel.send(event="quick", info=self._quick(command.get("expression", "")))
+            elif kind == "tip":  # the mouse rests on a name in the code
+                self.channel.send(event="tip", id=command.get("id"), info=self._quick(command.get("expression", "")))
             elif kind == "expand":
                 self.channel.send(event="children", path=command.get("path"), items=self._expand(command.get("path")))
             elif kind == "breakpoints":
@@ -508,7 +510,8 @@ class Debugger(bdb.Bdb):
             value = eval(compile(expression, "<quick watch>", "eval"), self._frame().f_globals,
                          FrameScope(self._frame(), self.extra_names()))
         except Exception as error:  # noqa: BLE001
-            return {"name": expression, "value": f"<{type(error).__name__}: {error}>", "type": "", "expandable": False}
+            return {"name": expression, "value": f"<{type(error).__name__}: {error}>", "type": "", "expandable": False,
+                    "failed": True}
         return value_info(expression, value, [])
 
 

@@ -4,7 +4,9 @@ Ideas and gaps noted along the way, roughly by area.
 
 ## Runtime
 - **Menu item `visible`**: Tk can't hide a menu entry; supporting it means rebuilding the menu.
-- **Break mode follow-ups**: edit and continue (VB let you change code while paused; Python can't swap a running function's code, so today edits take effect next run); dragging the yellow arrow to set the next statement (today Ctrl+Shift+F10 or the line numbers' right-click menu); breaking in threads started with `in_thread` (tracing is only on the program's main thread); logpoints (a breakpoint that prints a message instead of stopping, as in VS Code).
+- **Break mode follow-ups** (next): logpoints (a breakpoint that prints a message, like `total is {subtotal}`, instead of stopping); breaking where an error is raised even when a `try` catches it (VB's Break on All Errors); changing a value from the Locals window (the Immediate window can already, from Python 3.13); dragging the yellow arrow to set the next statement (today Ctrl+Shift+F10 or the line numbers' right-click menu).
+- **Debugging threads** (future): breaking in threads started with `in_thread` (tracing is only on the program's main thread). First, more examples that use threads, to get a feel for how pausing one thread should affect the others in this kind of program.
+- **Edit and continue** (tabled): VB let you change code while paused. Python can't swap the code of a function that's running, so today edits take effect next run (a note above the code says so).
 
 ## IDE
 - **Project Files**: A project may have extra files associated with it, such as a README or other non-code files.  Should those need to be explicitly added to the project for packaging?  Images get copied to a dedicated subfolder.  That folder's contents are not visible in the IDE.  Having other non-code text files, the README for example, editable and viewable in the IDE could be useful.
