@@ -11,7 +11,7 @@ from tkinter import ttk
 
 from readymade.controls.base import _FOCUS_EVENTS, _MOUSE_EVENTS, Control, Event, register
 from readymade.controls.traits import (Aligned, Anchored, BackColor, Cursor, Font, ForeColor, Oriented, Ranged,
-                                       TabStop, Tooltip, _whole)
+                                       TabStop, Tooltip, _TtkEnabled, _whole)
 
 
 class _Steps:
@@ -38,20 +38,6 @@ class _Steps:
     def largechange(self, value):
         self._large = max(1, _whole(value, "largechange"))
         self._show_value()
-
-
-class _TtkEnabled:
-    """enabled for ttk widgets that keep it as a state rather than a state option."""
-
-    @property
-    def enabled(self):
-        """Whether it responds to the user. A disabled control is grayed out."""
-        return self._enabled
-
-    @enabled.setter
-    def enabled(self, value):
-        self._enabled = bool(value)
-        self.widget.state(["!disabled"] if self._enabled else ["disabled"])
 
 
 def _style(control, kind):

@@ -1,6 +1,7 @@
 """Key names for keypress, Tab order, and Enter and Esc pressing a form's default and cancel buttons."""
 
 import tkinter as tk
+import types
 
 import pytest
 
@@ -295,6 +296,9 @@ def test_designer_tab_indexes(app):
     assert tab_indexes(editor) == {"Label1": 0, "Button1": 1, "CheckBox1": 2, "Button2": 3}
 
 
+NOWHERE = types.SimpleNamespace(x_root=-1, y_root=-1, state=0)  # a click's event, where it doesn't matter
+
+
 def test_tab_order_mode(app):
     editor = app.form
     for type_name in ("TextBox", "Button", "Label", "CheckBox"):
@@ -304,9 +308,9 @@ def test_tab_order_mode(app):
     surface = editor.surface
     assert surface.tab_order_next == 0
     assert sorted(b.cget("text") for b in surface._badges) == ["0", "1", "2", "3"]
-    surface._control_press(None, surface.controls["CheckBox1"])
-    surface._control_press(None, surface.controls["Label1"])  # a Label gets its place too, as in VB
-    surface._control_press(None, surface.controls["Button1"])
+    surface._control_press(NOWHERE, surface.controls["CheckBox1"])
+    surface._control_press(NOWHERE, surface.controls["Label1"])  # a Label gets its place too, as in VB
+    surface._control_press(NOWHERE, surface.controls["Button1"])
     assert tab_indexes(editor) == {"CheckBox1": 0, "Label1": 1, "Button1": 2, "TextBox1": 3}
     assert editor.selected == "CheckBox1"  # still the last control added: clicks number, they don't select
     greens = sorted(b.cget("text") for b in surface._badges if b.cget("bg") == "#208020")
@@ -318,6 +322,40 @@ def test_tab_order_mode(app):
     surface.canvas.update()
     surface.canvas.event_generate("<Escape>")
     assert surface.tab_order_next is None and surface._badges == []
+
+
+def test_tab_order_on_a_tabstrip(app):
+    """Only what's on the page showing is numbered; a click on a tab shows (and numbers) its page."""
+    from readymade.controls import page_at, shown_page
+
+    editor = app.form
+    editor.add_control("TabStrip", 16, 16)
+    app.root.update()
+    for page in (0, 1):
+        editor.surface.controls["TabStrip1"]._show(page)
+        for top in (8, 40, 72):
+            editor.add_control("TextBox", 8, top, container="TabStrip1")
+    editor.show_design()
+    app.root.update()
+    strip = editor.surface.controls["TabStrip1"]
+    strip._show(0)
+    app.toggle_tab_order()
+    surface = editor.surface
+    app.root.update()
+    shown = sorted(int(b.cget("text")) for b in surface._badges)
+    assert shown == [0, 1, 2]  # (page 0's; page 1's are out of sight)
+    places = {(b.winfo_x(), b.winfo_y()) for b in surface._badges}
+    assert len(places) == 3  # each on its own control, not stacked
+    surface._control_press(NOWHERE, surface.controls["TextBox3"])
+    nb = strip.widget
+    x = next(x for x in range(1, nb.winfo_width()) if page_at(strip, nb.winfo_rootx() + x, nb.winfo_rooty() + 5) == 1)
+    surface._control_press(types.SimpleNamespace(x_root=nb.winfo_rootx() + x, y_root=nb.winfo_rooty() + 5, state=0),
+                           strip)  # the second tab
+    app.root.update()
+    assert shown_page(strip) == 1 and surface.tab_order_next == 1  # (still in Tab Order, numbering on)
+    assert sorted(int(b.cget("text")) for b in surface._badges) == [3, 4, 5]
+    surface._control_press(NOWHERE, surface.controls["TextBox4"])
+    assert tab_indexes(editor)["TextBox3"] == 0 and tab_indexes(editor)["TextBox4"] == 1
 
 
 # ----- access keys: & in a caption -----

@@ -35,6 +35,11 @@ EVENTS = {
     "keypress": "a key is pressed while it has the focus; key is the character typed, or a name like \"Enter\", \"Esc\" or \"Ctrl+S\"",
     "change": "its contents or value change",
     "timer": "interval milliseconds have passed",
+    "nodeclick": "a node is chosen (clicked, or with the arrow keys); node is the Node",
+    "expand": "a node is opened, showing the nodes under it; node is the Node",
+    "collapse": "a node is closed; node is the Node",
+    "itemclick": "a row is chosen (clicked, or with the arrow keys); item is the ListItem",
+    "columnclick": "a column's header is clicked; column is its number, counting from 0",
     "load": "the form is loaded, before it's first shown",
     "unload": "the form is closing; return True to keep it open",
     "resize": "the form changes size",
@@ -111,6 +116,9 @@ def prop(type_name, name):
     cls = Form if type_name == "Form" else REGISTRY[type_name]
     if name == "name":
         text = "The name your code uses for it, as in self.Label1, and in its handlers' names, like Label1_click."
+    elif name == "page":
+        text = ("Which page of its TabStrip it's on, counting from 0. It shows only while that page does. "
+                "Set in the designer: a new number moves it (and what's in it) to that page.")
     else:
         text = _doc(getattr(cls, name, None)) or "(No help for this property yet.)"
     return Topic(name, f"property of {type_name}", text)
@@ -355,6 +363,7 @@ def home(platform=sys.platform):
         "  draw controls into its cells; arrows move them between cells, Shift+arrows span more.",
         "  Format > Tab Order: click the controls in the order Tab should visit them. Click a",
         "  Label just before its box: Tab passes it by, but its access key goes to the next one.",
+        "  On a TabStrip, click a tab to number what's on that page; the numbers carry on.",
         "",
         "Code",
         f"  F12 or {click} goes to a definition; {complete} completes a name.",

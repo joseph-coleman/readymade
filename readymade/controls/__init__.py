@@ -8,7 +8,7 @@ available everywhere.
 
     base.py     Control, Event, the registry, and functions for the form and designer
     traits.py   properties controls share, as mixins: BackColor, Font, TabStop, Anchored...
-    label.py, textbox.py, frame.py, buttons.py, lists.py, ranges.py, image.py, canvas.py,
+    label.py, textbox.py, frame.py, tabstrip.py, buttons.py, lists.py, trees.py, ranges.py, image.py, canvas.py,
     grid.py, timer.py    the controls
 
 A control class lists the traits it has before Control, and registers itself:
@@ -23,8 +23,9 @@ Everything is imported here too, so `from readymade.controls import Button` work
 
 from __future__ import annotations
 
-from readymade.controls.base import (REGISTRY, Control, Event, control_of, create, focus_widget, grid_of,
-                                     option_group, register, repaint_inside, show_as_default, tab_numbers)
+from readymade.controls.base import (REGISTRY, Control, Event, control_of, create, focus_widget, grid_of, inner_for,
+                                     option_group, page_at, register, repaint_inside, show_as_default, show_page,
+                                     shown_page, tab_numbers)
 from readymade.controls.traits import (GRID_CELL, LOOK_CHOICES, Aligned, Anchored, BackColor, Cursor, Font,
                                        ForeColor, Oriented, Ranged, TabIndex, TabStop, Tooltip, VAligned, WidgetText)
 
@@ -33,8 +34,10 @@ from readymade.controls.traits import (GRID_CELL, LOOK_CHOICES, Aligned, Anchore
 from readymade.controls.label import Label
 from readymade.controls.textbox import TextBox
 from readymade.controls.frame import Frame
+from readymade.controls.tabstrip import TabStrip
 from readymade.controls.buttons import Button, CheckBox, OptionButton
 from readymade.controls.lists import ComboBox, ListBox
+from readymade.controls.trees import ListItem, ListView, Node, TreeView
 from readymade.controls.ranges import ProgressBar, ScrollBar, Slider, UpDown
 from readymade.controls.image import Image
 from readymade.controls.canvas import Canvas
@@ -43,10 +46,10 @@ from readymade.controls.timer import Timer
 # isort: on
 
 __all__ = [
-    "REGISTRY", "Control", "Event", "control_of", "create", "focus_widget", "grid_of", "option_group", "register",
-    "repaint_inside", "show_as_default", "tab_numbers",
+    "REGISTRY", "Control", "Event", "control_of", "create", "focus_widget", "grid_of", "inner_for", "option_group",
+    "page_at", "register", "repaint_inside", "show_as_default", "show_page", "shown_page", "tab_numbers",
     "GRID_CELL", "LOOK_CHOICES", "Aligned", "Anchored", "BackColor", "Cursor", "Font", "ForeColor", "TabIndex",
     "Oriented", "Ranged", "TabStop", "Tooltip", "VAligned", "WidgetText",
-    "Label", "TextBox", "Frame", "Button", "CheckBox", "OptionButton", "ComboBox", "ListBox", "ScrollBar", "Slider",
-    "UpDown", "ProgressBar", "Image", "Canvas", "Grid", "Timer",
+    "Label", "TextBox", "Frame", "TabStrip", "Button", "CheckBox", "OptionButton", "ComboBox", "ListBox", "TreeView",
+    "ListView", "ScrollBar", "Slider", "UpDown", "ProgressBar", "Image", "Canvas", "Grid", "Timer", "Node", "ListItem",
 ]

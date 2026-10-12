@@ -106,6 +106,7 @@ class Control:
     default_event = "click"
     is_container = False  # containers hold other controls in their `inner` widget
     arranges_inside = False  # a container that places what's in it (a Grid), rather than its own left and top
+    has_pages = False  # a container with pages (a TabStrip): each control in it is on one, its "page" in the .form
     can_be_default = False  # a button: Enter presses it when it has the focus, and a form's default_button
                             # and cancel_button can be it
     resizable = True
@@ -453,6 +454,27 @@ def option_group(option):
 def show_as_default(button, default):
     """Give a Button the heavier border of the form's default button (Enter clicks it), or not."""
     button._set(button.widget, "default", "active" if default else None)
+
+
+def inner_for(container, spec):
+    """The Tk widget a control goes in, inside a container: a Frame's inside, or for a
+    TabStrip the page its .form spec names."""
+    return container._inner_for(spec.get("page", 0)) if container.has_pages else container.inner
+
+
+def page_at(control, x_root, y_root):
+    """For a TabStrip: the page whose tab is at a screen point; otherwise (or off its tabs) None."""
+    return control._page_at(x_root, y_root) if control.has_pages else None
+
+
+def shown_page(container):
+    """The TabStrip page showing (in the designer, maybe not its starting tab)."""
+    return container._shown()
+
+
+def show_page(container, page):
+    """Show one of a TabStrip's pages in the designer (its tab, the starting page, stays)."""
+    container._show(page)
 
 
 def control_of(widget):

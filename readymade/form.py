@@ -24,7 +24,7 @@ from pathlib import Path
 
 from readymade import appearance, events, formfile, forms, keys, menus, names, pictures
 from readymade.controls import (Event, OptionButton, TabIndex, TabStop, WidgetText, control_of, create, focus_widget,
-                                option_group, repaint_inside, show_as_default, tab_numbers)
+                                inner_for, option_group, repaint_inside, show_as_default, tab_numbers)
 
 FORM = "Form"
 FORM_EVENTS = (
@@ -453,7 +453,7 @@ class Form:
         parent = self.controls.get(container)
         if parent is None or not parent.is_container:
             raise ValueError(f"{spec['name']!r} is in {container!r}, which isn't a container")
-        return parent.inner
+        return inner_for(parent, spec)
 
     def _menu_entry(self, item, menu, index, variable):
         check_name(item["name"], {**self.controls, **self.menus})

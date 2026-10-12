@@ -345,3 +345,130 @@ def test_orientation_is_set_in_the_designer(tmp_path, closing):
     form.Slider1.orientation = "vertical"  # (no change)
     with pytest.raises(AttributeError, match="designer"):
         form.Slider1.orientation = "horizontal"
+
+
+# ----- TabStrip, TreeView, ListView -----
+
+def test_tabstrip_pages(tmp_path, closing):
+    picked = []
+
+    class Form1(Form):
+        def TabStrip1_click(self):
+            picked.append(self.TabStrip1.tab)
+
+    form = make_form(tmp_path, ("TabStrip", "TabStrip1", None, {"tabs": ["One", "Two"]}),
+                     ("Button", "Button1", "TabStrip1", {"page": 0}), ("Label", "Label1", "TabStrip1", {"page": 1}),
+                     ("Label", "Label2", "TabStrip1", {"page": 7}),  # (past its tabs: on the last page)
+                     cls=Form1)
+    closing(form)
+    strip = form.TabStrip1
+    pump(form, 0.05)
+    assert strip.tabs == ["One", "Two"] and strip.tab == 0
+    assert form.Button1.widget.winfo_viewable() and not form.Label1.widget.winfo_viewable()
+    assert form.Label2.widget.master is form.Label1.widget.master
+    strip.tab = 1  # code changes it: click runs too
+    pump(form, 0.05)
+    assert form.Label1.widget.winfo_viewable() and not form.Button1.widget.winfo_viewable()
+    strip.widget.select(0)  # the user picks the first tab
+    pump(form, 0.05)
+    assert strip.tab == 0 and picked == [1, 0]
+    with pytest.raises(ValueError, match="tab must be from 0 to 1"):
+        strip.tab = 2
+    strip.enabled = False
+    assert str(strip.widget.tab(0, "state")) == "disabled"
+    strip.tabs = ["Only"]  # its other page keeps its controls, out of sight
+    assert strip.tabs == ["Only"] and strip.tab == 0 and str(strip.widget.tab(1, "state")) == "hidden"
+
+
+def test_treeview(tmp_path, closing):
+    chosen = []
+
+    class Form1(Form):
+        def TreeView1_nodeclick(self, node):
+            chosen.append(node.text)
+
+    form = make_form(tmp_path, ("TreeView", "TreeView1", None, {"items": ["Fruit", "  Apple", "  Pear", "Veg"]}),
+                     cls=Form1)
+    closing(form)
+    tree = form.TreeView1
+    fruit, veg = tree.nodes
+    assert [n.text for n in fruit.children] == ["Apple", "Pear"] and fruit.children[0].parent is fruit
+    leek = veg.add("Leek", key="leek")
+    assert tree.node("leek") is leek and leek.parent is veg and leek.key == "leek"
+    assert tree.items == ["Fruit", "  Apple", "  Pear", "Veg", "  Leek"]
+    with pytest.raises(ValueError, match="already has a node 'leek'"):
+        tree.add("Leek", key="leek")
+    with pytest.raises(ValueError, match="no node 'nope'"):
+        tree.add("x", parent="nope")
+    tree.selected = leek
+    pump(form, 0.05)
+    assert tree.selected is leek and chosen == ["Leek"] and veg.expanded  # (opened to show it)
+    leek.text = "Leeks"
+    veg.remove()
+    assert tree.node("leek") is None and [n.text for n in tree.nodes] == ["Fruit"] and tree.selected is None
+    tree.items = ["One", "    Two"]  # (in too far: just under the one before)
+    assert tree.items == ["One", "  Two"]
+    tree.clear()
+    assert tree.nodes == []
+
+
+def test_listview(tmp_path, closing):
+    log = []
+
+    class Form1(Form):
+        def ListView1_itemclick(self, item):
+            log.append(("item", item.text))
+
+        def ListView1_columnclick(self, column):
+            log.append(("column", column))
+
+    form = make_form(tmp_path, ("ListView", "ListView1", None, {"columns": ["Name", "Size"]}), cls=Form1)
+    closing(form)
+    view = form.ListView1
+    for name, size in (("b.txt", "10"), ("A.txt", "9"), ("c.txt", "1,000")):
+        view.add(name, size)
+    view.sort(1)  # numbers as numbers
+    assert [i.text for i in view.items] == ["A.txt", "b.txt", "c.txt"]
+    view._header_clicked(0)  # (a click on the Name header: sorts, as text)
+    view._header_clicked(0)  # again: the other way
+    assert [i.text for i in view.items] == ["c.txt", "b.txt", "A.txt"] and view.widget.heading("c0", "text") == "Name ▼"
+    assert ("column", 0) in log
+    row = view.items[1]
+    view.selected = row
+    pump(form, 0.05)
+    assert view.selected is row and ("item", "b.txt") in log
+    row.values = ["bee.txt", "11"]
+    assert row.text == "bee.txt" and row.index == 1
+    view.add("x", key="k")
+    with pytest.raises(ValueError, match="already has an item 'k'"):
+        view.add("y", key="k")
+    view.item("k").remove()
+    assert view.item("k") is None and len(view.items) == 3
+    view.multiselect = True
+    view.widget.selection_set([i.key for i in view.items[:2]])
+    assert [i.text for i in view.selected_items] == ["c.txt", "bee.txt"]
+    view.sortable = False
+    view._header_clicked(1)
+    assert [i.text for i in view.items] == ["c.txt", "bee.txt", "A.txt"]  # (not sorted)
+    view.columns = ["Name", "Size", "Kind"]
+    assert view.items[0].values == ["c.txt", "1,000", ""]
+
+
+def test_tree_colors_fill_the_empty_space_too(tmp_path, closing):
+    """Windows' and macOS's themes draw a Treeview's empty space themselves (ignoring its
+    color), so a colored TreeView or ListView uses ttk's plain field there."""
+    from tkinter import ttk
+
+    form = make_form(tmp_path, ("TreeView", "TreeView1", None, {"backcolor": "#a080b0"}),
+                     ("ListView", "ListView1", None, {"font": "DejaVu Sans, 12"}))
+    closing(form)
+    style = ttk.Style(form.root)
+    tree = form.TreeView1.widget
+
+    def field(widget):
+        return style.layout(widget.cget("style"))[0][0]
+
+    assert field(tree) == "Readymade.field" and style.lookup(tree.cget("style"), "fieldbackground") == "#a080b0"
+    assert field(form.ListView1.widget) == "Treeview.field"  # (just a font: the theme's own field)
+    form.TreeView1.backcolor = ""
+    assert tree.cget("style") == "Treeview"

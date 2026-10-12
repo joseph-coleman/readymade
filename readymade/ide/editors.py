@@ -15,7 +15,7 @@ from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from readymade import appearance, codegen, dialogs, formfile, layout, menus, names
-from readymade.controls import GRID_CELL, LOOK_CHOICES, REGISTRY, Event, tab_numbers
+from readymade.controls import GRID_CELL, LOOK_CHOICES, REGISTRY, Event, shown_page, tab_numbers
 from readymade.form import FORM, FORM_EVENTS, check_name
 from readymade.ide import arrange, assist
 from readymade.ide.codeview import CodeView
@@ -188,6 +188,8 @@ class FormEditor(Editor):
             return []
         defaults = REGISTRY[spec["type"]].prop_defaults()
         props = [("name", obj)]
+        if self._pages_of(spec) is not None:
+            props.append(("page", spec.get("page", 0)))  # (in a TabStrip: which of its pages it's on)
         in_grid = self._grid_of(spec) is not None
         for prop, default in defaults.items():
             if in_grid and prop == "left":  # in a Grid its cell says where it goes
@@ -195,6 +197,18 @@ class FormEditor(Editor):
             elif not (in_grid and prop == "top"):
                 props.append((prop, spec.get(prop, default)))
         return props
+
+    def _pages_of(self, spec):
+        """The spec of the TabStrip a control is on a page of, or None."""
+        container = self.design.control(spec["container"]) if spec.get("container") else None
+        return container if container and REGISTRY[container["type"]].has_pages else None
+
+    def _fit_pages(self, strip):
+        """Controls on pages a TabStrip no longer has go to its last page."""
+        last = len(strip.get("tabs", REGISTRY[strip["type"]].extra_props["tabs"])) - 1
+        for spec in self.design.controls:
+            if spec.get("container") == strip["name"] and spec.get("page", 0) > last:
+                spec["page"] = last
 
     def _grid_size(self, spec):
         """(rows, columns) of the Grid a control is in."""
@@ -378,10 +392,23 @@ class FormEditor(Editor):
                 if prop == "tabindex":
                     self._order_tabs(obj, value)  # the others make room
                     value = spec["tabindex"]
+                if prop == "page":
+                    strip = self._pages_of(spec)
+                    count = len(strip.get("tabs", REGISTRY[strip["type"]].extra_props["tabs"]))
+                    if not 0 <= value < count:
+                        raise ValueError(f"{strip['name']} has {count} pages, so page can be 0 to {count - 1}")
+                    spec["page"] = value
+                    self.surface.rebuild()  # (made again, on its new page)
+                    self.surface.show_selection()
+                    self.properties.update_values()
+                    self.update_title()
+                    return obj
                 before = dict(spec)
                 spec[prop] = value
                 try:
                     REGISTRY[spec["type"]].designer_changed(spec, prop)  # (it may tidy the others to suit)
+                    if REGISTRY[spec["type"]].has_pages:
+                        self._fit_pages(spec)
                     self.surface.refresh_control(obj)
                 except ValueError:  # the control refused it (like a backcolor that isn't a color)
                     spec.clear()
@@ -492,6 +519,8 @@ class FormEditor(Editor):
             spec["row"], spec["column"] = grid.cell_at(left, top)
             if "anchor" in spec:
                 spec["anchor"] = "top bottom left right"  # fills its cell, as in WPF
+        if grid is not None and grid.has_pages:
+            spec["page"] = shown_page(grid)  # (a TabStrip: the page being worked on)
         self.design.controls.append(spec)
         self._order_tabs(last=[spec])
         self.surface.add(spec)
@@ -678,8 +707,11 @@ class FormEditor(Editor):
             new["name"] = renames[spec["name"]]
             if spec.get("container") not in copied:  # outermost: goes into the target
                 new.pop("container", None)
+                new.pop("page", None)
                 if target:
                     new["container"] = target
+                    if self.surface.controls[target].has_pages:
+                        new["page"] = shown_page(self.surface.controls[target])  # (the page showing)
                 new["left"] += offset
                 new["top"] += offset
             else:

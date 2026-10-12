@@ -385,3 +385,17 @@ class Oriented:
     @orientation.setter
     def orientation(self, value):
         self._design_only("orientation", self._orientation, value)
+
+
+class _TtkEnabled:
+    """enabled for ttk widgets that keep it as a state, not a state option (a Scale, a Treeview...)."""
+
+    @property
+    def enabled(self):
+        """Whether it responds to the user. A disabled control is grayed out."""
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value):
+        self._enabled = bool(value)
+        self.widget.state(["!disabled"] if self._enabled else ["disabled"])

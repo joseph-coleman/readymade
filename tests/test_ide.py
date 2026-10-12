@@ -297,6 +297,57 @@ def test_range_controls_in_the_designer(app):
     assert reloaded.control("Slider1")["value"] == 5 and reloaded.control("UpDown1")["max"] == 100
 
 
+def test_tabstrip_in_the_designer(app):
+    from readymade.controls import page_at, show_page, shown_page
+
+    form = app.form
+    form.add_control("TabStrip", 16, 16)
+    app.root.update()
+    strip = form.surface.controls["TabStrip1"]
+    form.add_control("Button", 8, 8, container="TabStrip1")
+    assert form.design.control("Button1")["page"] == 0  # drawn on the page showing
+
+    # A click on a tab shows its page (and changes nothing in the design).
+    nb = strip.widget
+    x = next(x for x in range(nb.winfo_width() - 1, 0, -1) if page_at(strip, nb.winfo_rootx() + x, nb.winfo_rooty() + 5))
+    tab = page_at(strip, nb.winfo_rootx() + x, nb.winfo_rooty() + 5)
+    assert tab == 2 and page_at(strip, nb.winfo_rootx() + 20, nb.winfo_rooty() + 80) is None  # (the page itself)
+    event = types.SimpleNamespace(x_root=nb.winfo_rootx() + x, y_root=nb.winfo_rooty() + 5, state=0)
+    form.surface._control_press(event, strip)
+    form.surface._release(event)
+    app.root.update()
+    assert shown_page(strip) == 2 and form.design.control("TabStrip1")["tab"] == 0  # (still the starting tab)
+    form.add_control("Label", 8, 8, container="TabStrip1")
+    assert form.design.control("Label1")["page"] == 2
+    assert [p for p, _ in form.props_for("Label1")][:2] == ["name", "page"]  # (only for controls in a TabStrip)
+    assert "page" not in dict(form.props_for("TabStrip1"))
+
+    form.select("Button1")  # on a page that isn't showing: it shows
+    app.root.update()
+    assert shown_page(form.surface.controls["TabStrip1"]) == 0
+    with pytest.raises(AssertionError, match="has 3 pages, so page can be 0 to 2"):
+        form.set_property("Button1", "page", "3")
+    form.set_property("Button1", "page", "1")  # moved to page 1
+    app.root.update()
+    strip = form.surface.controls["TabStrip1"]
+    assert form.surface.controls["Button1"].widget.master is strip._inner_for(1) and shown_page(strip) == 1
+
+    form.set_property("TabStrip1", "tabs", "General\nAdvanced")  # page 2 goes: its Label to the last page
+    assert form.design.control("Label1")["page"] == 1 and form.surface.controls["TabStrip1"].tabs == ["General", "Advanced"]
+    form.undo()
+    assert form.design.control("Label1")["page"] == 2
+
+    form.select("Button1")
+    copied = form.copy_selection()
+    form.select("TabStrip1")
+    show_page(form.surface.controls["TabStrip1"], 0)
+    form.paste(copied)  # into the selected TabStrip: on the page showing
+    assert (form.design.control("Button2")["container"], form.design.control("Button2")["page"]) == ("TabStrip1", 0)
+    assert app.save()
+    reloaded = formfile.load(form.path)
+    assert reloaded.control("Label1")["page"] == 2 and reloaded.control("Button1")["page"] == 1
+
+
 def _row(app, prop):
     labels = {w.cget("text"): w for w in app.properties.grid_frame.grid_slaves(column=0)}
     return labels[prop].grid_info()["row"]

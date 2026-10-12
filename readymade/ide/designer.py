@@ -15,7 +15,8 @@ from __future__ import annotations
 import tkinter as tk
 
 from readymade import menus
-from readymade.controls import GRID_CELL, create, grid_of, repaint_inside, show_as_default
+from readymade.controls import (GRID_CELL, create, grid_of, inner_for, page_at, repaint_inside, show_as_default,
+                                show_page, shown_page)
 from readymade.form import FORM
 from readymade.ide import options, tooltips
 
@@ -103,6 +104,7 @@ class DesignSurface(tk.Frame):
         self.configure(bg=chrome.workspace if chrome else SURROUND)
 
     def rebuild(self):
+        shown = {name: shown_page(c) for name, c in self.controls.items() if c.has_pages}
         for control in self.controls.values():
             control.widget.destroy()
         self.controls = {}
@@ -110,6 +112,9 @@ class DesignSurface(tk.Frame):
         self.refresh_menu()
         for spec in self.app.design.controls:
             self.add(spec)
+        for name, page in shown.items():  # (the pages being worked on, not each TabStrip's starting tab)
+            if name in self.controls:
+                show_page(self.controls[name], page)
         self.show_selection()
         self.show_tab_order()
 
@@ -159,7 +164,7 @@ class DesignSurface(tk.Frame):
 
     def add(self, spec):
         container = self.controls.get(spec.get("container"))
-        control = create(self.canvas if container is None else container.inner, spec, design=True,
+        control = create(self.canvas if container is None else inner_for(container, spec), spec, design=True,
                          folder=self.app.path.parent)  # the project's folder, for pictures
         for widget in control.design_widgets():
             widget.bind("<ButtonPress-1>", lambda e, c=control: self._control_press(e, c))
@@ -177,6 +182,9 @@ class DesignSurface(tk.Frame):
         control = self.controls[name]
         spec = self.app.design.control(name)
         defaults = control.prop_defaults()
+        if control.has_pages and len(spec.get("tabs", defaults["tabs"])) != len(control.tabs):
+            self.rebuild()  # (pages come and go: what's on them is made again, on its page)
+            return
         if any(spec.get(prop, defaults[prop]) != getattr(control, prop) for prop in control.recreate_props):
             self._recreate(spec)
         else:
@@ -224,6 +232,11 @@ class DesignSurface(tk.Frame):
                 handle.place_forget()
         if not selection:
             return
+        for control in selection:  # (on a page that isn't showing: show it)
+            spec = self.app.design.control(control.name)
+            container = self.controls.get(spec.get("container")) if spec else None
+            if container is not None and container.has_pages and inner_for(container, spec) is not container.inner:
+                show_page(container, spec.get("page", 0))
         self.canvas.update_idletasks()
         if len(selection) == 1:
             x, y = self._on_canvas(selection[0])
@@ -272,7 +285,8 @@ class DesignSurface(tk.Frame):
         self.show_tab_order()
 
     def show_tab_order(self):
-        """Number each control Tab reaches; those clicked this time are green, the rest blue."""
+        """Number each control Tab reaches; those clicked this time are green, the rest blue.
+        (Those on a TabStrip page that isn't showing get theirs when it's shown: click its tab.)"""
         for badge in self._badges:
             badge.destroy()
         self._badges = []
@@ -281,6 +295,8 @@ class DesignSurface(tk.Frame):
         self.canvas.update_idletasks()
         for spec in self.app.tab_stops():
             control = self.controls[spec["name"]]
+            if not control.widget.winfo_viewable():
+                continue  # (on a page that isn't showing)
             x, y = self._on_canvas(control)
             done = spec["tabindex"] < self.tab_order_next
             badge = tk.Label(self.canvas, text=str(spec["tabindex"]), bg="#208020" if done else "#000080", fg="white",
@@ -312,8 +328,14 @@ class DesignSurface(tk.Frame):
 
     def _control_press(self, e, control):
         self.canvas.focus_set()
+        page = page_at(control, e.x_root, e.y_root)
+        if page is not None:  # a TabStrip's tab: work on its page
+            show_page(control, page)
         if self.tab_order_next is not None:
-            self._tab_order_click(control)
+            if page is not None:  # (and number what's on it)
+                self.show_tab_order()
+            else:
+                self._tab_order_click(control)
             return "break"
         if self.app.toolbox.tool:
             return self._start_band(e)
@@ -373,6 +395,8 @@ class DesignSurface(tk.Frame):
 
         def touches(c):
             w = c.widget
+            if not w.winfo_viewable():
+                return False  # (on a TabStrip page that isn't showing)
             x, y = w.winfo_rootx(), w.winfo_rooty()
             return x < right and x + w.winfo_width() > left and y < bottom and y + w.winfo_height() > top
 
@@ -403,6 +427,8 @@ class DesignSurface(tk.Frame):
             if not control.is_container:
                 continue
             inner = control.inner
+            if not inner.winfo_viewable():
+                continue  # (on a TabStrip page that isn't showing)
             x, y, w, h = inner.winfo_rootx(), inner.winfo_rooty(), inner.winfo_width(), inner.winfo_height()
             if x <= x_root < x + w and y <= y_root < y + h and (best_area is None or w * h < best_area):
                 best, best_area = control, w * h

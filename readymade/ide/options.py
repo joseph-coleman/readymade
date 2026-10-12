@@ -130,7 +130,8 @@ _STANDARD_STYLES = (
 # The form's ttk controls in the designer keep the light look (their Preview. styles): they show
 # the running program, not the IDE.
 _PREVIEWED = ("TCombobox", "TSpinbox", "Horizontal.TScrollbar", "Vertical.TScrollbar", "Horizontal.TScale",
-              "Vertical.TScale", "Horizontal.TProgressbar", "Vertical.TProgressbar")
+              "Vertical.TScale", "Horizontal.TProgressbar", "Vertical.TProgressbar", "TNotebook", "TNotebook.Tab",
+              "Treeview", "Treeview.Heading")
 _PREVIEW_COLORS = ("background", "foreground", "fieldbackground", "troughcolor", "bordercolor", "lightcolor",
                    "darkcolor", "arrowcolor", "insertcolor")
 _ELEMENT_DEFAULTS = {"fieldbackground": "white", "arrowcolor": "black", "insertcolor": "black"}  # (unset in clam's styles)
@@ -138,11 +139,9 @@ _ELEMENT_DEFAULTS = {"fieldbackground": "white", "arrowcolor": "black", "insertc
 
 def _create_dark_theme(style, c, light):
     previews = {f"Preview.{name}": {"configure": {key: value for key in _PREVIEW_COLORS
-                                                  if (value := str(style.lookup(name, key)) or _ELEMENT_DEFAULTS.get(key))}}
+                                                  if (value := str(style.lookup(name, key)) or _ELEMENT_DEFAULTS.get(key))},
+                                    "map": style.map(name) or {}}
                 for name in _PREVIEWED}  # (the light theme is the one in use here)
-    combo = previews["Preview.TCombobox"]["configure"]  # (and as it looks when it can't be typed in)
-    previews["Preview.TCombobox"]["map"] = {key: [("readonly", combo[key])] for key in ("fieldbackground", "foreground")
-                                            if key in combo}
     copied = {name: {"configure": style.configure(name) or {}, "map": style.map(name) or {}}
               for name in _STANDARD_STYLES}  # (the light theme is the one in use here)
     style.theme_create(DARK_TTK, parent=light, settings=copied)

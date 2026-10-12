@@ -81,6 +81,15 @@ def frame(p):
     p.lines((4, 3.5), (8.6, 3.5), color="accent", width=1.8)
 
 
+def tabstrip(p):
+    p.rect(1.5, 5, 14.5, 14.5, fill="field")
+    p.rect(1.5, 1.8, 6.2, 5.6, fill="field", radius=0.6)  # the tab in front
+    p.rect(6.2, 2.8, 10.6, 5, fill="face", width=1)  # one behind
+    p.lines((2.4, 5), (5.3, 5), color="field", width=1.4)  # (the front tab opens into its page)
+    p.lines((4, 9), (12, 9), color="soft", width=1.2)
+    p.lines((4, 11.6), (10, 11.6), color="soft", width=1.2)
+
+
 def button(p):
     p.rect(1, 4.5, 15, 11.5, fill="face", radius=1.6)
     p.lines((5, 8), (11, 8), color="line", width=1.4)
@@ -108,6 +117,25 @@ def listbox(p):
     p.rect(2.6, 6.3, 13.4, 8.9, fill="accent", line=None)
     for y in (4.2, 11, 13):
         p.lines((4, y), (11.5, y), color="soft", width=1.1)
+
+
+def treeview(p):
+    p.lines((3.5, 4.5), (3.5, 12.5), color="soft", width=1)
+    p.lines((3.5, 8.5), (6.5, 8.5), color="soft", width=1)
+    p.lines((3.5, 12.5), (6.5, 12.5), color="soft", width=1)
+    p.rect(1.5, 1.5, 6, 4.8, fill="accent", line=None)
+    p.rect(6.5, 7, 11, 10, fill="field", width=1)
+    p.rect(6.5, 11, 14.5, 14, fill="field", width=1)
+
+
+def listview(p):
+    p.rect(1, 2, 15, 14, fill="field")
+    p.rect(1, 2, 15, 5, fill="face")
+    p.lines((7.5, 2), (7.5, 14), width=1)
+    p.rect(1.6, 8, 14.4, 10.2, fill="accent", line=None)
+    for y in (6.8, 11.8):
+        p.lines((2.6, y), (6, y), color="soft", width=1)
+        p.lines((9, y), (13.4, y), color="soft", width=1)
 
 
 def scrollbar(p):
@@ -171,8 +199,8 @@ def unknown(p):
         p.oval(x - 0.8, 7.2, x + 0.8, 8.8, fill="line", line=None)
 
 
-ICONS = {"Pointer": pointer, "Label": label, "TextBox": textbox, "Frame": frame, "Button": button,
-         "CheckBox": checkbox, "OptionButton": optionbutton, "ComboBox": combobox, "ListBox": listbox,
+ICONS = {"Pointer": pointer, "Label": label, "TextBox": textbox, "Frame": frame, "TabStrip": tabstrip, "Button": button,
+         "CheckBox": checkbox, "OptionButton": optionbutton, "ComboBox": combobox, "ListBox": listbox, "TreeView": treeview, "ListView": listview,
          "ScrollBar": scrollbar, "Slider": slider, "UpDown": updown, "ProgressBar": progressbar, "Image": image,
          "Canvas": canvas, "Grid": grid, "Timer": timer, "Unknown": unknown}
 

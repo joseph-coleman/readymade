@@ -10,7 +10,8 @@ leave almost no time between having an idea and running the program.
 ## What it does
 
 - **A form designer.** Draw controls from the Toolbox (Label, TextBox, Button,
-  CheckBox, OptionButton, ComboBox, ListBox, Frame, Grid, Image, Canvas, Timer), then set
+  CheckBox, OptionButton, ComboBox, ListBox, TreeView, ListView, ScrollBar, Slider,
+  UpDown, ProgressBar, Frame, TabStrip, Grid, Image, Canvas, Timer), then set
   their properties in the Properties panel. Align and size them with the Format menu,
   design menus in the Menu Editor, and set the tab order by clicking. Anchors and Grids
   (rows and columns sized like WPF's: `auto, *, 2*, 120`) make forms that resize well.
