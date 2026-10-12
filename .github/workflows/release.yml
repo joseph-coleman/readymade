@@ -1,5 +1,6 @@
-# Pushing a version tag (git tag v0.0.2 && git push origin v0.0.2) tests readymade,
-# builds it, and publishes it to PyPI. The version comes from the tag (hatch-vcs).
+# Pushing a version tag (git tag v0.0.2 && git push origin v0.0.2) builds readymade and
+# publishes it to PyPI. The version comes from the tag (hatch-vcs). Testing isn't done here:
+# run the tests yourself before tagging (on Linux: xvfb-run -a python -m pytest).
 # PyPI trusts this workflow through Trusted Publishing: on pypi.org, the readymade
 # project's Publishing settings name this repository, release.yml and the "pypi"
 # environment, so no API token is stored anywhere.
@@ -10,25 +11,6 @@ on:
     tags: ["v*"]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # the tags, for the version
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install Xvfb (the tests open their windows on a private display)
-        run: sudo apt-get update && sudo apt-get install -y xvfb
-      - name: Install readymade with the IDE's extras, and pytest
-        run: python -m pip install -e ".[ide]" pytest
-      - name: Run the tests
-        run: python -m pytest -q
-
   build:
     runs-on: ubuntu-latest
     steps:
@@ -51,7 +33,7 @@ jobs:
           path: dist/
 
   publish:
-    needs: [test, build]
+    needs: build
     runs-on: ubuntu-latest
     environment: pypi  # add yourself as a required reviewer to approve each release
     permissions:
