@@ -498,30 +498,56 @@ def test_tabstrip_pages_are_the_same_size_in_every_theme(tmp_path, closing):
 # ----- a toolbar's parts: flat buttons, a borderless Frame, toggles that look like buttons -----
 
 def test_toolbar_parts(tmp_path, closing):
+    from tkinter import ttk
+
     form = make_form(tmp_path, ("Frame", "Bar", None, {"border": False, "dock": "top", "height": 36}),
-                     ("Button", "New", "Bar", {"flat": True, "dock": "left", "width": 32}),
-                     ("CheckBox", "Bold", "Bar", {"appearance": "button", "flat": True, "dock": "left", "width": 32}),
+                     ("Button", "New", "Bar", {"flat": True, "dock": "left", "width": 32, "font": "DejaVu Sans, 12"}),
+                     ("CheckBox", "Bold", "Bar", {"appearance": "button", "flat": True, "dock": "left", "width": 32,
+                                                   "forecolor": "#0000c0"}),
                      ("OptionButton", "Left", "Bar", {"appearance": "button", "dock": "left", "width": 32}),
                      ("OptionButton", "Right", "Bar", {"appearance": "button", "dock": "left", "width": 32}),
                      ("CheckBox", "Plain", None, {"top": 60}))
     closing(form)
     assert int(form.Bar.widget.cget("borderwidth")) == 0
+    # Flat: ttk's Toolbutton style, which each system draws as its toolbars' buttons.
     new, bold = form.New.widget, form.Bold.widget
-    assert (str(new.cget("relief")), str(new.cget("overrelief"))) == ("flat", "raised")  # raised under the mouse
-    # A toggle: flat while off, pressed in while on (Tk's own sunken), raised under the mouse.
-    assert (str(bold.cget("offrelief")), str(bold.cget("overrelief"))) == ("flat", "raised")
-    assert not bool(int(bold.cget("indicatoron"))) and bool(int(form.Plain.widget.cget("indicatoron")))
-    form.New.flat = False
-    assert str(new.cget("relief")) == "raised" and str(new.cget("overrelief")) == ""
+    assert (new.winfo_class(), bold.winfo_class()) == ("TButton", "TCheckbutton")
+    assert str(new.cget("style")).endswith(".Toolbutton") and str(bold.cget("style")).endswith(".Toolbutton")
+    style = ttk.Style(form.root)
+    assert "12" in str(style.lookup(new.cget("style"), "font"))  # (a ttk widget's font is its style's)
+    assert style.lookup(bold.cget("style"), "foreground") == "#0000c0"
+    form.Bold.value = True
+    assert bold.instate(["selected"])
+    assert style.lookup(bold.cget("style"), "foreground", ["selected"]) != "#0000c0"  # (on: the theme's own)
+    # A button look that isn't flat: Tk's classic toggle, without its box (except on macOS: see below).
+    assert form.Left.widget.winfo_class() == "Radiobutton" and not int(form.Left.widget.cget("indicatoron"))
+    assert int(form.Plain.widget.cget("indicatoron"))
     form.Left.value = True
     form.Right.value = True  # (one group: Left / Center / Right)
     assert not form.Left.value
+    for control, prop, value in ((form.New, "flat", False), (form.Bold, "appearance", "normal")):
+        with pytest.raises(AttributeError, match="designer"):
+            setattr(control, prop, value)
     form.Bar.border = True
     assert int(form.Bar.widget.cget("borderwidth")) > 0
-    with pytest.raises(ValueError, match="appearance must be one of"):
-        form.Bold.appearance = "toggle"
     assert REGISTRY["CheckBox"].choices("appearance") == ("normal", "button")
     assert "picture" in REGISTRY["OptionButton"].prop_defaults() and "flat" not in REGISTRY["Label"].prop_defaults()
+
+
+def test_on_macos_a_button_look_is_always_a_toolbutton():
+    """macOS's classic toggle shows "on" in a maroon of Tk's; its Toolbutton, in the system's accent color."""
+    from types import SimpleNamespace
+
+    from readymade.controls.buttons import _Appearance
+
+    def wants(appearance, flat, system):
+        toggle = SimpleNamespace(_appearance=appearance, _flat=flat)
+        parent = SimpleNamespace(tk=SimpleNamespace(call=lambda *args: system))
+        return _Appearance._wants_toolbutton(toggle, parent)
+
+    assert wants("button", False, "aqua") and wants("button", True, "x11") and wants("button", True, "win32")
+    assert not wants("button", False, "x11") and not wants("button", False, "win32")
+    assert not wants("normal", True, "aqua") and not wants("normal", False, "aqua")
 
 
 def test_a_borderless_frame_is_outlined_in_the_designer(tmp_path):

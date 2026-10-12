@@ -297,6 +297,24 @@ def test_range_controls_in_the_designer(app):
     assert reloaded.control("Slider1")["value"] == 5 and reloaded.control("UpDown1")["max"] == 100
 
 
+def test_flat_and_appearance_remake_the_control(app):
+    form = app.form
+    form.add_control("Button", 8, 8)
+    form.add_control("CheckBox", 8, 48)
+    assert form.surface.controls["Button1"].widget.winfo_class() == "Button"
+    form.set_property("Button1", "flat", "True")  # a toolbar's button: another kind of widget, made again
+    assert form.surface.controls["Button1"].widget.winfo_class() == "TButton"
+    form.set_property("CheckBox1", "appearance", "button")
+    assert form.surface.controls["CheckBox1"].widget.winfo_class() == "Checkbutton"  # (not flat: Tk's own, on Linux)
+    form.set_property("CheckBox1", "flat", "True")
+    widget = form.surface.controls["CheckBox1"].widget
+    assert widget.winfo_class() == "TCheckbutton" and str(widget.cget("style")).endswith("Preview.Toolbutton")
+    form.undo()
+    form.undo()
+    form.undo()
+    assert form.surface.controls["Button1"].widget.winfo_class() == "Button"
+
+
 def test_tabstrip_in_the_designer(app):
     from readymade.controls import page_at, show_page, shown_page
 

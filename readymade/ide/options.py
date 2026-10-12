@@ -131,7 +131,7 @@ _STANDARD_STYLES = (
 # the running program, not the IDE.
 _PREVIEWED = ("TCombobox", "TSpinbox", "Horizontal.TScrollbar", "Vertical.TScrollbar", "Horizontal.TScale",
               "Vertical.TScale", "Horizontal.TProgressbar", "Vertical.TProgressbar", "TNotebook", "TNotebook.Tab",
-              "Treeview", "Treeview.Heading")
+              "Treeview", "Treeview.Heading", "Toolbutton")
 _PREVIEW_COLORS = ("background", "foreground", "fieldbackground", "troughcolor", "bordercolor", "lightcolor",
                    "darkcolor", "arrowcolor", "insertcolor")
 _ELEMENT_DEFAULTS = {"fieldbackground": "white", "arrowcolor": "black", "insertcolor": "black"}  # (unset in clam's styles)

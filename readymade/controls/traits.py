@@ -472,23 +472,21 @@ class Picture:
 
 
 class Flat:
-    """flat: no border until the mouse is over it, as a toolbar's buttons are (a Button's; a
-    CheckBox's or OptionButton's with appearance "button")."""
+    """flat, set in the designer: a toolbar's button (a Button's; a CheckBox's or OptionButton's
+    with appearance "button"). ttk's Toolbutton style draws it, so each system draws it its own
+    way: flat until the mouse is over it on Windows and Linux, the Mac's own toolbar button there."""
 
-    _flat = False
+    def __init__(self, parent, spec, design=False, folder=None):
+        self._flat = bool(spec.get("flat", False))  # (it decides which widget is made)
+        super().__init__(parent, spec, design, folder)
 
     @property
     def flat(self):
-        """Whether it's drawn without a border until the mouse is over it (for a toolbar). A
-        CheckBox or OptionButton with appearance "button" still looks pressed while it's on.
-        (On macOS, buttons are the system's own and keep their border.)"""
+        """Whether it's a toolbar's button: flat until the mouse is over it (on macOS, the Mac's
+        own toolbar button). A CheckBox or OptionButton with appearance "button" still shows
+        when it's on. Set in the designer."""
         return self._flat
 
     @flat.setter
     def flat(self, value):
-        self._flat = bool(value)
-        # (A check box or option button's relief is how it looks while on, pressed in: Tk's flat
-        # toggle is flat while off instead, raised under the mouse.)
-        toggle = "offrelief" in self.widget.keys()
-        for option, flat in (("offrelief" if toggle else "relief", "flat"), ("overrelief", "raised")):
-            self._set(self.widget, option, flat if self._flat else None)
+        self._design_only("flat", self._flat, bool(value))
