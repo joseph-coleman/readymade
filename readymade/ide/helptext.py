@@ -102,7 +102,8 @@ def control(type_name, name=None):
 def form(name="Form1"):
     parts = [
         _doc(Form),
-        "Properties\n" + _members(Form, ["text", "width", "height", "backcolor", "cursor", "default_button", "cancel_button"]),
+        "Properties\n" + _members(Form, ["text", "width", "height", "minwidth", "minheight", "maxwidth", "maxheight",
+                                         "resizable", "backcolor", "cursor", "default_button", "cancel_button"]),
         "Methods\n" + _members(Form, ["show", "hide", "close", "run"]),
         "Events (double-click the form in the designer to write Form_load)\n" + _events("Form", FORM_EVENTS),
     ]
@@ -368,7 +369,9 @@ def home(platform=sys.platform):
         f"  Tools > Menu Editor ({keys('Ctrl+E')}) designs the form's menus.",
         "  A control's anchor keeps it to edges of the form (or its Frame) as that resizes:",
         "  \"bottom right\" for OK buttons, \"top left right\" to stretch across. Or dock it:",
-        "  top, bottom, left or right fills that edge, fill takes what's left (a toolbar, a status line).",
+        "  top, bottom, left or right fills that edge, fill takes what's left (a toolbar, a status line);",
+        "  with splitter True the user can drag its inner edge. The form's minwidth, minheight,",
+        "  maxwidth, maxheight and resizable limit how the user can size it.",
         "  A toolbar: a Frame with border False docked to the top, holding flat Buttons with pictures;",
         "  a CheckBox or OptionButton with appearance \"button\" is a toggle (Bold) or one of a group.",
         "  A Grid lays controls out in rows and columns (columns = \"auto, *, 2*, 120\"):",

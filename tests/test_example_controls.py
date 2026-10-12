@@ -48,6 +48,7 @@ def settle(form, seconds=0.05):
 
 
 def test_choosing_a_recipe_and_its_servings(form):
+    assert form.root.minsize() == (600, 400) and form.Recipes._splitter_bar.winfo_ismapped()
     assert form.Recipes.selected.text == "Pancakes"
     assert form.Status.text == "Pancakes: serves 4, about 15 minutes"
     assert [i.values for i in form.Ingredients.items][:2] == [["Flour", "200", "g"], ["Milk", "300", "ml"]]
@@ -99,6 +100,7 @@ def test_it_opens_in_the_designer(tmp_path):
         assert len(surface.controls) == 27
         assert surface.controls["NewRecipe"]._photo is not None  # (its picture, from images/)
         assert surface.controls["Align[1]"].widget.winfo_class() == "TRadiobutton"  # (flat: a Toolbutton)
+        assert surface.controls["Recipes"].splitter and app.form.design.minwidth == 600
     finally:
         app.runner.stop()
         root.destroy()

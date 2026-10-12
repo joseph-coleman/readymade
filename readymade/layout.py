@@ -84,28 +84,38 @@ def dock(width, height, items):
     """Docking, as in WinForms: each of items, (dock, (own width, own height)) in order,
     takes an edge of what the ones before it left of a width x height container, keeping its
     own height (top, bottom) or width (left, right). Then fill takes all that's left (each
-    fill the same space). Returns their (left, top, width, height); None for one not docked."""
+    fill the same space). An item can have a third part, the thickness of a splitter bar
+    beyond its inner edge (see splitter_rect), which the others leave room for. Returns their
+    (left, top, width, height); None for one not docked."""
     left, top, right, bottom = 0, 0, width, height
     rects = [None] * len(items)
-    for i, (edge, (own_width, own_height)) in enumerate(items):
+    for i, (edge, (own_width, own_height), *more) in enumerate(items):
+        bar = more[0] if more and edge in ("top", "bottom", "left", "right") else 0
         across, down = max(0, right - left), max(0, bottom - top)
         tall, wide = min(own_height, down), min(own_width, across)
         if edge == "top":
             rects[i] = (left, top, across, tall)
-            top += tall
+            top += tall + min(bar, down - tall)
         elif edge == "bottom":
             rects[i] = (left, bottom - tall, across, tall)
-            bottom -= tall
+            bottom -= tall + min(bar, down - tall)
         elif edge == "left":
             rects[i] = (left, top, wide, down)
-            left += wide
+            left += wide + min(bar, across - wide)
         elif edge == "right":
             rects[i] = (right - wide, top, wide, down)
-            right -= wide
-    for i, (edge, _) in enumerate(items):
+            right -= wide + min(bar, across - wide)
+    for i, (edge, *_) in enumerate(items):
         if edge == "fill":
             rects[i] = (left, top, max(0, right - left), max(0, bottom - top))
     return rects
+
+
+def splitter_rect(edge, rect, thickness):
+    """Where a docked control's splitter bar goes: just beyond its inner edge, along it."""
+    x, y, w, h = rect
+    return {"top": (x, y + h, w, thickness), "bottom": (x, y - thickness, w, thickness),
+            "left": (x + w, y, thickness, h), "right": (x - thickness, y, thickness, h)}[edge]
 
 
 def parse_tracks(text):

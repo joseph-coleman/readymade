@@ -30,6 +30,11 @@ class FormDesign:
     cursor: str = "default"
     default_button: str = ""  # the Button that Enter presses
     cancel_button: str = ""  # the Button that Esc presses
+    resizable: bool = True  # whether the user can change its size
+    minwidth: int = 0  # the size limits for the user's resizing; 0: none
+    minheight: int = 0
+    maxwidth: int = 0
+    maxheight: int = 0
     controls: list[dict] = field(default_factory=list)
     menu: list[dict] = field(default_factory=list)  # see readymade.menus
 
@@ -85,9 +90,11 @@ def dumps(design):
         data["backcolor"] = design.backcolor
     if design.cursor != "default":
         data["cursor"] = design.cursor
-    for key in ("default_button", "cancel_button"):
+    for key in ("default_button", "cancel_button", "minwidth", "minheight", "maxwidth", "maxheight"):
         if getattr(design, key):
             data[key] = getattr(design, key)
+    if not design.resizable:
+        data["resizable"] = False
     data["controls"] = [_ordered(c) for c in design.controls]
     if design.menu:  # only forms with a menu mention it, so other forms' files don't change
         data["menu"] = [_ordered_menu_item(item) for item in design.menu]
@@ -128,6 +135,8 @@ def loads(text, source="<string>"):
         cursor=data.get("cursor", "default"),
         default_button=data.get("default_button", ""),
         cancel_button=data.get("cancel_button", ""),
+        resizable=bool(data.get("resizable", True)),
+        **{key: int(data.get(key, 0)) for key in ("minwidth", "minheight", "maxwidth", "maxheight")},
         controls=controls,
         menu=menu,
     )

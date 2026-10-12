@@ -165,6 +165,7 @@ class Anchored:
 
     _anchor: str
     _dock = "none"
+    _splitter = False
 
     @property
     def anchor(self):
@@ -212,6 +213,21 @@ class Anchored:
 
         watch_docks(self.widget.master)
         arrange_docked(self.widget.master)
+
+    @property
+    def splitter(self):
+        """For a control docked top, bottom, left or right: a bar along its inner edge that the
+        user drags to make it bigger or smaller (the other docked controls follow), as between
+        a list on the left and what fills the rest."""
+        return self._splitter
+
+    @splitter.setter
+    def splitter(self, value):
+        self._splitter = bool(value)
+        if self._ready:
+            from readymade.controls.base import arrange_docked  # (base uses these traits)
+
+            arrange_docked(self.widget.master)
 
     def _cell_prop(name, doc, smallest):
         def get(self):

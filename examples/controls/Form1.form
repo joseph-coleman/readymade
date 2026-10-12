@@ -4,6 +4,8 @@
   "text": "Recipe Box",
   "width": 760,
   "height": 520,
+  "minwidth": 600,
+  "minheight": 400,
   "controls": [
     {
       "type": "Frame",
@@ -263,6 +265,7 @@
       "font": "",
       "forecolor": "",
       "items": [],
+      "splitter": true,
       "tabindex": 0,
       "tabstop": true,
       "tag": "",

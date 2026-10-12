@@ -24,11 +24,17 @@ Nothing on this form is placed by its left and top. Each part is **docked** to a
 | Tabs (a TabStrip) | fill | everything else |
 
 **Try:** make the window bigger and smaller. The toolbar and status line keep their height,
-the recipe list keeps its width, and the tabs take the rest.
+the recipe list keeps its width, and the tabs take the rest. Drag the edge between the recipe
+list and the tabs to make the list wider or narrower. The window won't get smaller than 600 by
+400, so nothing gets squeezed out of sight.
 
 **How:** docked controls take their edges in the order they were drawn (Format > Order changes
 it), and `fill` takes what's left. Docking works inside containers too: on the Ingredients
 page, the Servings row is a Frame docked to the top of the page, with the list filling the rest.
+
+The recipe list has `splitter` True: a bar along its inner edge that the user drags. The form
+has `minwidth` 600 and `minheight` 400 (click the form itself and look in the Properties panel;
+`maxwidth`, `maxheight` and `resizable` are there too).
 
 ## The toolbar: flat buttons, toggles, and a control array
 

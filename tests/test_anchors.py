@@ -255,3 +255,98 @@ def test_docking_in_the_designer(app):
     editor.undo()
     editor.undo()
     assert editor.design.control("Label1")["dock"] == "none"
+
+
+# ----- splitters, and the form's size limits -----
+
+def test_dock_leaves_room_for_splitters():
+    rects = layout.dock(400, 300, [("left", (100, 0), 6), ("bottom", (0, 24), 6), ("fill", (0, 0), 6)])
+    assert rects == [(0, 0, 100, 300), (106, 276, 294, 24), (106, 0, 294, 270)]  # (fill has no bar)
+    assert layout.splitter_rect("left", rects[0], 6) == (100, 0, 6, 300)
+    assert layout.splitter_rect("bottom", rects[1], 6) == (106, 270, 294, 6)
+    assert layout.dock(50, 50, [("left", (48, 0), 6), ("fill", (0, 0))])[1] == (50, 0, 0, 50)  # (a bar never overflows)
+
+
+def test_a_splitter_resizes_its_docked_control(tmp_path):
+    design = formfile.FormDesign(name="Form1", width=400, height=300)
+    for type_name, name, props in (("ListBox", "Side", {"dock": "left", "width": 100, "splitter": True}),
+                                   ("Label", "Status", {"dock": "bottom", "height": 24, "splitter": True}),
+                                   ("TextBox", "Main", {"dock": "fill", "splitter": True})):
+        spec = REGISTRY[type_name].new_spec(name, 0, 0)
+        spec.update(props)
+        design.controls.append(spec)
+    formfile.save(design, tmp_path / "Form1.form")
+    form = Form(tmp_path / "Form1.form")
+    form.show()
+    settle(form)
+    try:
+        assert rect(form.Side) == (0, 0, 100, 300) and rect(form.Main) == (106, 0, 294, 270)
+        bar = form.Side._splitter_bar
+        assert (bar.winfo_x(), bar.winfo_width(), str(bar.cget("cursor"))) == (100, 6, "sb_h_double_arrow")
+        assert form.Main._splitter_bar is None  # (fill has nothing to split from)
+        drag = type("Drag", (), {"x_root": form.Side.widget.winfo_rootx() + 180, "y_root": 0})()
+        form.Side._drag_splitter(drag)
+        settle(form)
+        assert rect(form.Side) == (0, 0, 180, 300) and rect(form.Main)[:3] == (186, 0, 214)
+        drag.y_root = form.Status.widget.winfo_rooty() - 26  # the bottom's bar dragged up: taller
+        form.Status._drag_splitter(drag)
+        settle(form)
+        assert form.Status.height == 50
+        form.Side.visible = False  # its bar goes with it
+        settle(form)
+        assert not bar.winfo_ismapped() and rect(form.Main)[:2] == (0, 0)
+        form.Side.visible = True
+        form.Side.splitter = False
+        settle(form)
+        assert not bar.winfo_ismapped() and rect(form.Main)[0] == 180
+    finally:
+        form.root.destroy()
+
+
+def test_the_forms_size_limits(tmp_path):
+    from readymade.form import check_limits
+
+    design = formfile.FormDesign(name="Form1", minwidth=300, minheight=200, maxwidth=800, resizable=False)
+    text = formfile.dumps(design)
+    assert '"minwidth": 300' in text and '"resizable": false' in text and "maxheight" not in text  # (0: none)
+    assert formfile.loads(text).maxwidth == 800 and not formfile.loads(text).resizable
+    assert "resizable" not in formfile.dumps(formfile.FormDesign(name="Form1"))  # (other forms' files don't change)
+    formfile.save(design, tmp_path / "Form1.form")
+    form = Form(tmp_path / "Form1.form")
+    form.show()
+    try:
+        root = form.root
+        assert root.minsize() == (300, 200) and root.maxsize()[0] == 800 and root.resizable() == (0, 0)
+        form.resizable = True
+        form.maxwidth = 0  # no limit: the screen's
+        assert root.resizable() == (1, 1) and root.maxsize()[0] == root.winfo_screenwidth()
+        with pytest.raises(ValueError, match="minwidth .* can't be more than maxwidth"):
+            check_limits({"minwidth": 500, "maxwidth": 400, "minheight": 0, "maxheight": 0})
+        form.maxheight = 400
+        with pytest.raises(ValueError, match="minheight .* can't be more than maxheight"):
+            form.minheight = 401
+        with pytest.raises(ValueError, match="negative"):
+            form.minwidth = -1
+    finally:
+        form.root.destroy()
+
+
+def test_size_limits_in_the_designer(app):
+    from readymade.form import FORM
+
+    editor = app.form
+    props = dict(editor.props_for(FORM))
+    assert (props["minwidth"], props["maxheight"], props["resizable"]) == (0, 0, True)
+    editor.set_property(FORM, "minwidth", "500")  # a minimum above the form's width: it widens
+    assert (editor.design.minwidth, editor.design.width) == (500, 500)
+    with pytest.raises(AssertionError, match="width can't be less than minwidth"):  # (the error box)
+        editor.set_property(FORM, "width", "450")
+    editor.set_property(FORM, "maxheight", "250")  # the height comes down to it
+    assert editor.design.height == 250
+    editor.set_form_size(900, 900)  # (dragging the form's edge: as far as the limits)
+    assert (editor.design.width, editor.design.height) == (900, 250)
+    editor.undo()
+    editor.undo()
+    assert (editor.design.maxheight, editor.design.height) == (0, 300)
+    editor.set_property(FORM, "resizable", "False")
+    assert app.save() and not formfile.load(editor.path).resizable

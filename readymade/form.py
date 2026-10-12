@@ -177,6 +177,9 @@ class Form:
         self._usual_background = self.root.cget("background")
         self.backcolor = design.backcolor  # before the controls, which may show it
         self.cursor = design.cursor
+        self._resizable = design.resizable
+        self._limits = {key: getattr(design, key) for key in SIZE_LIMITS}
+        self._apply_limits()
         self.controls = {}
         self._containers = {}  # control name -> the Frame (or Grid) it's in, or None
         self._designed_size = self._configured_size = (design.width, design.height)
@@ -284,6 +287,45 @@ class Form:
     def cursor(self, value):
         self._cursor = appearance.check_choice("cursor", value, tuple(appearance.CURSORS))
         self.root["cursor"] = appearance.CURSORS[self._cursor]
+
+    @property
+    def resizable(self):
+        """Whether the user can change the form's size. False: it stays the size it was
+        designed (or code sets), as a dialog does."""
+        return self._resizable
+
+    @resizable.setter
+    def resizable(self, value):
+        self._resizable = bool(value)
+        self._apply_limits()
+
+    def _limit(key, doc):
+        def get(self):
+            return self._limits[key]
+
+        def set(self, value):
+            value = int(value)
+            if value < 0:
+                raise ValueError(f"{key} can't be negative (0: no limit)")
+            limits = {**self._limits, key: value}
+            check_limits(limits)
+            self._limits = limits
+            self._apply_limits()
+
+        return property(get, set, doc=doc)
+
+    minwidth = _limit("minwidth", "The narrowest the user can make the form, in pixels; 0 for no limit.")
+    minheight = _limit("minheight", "The shortest the user can make the form, in pixels; 0 for no limit.")
+    maxwidth = _limit("maxwidth", "The widest the user can make the form, in pixels; 0 for no limit.")
+    maxheight = _limit("maxheight", "The tallest the user can make the form, in pixels; 0 for no limit.")
+    del _limit
+
+    def _apply_limits(self):
+        limits, root = self._limits, self.root
+        root.resizable(self._resizable, self._resizable)
+        root.minsize(limits["minwidth"] or 1, limits["minheight"] or 1)
+        # (No limit: the screen's size, Tk's own maximum.)
+        root.maxsize(limits["maxwidth"] or root.winfo_screenwidth(), limits["maxheight"] or root.winfo_screenheight())
 
     @property
     def default_button(self):
@@ -626,6 +668,16 @@ class Form:
             task.cancel()  # its busy async handlers stop quietly
         if not _loaded and _app is not None:
             _app.quit()  # ends main_loop()
+
+
+SIZE_LIMITS = ("minwidth", "minheight", "maxwidth", "maxheight")
+
+
+def check_limits(limits):
+    """Raise ValueError unless each min is at most its max (0 is no limit)."""
+    for low, high in (("minwidth", "maxwidth"), ("minheight", "maxheight")):
+        if limits[low] and limits[high] and limits[low] > limits[high]:
+            raise ValueError(f"{low} ({limits[low]}) can't be more than {high} ({limits[high]})")
 
 
 _RESERVED = {name for name in dir(Form)} | {"root", "controls", "menus", "path", "loaded", FORM}

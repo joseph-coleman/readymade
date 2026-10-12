@@ -182,7 +182,7 @@ class Control:
             "top": 0,
             "width": width,
             "height": height,
-            **({"anchor": layout.DEFAULT, "dock": "none"} if issubclass(cls, Anchored) else {}),
+            **({"anchor": layout.DEFAULT, "dock": "none", "splitter": False} if issubclass(cls, Anchored) else {}),
             "enabled": True,
             "visible": True,
             **({"tabindex": 0} if issubclass(cls, TabIndex) else {}),
@@ -278,6 +278,47 @@ class Control:
 
     def _docked(self):
         return getattr(self, "_dock", "none") != "none" and self._grid() is None
+
+    # ----- a docked control's splitter: a bar beyond its inner edge, dragged to resize it -----
+
+    _splitter_bar = None
+
+    def _splitter_size(self):
+        """How thick its splitter bar is (0: none)."""
+        return SPLITTER if getattr(self, "_splitter", False) and self._dock in ("top", "bottom", "left", "right") else 0
+
+    def _show_splitter(self, rect):
+        """Put its splitter bar at rect, or with None take it away."""
+        if rect is None or (rect[2] <= 0 or rect[3] <= 0):
+            if self._splitter_bar is not None:
+                self._splitter_bar.place_forget()
+            return
+        bar = self._splitter_bar
+        across = self._dock in ("left", "right")
+        if bar is None:
+            bar = self._splitter_bar = tk.Frame(self.widget.master, bd=0, highlightthickness=0)
+            # (It isn't inside the control's widget, so it goes when that does.)
+            self.widget.bind("<Destroy>", lambda e: e.widget is self.widget and bar.destroy(), add="+")
+            if not self.design:  # (in the designer it shows where it'll be; dragging is the program's)
+                bar["cursor"] = "sb_h_double_arrow" if across else "sb_v_double_arrow"
+                bar.bind("<B1-Motion>", self._drag_splitter)
+        bar["background"] = self.widget.master.cget("background")
+        bar.place(x=rect[0], y=rect[1], width=rect[2], height=rect[3])
+        bar.lift()
+
+    def _drag_splitter(self, e):
+        """Its bar dragged: its own size follows the mouse (keeping a little of each side)."""
+        container = self.widget.master
+        if self._dock in ("left", "right"):
+            start = self.widget.winfo_rootx()
+            size = e.x_root - start if self._dock == "left" else start + self.widget.winfo_width() - e.x_root
+            room = container.winfo_width()
+        else:
+            start = self.widget.winfo_rooty()
+            size = e.y_root - start if self._dock == "top" else start + self.widget.winfo_height() - e.y_root
+            room = container.winfo_height()
+        size = max(SPLITTER, min(int(size), room - 2 * SPLITTER))
+        setattr(self, "width" if self._dock in ("left", "right") else "height", size)
 
     def _grid(self):
         """The Grid it's in, or None."""
@@ -489,14 +530,22 @@ def arrange_docked(widget, width=None, height=None):
     for child in widget.winfo_children():
         ref = _controls.get(child)
         control = ref() if ref else None
-        if control is not None and control._docked() and (control._visible or control.design):
+        if control is None:
+            continue
+        if control._docked() and (control._visible or control.design):
             docked.append(control)
-    rects = layout.dock(width, height, [(c._dock, (c._width, c._height)) for c in docked])
+        else:
+            control._show_splitter(None)
+    rects = layout.dock(width, height, [(c._dock, (c._width, c._height), c._splitter_size()) for c in docked])
     for control, rect in zip(docked, rects):
         if control._dock_rect != rect:
             control._dock_rect = rect
             control._place()
+        bar = control._splitter_size()
+        control._show_splitter(layout.splitter_rect(control._dock, rect, bar) if bar else None)
 
+
+SPLITTER = 6  # pixels: a docked control's splitter bar
 
 _watching = weakref.WeakSet()  # container widgets that lay out their docked controls when resized
 

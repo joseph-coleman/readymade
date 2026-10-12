@@ -16,7 +16,7 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from readymade import appearance, codegen, dialogs, formfile, layout, menus, names
 from readymade.controls import GRID_CELL, LOOK_CHOICES, REGISTRY, Event, shown_page, tab_numbers
-from readymade.form import FORM, FORM_EVENTS, check_name
+from readymade.form import FORM, FORM_EVENTS, SIZE_LIMITS, check_limits, check_name
 from readymade.ide import arrange, assist
 from readymade.ide.codeview import CodeView
 from readymade.ide.designer import GRID, DesignSurface, snap
@@ -195,6 +195,7 @@ class FormEditor(Editor):
         if obj == FORM:
             d = self.design
             return [("name", d.name), ("text", d.text), ("width", d.width), ("height", d.height),
+                    *((key, getattr(d, key)) for key in SIZE_LIMITS), ("resizable", d.resizable),
                     ("backcolor", d.backcolor), ("cursor", d.cursor),
                     ("default_button", d.default_button), ("cancel_button", d.cancel_button)]
         spec = self.design.control(obj)
@@ -403,7 +404,11 @@ class FormEditor(Editor):
             elif obj == FORM:
                 if prop == "backcolor":
                     value = appearance.check_color(value)
+                if prop in ("width", "height", *SIZE_LIMITS):
+                    self._check_form_size(prop, value)
                 setattr(self.design, prop, value)
+                if prop in SIZE_LIMITS:  # a new limit takes the designed size along, into it
+                    self.set_form_size(self.design.width, self.design.height)
                 self.surface.refresh_form()
             else:
                 spec = self._spec(obj)
@@ -577,9 +582,31 @@ class FormEditor(Editor):
                     moves.update(self._anchored(spec["name"], new[2] - old[2], new[3] - old[3]))
         return moves
 
+    def _check_form_size(self, prop, value):
+        """Refuse a size the form's limits don't allow, or limits that don't fit together."""
+        size = {key: getattr(self.design, key) for key in ("width", "height", *SIZE_LIMITS)}
+        size[prop] = value
+        if prop in SIZE_LIMITS and value < 0:
+            raise ValueError(f"{prop} can't be negative (0: no limit)")
+        check_limits(size)
+        if prop in ("width", "height") and self._within_limits(size["width"], size["height"]) != (
+                size["width"], size["height"]):
+            low, high = size[f"min{prop}"], size[f"max{prop}"]
+            raise ValueError(f"{prop} must be from {low or GRID} to {high}" if high else
+                             f"{prop} can't be less than min{prop} ({low})")
+
+    def _within_limits(self, width, height):
+        """(width, height), brought within the form's minimum and maximum (0: none)."""
+        d = self.design
+        width = max(width, d.minwidth) if d.minwidth else width
+        height = max(height, d.minheight) if d.minheight else height
+        return (min(width, d.maxwidth) if d.maxwidth else width, min(height, d.maxheight) if d.maxheight else height)
+
     @_undoable
     def set_form_size(self, width, height):
-        """Resize the form; its anchored controls follow, as they will when the program runs."""
+        """Resize the form (within its limits); its anchored controls follow, as they will when
+        the program runs."""
+        width, height = self._within_limits(width, height)
         across, down = width - self.design.width, height - self.design.height
         self.design.width, self.design.height = width, height
         self.surface.refresh_form()
