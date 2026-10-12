@@ -31,7 +31,11 @@ class TabStrip(BackColor, Cursor, Tooltip, Anchored, Control):
         self._tabs = []
         self._pages = []  # a tk.Frame for each page there's been (pages past the tabs are hidden)
         self._on_click = []
-        self._notebook = ttk.Notebook(parent, style="Preview.TNotebook" if self.design else "TNotebook")
+        style = "Preview.TNotebook" if self.design else "TabStrip.TNotebook"
+        # Each system's theme sets in its pages its own way (macOS's by about 18 points a side and
+        # 8 and 17 above and below); with none, a page is the size the designer shows, everywhere.
+        ttk.Style(parent).configure(style, padding=0)
+        self._notebook = ttk.Notebook(parent, style=style)
         self._notebook.bind("<<NotebookTabChanged>>", lambda e: self._changed(), add="+")
         return self._notebook
 

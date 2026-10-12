@@ -142,6 +142,7 @@ def _create_dark_theme(style, c, light):
                                                   if (value := str(style.lookup(name, key)) or _ELEMENT_DEFAULTS.get(key))},
                                     "map": style.map(name) or {}}
                 for name in _PREVIEWED}  # (the light theme is the one in use here)
+    previews["Preview.TNotebook"]["configure"]["padding"] = 0  # (a TabStrip's pages: none, as when it runs)
     copied = {name: {"configure": style.configure(name) or {}, "map": style.map(name) or {}}
               for name in _STANDARD_STYLES}  # (the light theme is the one in use here)
     style.theme_create(DARK_TTK, parent=light, settings=copied)

@@ -472,3 +472,24 @@ def test_tree_colors_fill_the_empty_space_too(tmp_path, closing):
     assert field(form.ListView1.widget) == "Treeview.field"  # (just a font: the theme's own field)
     form.TreeView1.backcolor = ""
     assert tree.cget("style") == "Treeview"
+
+
+def test_tabstrip_pages_are_the_same_size_in_every_theme(tmp_path, closing):
+    """macOS's theme sets a notebook's pages in by about 18 points a side (8 and 17 above and
+    below); a TabStrip's page fills it below its tabs, as in the designer, whatever the theme."""
+    from tkinter import ttk
+
+    def page_size():
+        form = make_form(tmp_path, ("TabStrip", "TabStrip1", None, {"width": 300, "height": 200}))
+        closing(form)
+        pump(form, 0.05)
+        return form.TabStrip1.inner.winfo_width(), form.TabStrip1.inner.winfo_height()
+
+    usual = page_size()
+    style = ttk.Style()
+    style.configure("TNotebook", padding=(18, 8, 18, 17))  # (as macOS's theme has it)
+    try:
+        assert page_size() == usual
+    finally:
+        style.configure("TNotebook", padding="")
+    assert usual[0] >= 296  # (just the page's own border, if the theme draws one)
