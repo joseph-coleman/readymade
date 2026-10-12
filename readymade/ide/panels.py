@@ -4,6 +4,7 @@ and while a program is paused, Locals, Watches, Call Stack and Breakpoints."""
 from __future__ import annotations
 
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 
 from readymade import menus
@@ -14,36 +15,93 @@ from readymade.ide.dialog import Dialog
 MONO = options.CODE_FONT  # code and output: Tools > Options chooses it
 
 
+ICONS = Path(__file__).resolve().parent / "icons"  # (made by tools/make_toolbox_icons.py)
+
+
 class Toolbox(ttk.Frame):
-    """Pick a control type to draw. Double-click one to drop it on the form."""
+    """Pick a control type to draw: a grid of icons, as in VB, with their names in their
+    tooltips. Double-click one to drop it on the form. The grid fills the panel's width,
+    and scrolls when it's taller than the panel."""
 
     def __init__(self, master, on_double_click):
         super().__init__(master, padding=4)
         ttk.Label(self, text="Toolbox").pack(anchor="w", pady=(0, 4))
-        self._var = tk.StringVar(value="")
+        self._var = tk.StringVar(self, value="")
         self._on_double_click = on_double_click
         self._pending_drop = ""
         self._usual = {}  # button -> its colors before a theme changed them
+        self._theme = "light"
+        self._images = {}  # (theme, tool) -> its PhotoImage (Tk drops an image nothing in Python holds)
+        scaling = float(self.tk.call("tk", "scaling"))  # pixels per point: 1.33 at 96 dpi
+        self._size = 40 if scaling >= 1.9 else 20  # (a high-DPI screen: the bigger icons)
+        body = ttk.Frame(self)
+        body.pack(fill=tk.BOTH, expand=True)
+        self._scroller = tk.Canvas(body, highlightthickness=0, bd=0,
+                                   background=ttk.Style(self).lookup("TFrame", "background"))
+        self._bar = ttk.Scrollbar(body, command=self._scroller.yview)
+        self._scroller.configure(yscrollcommand=self._bar.set)
+        self._scroller.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._grid = ttk.Frame(self._scroller)
+        self._grid_window = self._scroller.create_window(0, 0, window=self._grid, anchor="nw")
         # The release that ends a double-click selects the button again, so the drop
         # waits for it: the ToolboxDrop tag runs after the Radiobutton class bindings.
         self.bind_class("ToolboxDrop", "<ButtonRelease-1>", self._drop)
-        for label, value in [("Pointer", "")] + [(name, name) for name in REGISTRY]:
-            button = tk.Radiobutton(
-                self, text=label, value=value, variable=self._var,
-                indicatoron=False, width=13, anchor="w", padx=6, pady=3,
-            )
-            button.pack(fill=tk.X, pady=1)
+        self.buttons = {}  # tool ("" for the pointer) -> its button
+        for value in ["", *REGISTRY]:
+            button = tk.Radiobutton(self._grid, image=self._icon(value), value=value, variable=self._var,
+                                    indicatoron=False, padx=3, pady=3)
             tooltips.tip(button, _tool_tip(value))
             if value:
                 tags = button.bindtags()
                 button.bindtags((tags[0], tags[1], "ToolboxDrop", *tags[2:]))
                 button.bind("<Double-Button-1>", lambda e, v=value: setattr(self, "_pending_drop", v))
+            for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                button.bind(sequence, self._wheel, add="+")
+            self.buttons[value] = button
+        self._cell = max(b.winfo_reqwidth() for b in self.buttons.values()) + 2
+        self._columns = 0
+        self._scroller["width"] = 3 * self._cell  # three across, until the panel is made wider
+        self._scroller.bind("<Configure>", lambda e: self._arrange())
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self._scroller.bind(sequence, self._wheel)
+
+    def _icon(self, tool, theme=None):
+        theme = theme or self._theme
+        key = (theme, tool)
+        if key not in self._images:
+            path = ICONS / theme / f"{tool or 'Pointer'}-{self._size}.png"
+            if not path.exists():  # a control type with no icon of its own (one from a library)
+                path = ICONS / theme / f"Unknown-{self._size}.png"
+            self._images[key] = tk.PhotoImage(master=self, file=str(path))
+        return self._images[key]
+
+    def _arrange(self):
+        """As many across as fit the panel's width; the scroll bar only when they don't all fit."""
+        columns = max(1, self._scroller.winfo_width() // self._cell)
+        if columns != self._columns:
+            self._columns = columns
+            for index, button in enumerate(self.buttons.values()):
+                button.grid(row=index // columns, column=index % columns, padx=1, pady=1)
+            self._grid.update_idletasks()
+        height = self._grid.winfo_reqheight()
+        self._scroller.configure(scrollregion=(0, 0, 0, height))
+        if height > self._scroller.winfo_height() > 1:
+            if not self._bar.winfo_ismapped():
+                self._bar.pack(side=tk.RIGHT, fill=tk.Y, before=self._scroller)
+        else:
+            self._bar.pack_forget()
+            self._scroller.yview_moveto(0)
+
+    def _wheel(self, e):
+        if self._bar.winfo_ismapped():
+            self._scroller.yview_scroll(-1 if (e.num == 4 or e.delta > 0) else 1, "units")
+        return "break"
 
     def apply_chrome(self, chrome):
-        """Color the tool buttons (plain Tk widgets) for a theme; None: their usual colors."""
-        for button in self.winfo_children():
-            if not isinstance(button, tk.Radiobutton):
-                continue
+        """Color the tool buttons (plain Tk widgets) for a theme, with its icons; None: the usual look."""
+        self._theme = "light" if chrome is None else "dark"
+        self._scroller.configure(background=ttk.Style(self).lookup("TFrame", "background"))
+        for tool, button in self.buttons.items():
             if button not in self._usual:
                 self._usual[button] = {key: button.cget(key) for key in
                                        ("background", "foreground", "selectcolor", "activebackground",
@@ -52,7 +110,7 @@ class Toolbox(ttk.Frame):
                 "background": chrome.button, "foreground": chrome.text, "selectcolor": chrome.field,
                 "activebackground": chrome.button_active, "activeforeground": chrome.text,
                 "highlightbackground": chrome.window}
-            button.configure(**colors)
+            button.configure(image=self._icon(tool), **colors)
 
     def _drop(self, _):
         value, self._pending_drop = self._pending_drop, ""
@@ -70,9 +128,10 @@ class Toolbox(ttk.Frame):
 
 def _tool_tip(type_name):
     if not type_name:
-        return "Select and move controls on the form (Esc gets back to it while drawing)"
+        return "Pointer: select and move controls on the form (Esc gets back to it while drawing)"
     doc = (REGISTRY[type_name].__doc__ or "").strip().split("\n\n")[0]
-    return " ".join(doc.split()) + "\nDrag on the form to draw one, or double-click here. F1 on it for more."
+    return (f"{type_name}: " + " ".join(doc.split()) +
+            "\nDrag on the form to draw one, or double-click here. F1 on it for more.")
 
 
 class ProjectExplorer(ttk.Frame):
@@ -410,7 +469,7 @@ class PropertiesPanel(ttk.Frame):
             label = ttk.Label(self.grid_frame, text=prop)
             label.grid(row=row, column=0, sticky="w", padx=(0, 6), pady=1)
             self._connect_row(label)
-            var = tk.StringVar(value=_display(value))
+            var = tk.StringVar(self, value=_display(value))
             in_dialog = isinstance(value, list) or (prop == "text" and multiline)
             choices = ("True", "False") if isinstance(value, bool) else self.app.choices_for(obj, prop)
             chooser = self.app.chooser_for(obj, prop)

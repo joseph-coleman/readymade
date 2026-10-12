@@ -86,9 +86,9 @@ def test_what_the_lists_notes_say(app, tmp_path):
     x, y, _, h = tree.bbox(rows[1], "#1")
     assert app.breakpoints_panel.tip_at(x + 3, y + h // 2).startswith("A watch that pauses the program")
 
-    tools = [w for w in app.toolbox.winfo_children() if isinstance(w, tk.Radiobutton)]
-    assert all(tooltips.text_of(w) for w in tools)
-    assert tooltips.text_of(tools[1]).startswith("Text on a form")  # the Label's
+    tools = app.toolbox.buttons
+    assert all(tooltips.text_of(w) for w in tools.values())
+    assert tooltips.text_of(tools["Label"]).startswith("Label: Text on a form")  # (an icon: so its name first)
 
 
 @pytest.mark.parametrize("panel, title", [
@@ -102,7 +102,7 @@ def test_f1_in_each_window(app, panel, title):
     if panel == "immediate":
         target = widget.entry
     elif panel == "toolbox":
-        target = widget.winfo_children()[1]  # (a tool)
+        target = widget.buttons[""]  # (the pointer)
     else:
         target = widget.tree
     if panel in ("watches_panel", "call_stack", "breakpoints_panel"):

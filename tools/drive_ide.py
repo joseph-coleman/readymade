@@ -185,7 +185,7 @@ def drive(d):
     app = d.app
     editor = app.form  # Form1's editor
     canvas = editor.surface.canvas
-    tool = {w.cget("text"): w for w in app.toolbox.winfo_children() if w.winfo_class() == "Radiobutton"}
+    tool = app.toolbox.buttons  # {type name: its button}
 
     print("Design view")
     d.shot("design")

@@ -70,9 +70,9 @@ class App:
     def _build_ui(self):
         root = self.root
         root.geometry("1180x740")
-        if "clam" in ttk.Style().theme_names():
-            ttk.Style().theme_use("clam")
-        self.light_theme = ttk.Style().theme_use()  # the Light option's look; Dark is its own theme (options.py)
+        if "clam" in ttk.Style(root).theme_names():
+            ttk.Style(root).theme_use("clam")
+        self.light_theme = ttk.Style(root).theme_use()  # the Light option's look; Dark is its own theme (options.py)
         menubar.build(self)  # the menus and their shortcuts (menubar.py)
 
         outer = ttk.PanedWindow(root, orient=tk.VERTICAL)

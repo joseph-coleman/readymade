@@ -9,7 +9,7 @@ from tkinter import messagebox
 
 import pytest
 
-from readymade import formfile
+from readymade import formfile, usersettings
 from readymade.form import FORM
 from readymade.ide.editors import MULTIPLE
 
@@ -42,6 +42,42 @@ def test_new_project_opens_its_first_form(app):
     assert app.properties.app is app.form
     assert app.explorer.tree.exists("form:Form1")
     assert not app.is_dirty()
+
+
+def test_the_toolbox_is_a_grid_of_icons(app):
+    from readymade.controls import REGISTRY
+    from readymade.ide import options
+    from readymade.ide.panels import ICONS
+
+    for theme in ("light", "dark"):  # every control has its own icon, in both sizes
+        for tool in ("Pointer", *REGISTRY):
+            for size in (20, 40):
+                assert (ICONS / theme / f"{tool}-{size}.png").exists(), (theme, tool, size)
+    toolbox = app.toolbox
+    assert list(toolbox.buttons) == ["", *REGISTRY]
+    app.root.geometry("1100x700")
+    app.root.update()
+    assert toolbox._columns == 3  # (as it starts)
+    rows = {int(b.grid_info()["row"]) for b in toolbox.buttons.values()}
+    assert len(rows) == -(-len(toolbox.buttons) // 3) and not toolbox._bar.winfo_ismapped()
+
+    toolbox.master.sashpos(0, toolbox.winfo_width() + 2 * toolbox._cell)  # its edge dragged wider: more across
+    app.root.update()
+    assert toolbox._columns == 5
+    app.root.geometry("1100x400")
+    app.root.update()
+    toolbox.master.sashpos(0, toolbox._cell + 12)  # one across in a short window: too tall, so a scroll bar
+    app.root.update()
+    assert toolbox._columns == 1 and toolbox._bar.winfo_ismapped()
+    assert toolbox._grid.winfo_reqheight() > toolbox._scroller.winfo_height()
+
+    toolbox.buttons["Slider"].invoke()
+    assert toolbox.tool == "Slider"
+    pointer = str(toolbox.buttons[""].cget("image"))
+    usersettings.set("theme", "dark")
+    options.apply(app)
+    assert str(toolbox.buttons[""].cget("image")) != pointer  # the dark set
+    usersettings.set("theme", "light")
 
 
 def test_draw_double_click_rename_save(app):

@@ -33,8 +33,8 @@ class ToolDialog(Dialog):
         for row, (name, tool) in enumerate(tools.items(), start=2):
             ttk.Label(body, text=name).grid(row=row, column=0, sticky="w", padx=4, pady=2)
             ttk.Label(body, text=tool.about, style="Note.TLabel").grid(row=row, column=1, sticky="w", padx=4)
-            self.shared[name] = tk.BooleanVar(value=name in shared)
-            self.mine[name] = tk.BooleanVar(value=name in mine)
+            self.shared[name] = tk.BooleanVar(self, value=name in shared)
+            self.mine[name] = tk.BooleanVar(self, value=name in mine)
             ttk.Checkbutton(body, variable=self.shared[name]).grid(row=row, column=2)
             ttk.Checkbutton(body, variable=self.mine[name]).grid(row=row, column=3)
             self.status[name] = ttk.Frame(body)
@@ -47,7 +47,7 @@ class ToolDialog(Dialog):
             ttk.Separator(body).grid(row=row, column=0, columnspan=5, sticky="ew", pady=6)
             row += 1
             ttk.Label(body, text=label).grid(row=row, column=0, columnspan=2, sticky="w", padx=4)
-            self.switch = (tk.BooleanVar(value=bool(on_shared)), tk.BooleanVar(value=bool(on_mine)))
+            self.switch = (tk.BooleanVar(self, value=bool(on_shared)), tk.BooleanVar(self, value=bool(on_mine)))
             ttk.Checkbutton(body, variable=self.switch[0]).grid(row=row, column=2)
             ttk.Checkbutton(body, variable=self.switch[1]).grid(row=row, column=3)
 

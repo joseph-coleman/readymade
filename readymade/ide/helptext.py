@@ -202,8 +202,8 @@ def panel(name, platform=sys.platform):
         "toolbox": ("Toolbox", "the controls to draw", [
             "Choose a control, then drag on the form to draw it (double-click a tool to drop one in",
             "the middle of the form). Pointer selects and moves controls; it comes back after each",
-            "control is drawn. Rest the mouse on a tool to see what it's for; F1 with one chosen",
-            "is help on it.",
+            "control is drawn (the arrow, top left). Rest the mouse on a tool for its name and what",
+            "it's for; F1 with one chosen is help on it. Drag the Toolbox's edge to fit more across.",
         ]),
         "locals": ("Locals", "the paused function's variables", [
             "While the program is paused: the variables of the function chosen in Call Stack (the",

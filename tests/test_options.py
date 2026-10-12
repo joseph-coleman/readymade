@@ -87,7 +87,7 @@ def test_dark_is_the_whole_ide_except_the_form(app):
     assert style.lookup(".", "background") == chrome.window and app.root.cget("background") == chrome.window
     assert style.lookup("Treeview", "background") == chrome.field  # the Project Explorer
     assert padding(style) == light_tab_padding  # the light theme's sizes carry over
-    button = next(w for w in app.toolbox.winfo_children() if isinstance(w, tk.Radiobutton))
+    button = app.toolbox.buttons["Label"]
     assert button.cget("background") == chrome.button
     assert app.form.surface.cget("background") == chrome.workspace
     assert app.properties._scroller.cget("background") == chrome.window

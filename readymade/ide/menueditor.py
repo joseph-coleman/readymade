@@ -37,8 +37,8 @@ class MenuEditor(Dialog):
 
         fields = ttk.Frame(body, padding=(8, 0, 0, 0))
         fields.grid(row=0, column=1, sticky="new")
-        self.text_var, self.name_var = tk.StringVar(), tk.StringVar()
-        self.checked_var, self.enabled_var = tk.BooleanVar(), tk.BooleanVar()
+        self.text_var, self.name_var = tk.StringVar(self), tk.StringVar(self)
+        self.checked_var, self.enabled_var = tk.BooleanVar(self), tk.BooleanVar(self)
         self.fields = []
         for row, (label, var) in enumerate((("Text", self.text_var), ("Name", self.name_var))):
             ttk.Label(fields, text=label).grid(row=row, column=0, sticky="w", pady=2)
@@ -51,12 +51,12 @@ class MenuEditor(Dialog):
         ttk.Label(fields, text="Shortcut").grid(row=2, column=0, sticky="w", pady=2)
         shortcut = ttk.Frame(fields)
         shortcut.grid(row=2, column=1, sticky="w", pady=2)
-        self.modifier_vars = {m: tk.BooleanVar() for m in menus.MODIFIERS}
+        self.modifier_vars = {m: tk.BooleanVar(self) for m in menus.MODIFIERS}
         for modifier, var in self.modifier_vars.items():
             box = ttk.Checkbutton(shortcut, text=menus.modifier_label(modifier), variable=var)
             box.pack(side=tk.LEFT)
             self.fields.append(box)
-        self.key_var = tk.StringVar()
+        self.key_var = tk.StringVar(self)
         key = ttk.Combobox(shortcut, textvariable=self.key_var, values=("", *menus.KEYS), width=7)
         key.pack(side=tk.LEFT, padx=(4, 0))
         self.fields.append(key)
