@@ -285,6 +285,10 @@ def test_bind_shortcut():
         entry.focus_force()
         root.update()
         entry.event_generate("<Control-KeyPress-s>")
+        if root.tk.call("tk", "windowingsystem") == "win32":
+            root.update()
+            assert fired == ["save"]
+            pytest.skip("Tk can't make a Mac's Option-key characters (Ï, ß) on a Windows keyboard")
         entry.event_generate("<KeyPress>", keysym="Idiaeresis", keycode=(3 << 24) | 0xCF, state=0x11)
         entry.event_generate("<KeyPress>", keysym="ssharp", keycode=(1 << 24) | 0xDF, state=0x11)  # another key
         entry.event_generate("<KeyPress>", keysym="Idiaeresis", keycode=(3 << 24) | 0xCF, state=0x19)  # with ⌘ too

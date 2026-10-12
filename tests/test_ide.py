@@ -482,6 +482,7 @@ def test_failed_pip_install_changes_nothing(app, tmp_path, monkeypatch):
     assert app.project.dependencies == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in python and uv are shell scripts")
 def test_uv_is_the_fallback_when_venv_fails(app, tmp_path, monkeypatch):
     broken = tmp_path / "broken-python"
     broken.write_text("#!/bin/sh\necho 'No module named venv'\nexit 1\n")
@@ -1084,7 +1085,7 @@ for n, line in enumerate(source.splitlines(), 1):
 
 def add_fake_linters(app, tmp_path):
     (tmp_path / "fake_linter.py").write_text(FAKE_LINTER)
-    script = str(tmp_path / "fake_linter.py").replace("\\\\", "/")
+    script = (tmp_path / "fake_linter.py").as_posix()  # (in TOML, a backslash in a string starts an escape)
     pyproject = app.project.pyproject
     pyproject.write_text(pyproject.read_text() + (
         "\n[tool.readymade.lint-tools.typing-check]\n"
@@ -1134,23 +1135,30 @@ def test_problems_show_while_typing_and_after_saving(app, tmp_path):
 def test_a_missing_tool_is_reported_once(app):
     from readymade import lint
 
-    lint.set_choices(app.project, ["mypy"], [])  # not installed for the tests
+    pyproject = app.project.pyproject  # a tool that's installed nowhere (mypy might be, on some machines)
+    pyproject.write_text(pyproject.read_text() + (
+        '\n[tool.readymade.lint-tools.nowhere]\n'
+        'command = ["{python}", "-m", "readymade_no_such_tool", "{file}"]\nmodule = "readymade_no_such_tool"\n'))
+    lint.set_choices(app.project, ["nowhere"], [])
     app.linter.check_all()
     app.open_form("Form1")
-    assert wait_for(app, lambda: "mypy isn't installed" in app.immediate.output.get("1.0", "end"))
+    assert wait_for(app, lambda: "nowhere isn't installed" in app.immediate.output.get("1.0", "end"))
     app.linter.check_all()
     wait_for(app, lambda: False, seconds=1)
-    assert app.immediate.output.get("1.0", "end").count("mypy isn't installed") == 1
+    assert app.immediate.output.get("1.0", "end").count("nowhere isn't installed") == 1
 
 
-def test_the_linting_dialog(app, tmp_path):
+def test_the_linting_dialog(app, tmp_path, monkeypatch):
     from readymade import lint
     from readymade.ide.tooldialog import linting_dialog
 
     add_fake_linters(app, tmp_path)
+    # (What's installed is this test's to say: a machine running it may have ruff, or not.)
+    monkeypatch.setattr(lint, "installed", lambda python, tools, env=None: {"pyflakes"})
     dialog = linting_dialog(app)
     assert set(dialog.tools) >= {"pyflakes", "ruff", "flake8", "pylint", "mypy", "typing-check", "save-check"}
     statuses = {name: [w.cget("text") for w in frame.winfo_children()] for name, frame in dialog.status.items()}
+    assert statuses["pyflakes"] == ["installed"]
     assert statuses["ruff"] == ["not installed"]  # and no Install button: there's no environment yet
     assert "create an environment" in dialog.where.cget("text")
     dialog.shared["ruff"].set(True)
@@ -1170,7 +1178,7 @@ sys.stdout.write(re.sub(r"(\\w)=(\\w)", r"\\1 = \\2", source))  # spaces around 
 
 def add_fake_formatter(app, tmp_path):
     (tmp_path / "fake_formatter.py").write_text(FAKE_FORMATTER)
-    script = str(tmp_path / "fake_formatter.py").replace("\\\\", "/")
+    script = (tmp_path / "fake_formatter.py").as_posix()
     pyproject = app.project.pyproject
     pyproject.write_text(pyproject.read_text() + (
         f'\n[tool.readymade.format-tools.spacer]\ncommand = ["{{python}}", "{script}"]\n'))

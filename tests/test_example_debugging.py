@@ -9,13 +9,15 @@ from test_ide import wait_for, wait_for_exit
 
 pytestmark = pytest.mark.usefixtures("display")
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "debugging"
+# As published: not the breakpoints and watches of whoever last tried it on this machine.
+AS_PUBLISHED = shutil.ignore_patterns(".readymade", "__pycache__")
 
 
 @pytest.fixture
 def app(tmp_path):
     from readymade.ide.app import App
 
-    shutil.copytree(EXAMPLE, tmp_path / "debugging")
+    shutil.copytree(EXAMPLE, tmp_path / "debugging", ignore=AS_PUBLISHED)
     root = tk.Tk()
     app = App(root, tmp_path / "debugging")
     app.open_form("Form1", "code")

@@ -59,6 +59,9 @@ class TextBox(BackColor, ForeColor, Font, Aligned, TabStop, Cursor, Tooltip, Anc
         self.editor = tk.Text(frame, width=1, height=1, font="TkTextFont", wrap="none" if horizontal else "word", undo=True)
         self.editor.grid(row=0, column=0, sticky="nsew")
         self.editor.bind("<Tab>", self._tab_out)
+        # (On Windows, Shift+Tab is Tab with Shift held, which the <Tab> binding alone would take
+        # forward; on X11 it's ISO_Left_Tab, which Tk turns into <<PrevWindow>> itself.)
+        self.editor.bind("<Shift-Tab>", self._tab_back)
         self.editor.bind("<KeyPress>", self._limit_typing, add="+")  # maxlength (a Text can't validate)
         self.editor.bind("<<Paste>>", self._limit_paste, add="+")
         # A Text has no alignment of its own, only its tags', so keep all of its text tagged.
@@ -113,6 +116,11 @@ class TextBox(BackColor, ForeColor, Font, Aligned, TabStop, Cursor, Tooltip, Anc
     def _tab_out(e):
         # As in VB, Tab moves to the next control rather than inserting a tab; the form does that.
         e.widget.event_generate("<<NextControl>>")
+        return "break"
+
+    @staticmethod
+    def _tab_back(e):
+        e.widget.event_generate("<<PrevWindow>>")
         return "break"
 
     @property

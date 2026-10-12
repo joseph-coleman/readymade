@@ -73,6 +73,14 @@ def no_dialogs(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_popup_menus(monkeypatch):
+    """A right-click menu is built but never shown: on Windows, tk_popup waits inside the
+    system's menu loop until someone clicks, which would stop the tests there. (A test can
+    put its own tk_popup in, to see that a menu was asked for.)"""
+    monkeypatch.setattr(tk.Menu, "tk_popup", lambda menu, x, y, entry="": None)
+
+
+@pytest.fixture(autouse=True)
 def own_settings(monkeypatch, tmp_path_factory):
     """Each test gets its own user settings folder, never the real one."""
     monkeypatch.setenv("READYMADE_CONFIG_DIR", str(tmp_path_factory.mktemp("settings")))

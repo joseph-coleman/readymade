@@ -11,12 +11,13 @@ import pytest
 
 pytestmark = pytest.mark.usefixtures("display")
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "controls"
+AS_PUBLISHED = shutil.ignore_patterns(".readymade", "__pycache__")  # (not this machine's settings for it)
 
 
 @pytest.fixture
 def program(tmp_path, monkeypatch):
     """The example's Form1 module, loaded from a copy, with its message boxes answered."""
-    folder = shutil.copytree(EXAMPLE, tmp_path / "controls")
+    folder = shutil.copytree(EXAMPLE, tmp_path / "controls", ignore=AS_PUBLISHED)
     monkeypatch.syspath_prepend(str(folder))
     monkeypatch.chdir(folder)
     monkeypatch.delitem(sys.modules, "recipes", raising=False)  # (a fresh copy of its data)
@@ -90,7 +91,7 @@ def test_cooking_counts_down(form, program):
 def test_it_opens_in_the_designer(tmp_path):
     from readymade.ide.app import App
 
-    shutil.copytree(EXAMPLE, tmp_path / "controls")
+    shutil.copytree(EXAMPLE, tmp_path / "controls", ignore=AS_PUBLISHED)
     root = tk.Tk()
     app = App(root, tmp_path / "controls")
     try:

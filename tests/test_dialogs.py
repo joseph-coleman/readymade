@@ -44,7 +44,29 @@ def answer_messagebox(form, button, seen):
     form.root.after(50, press)
 
 
+def test_msgbox_asks_the_system_and_returns_the_button(form, monkeypatch):
+    """On every system: what msgbox asks the message box for, and what it gives back."""
+    from tkinter import messagebox
+
+    asked = []
+
+    def show(dialog):
+        asked.append(dialog.options)
+        return "no"
+
+    monkeypatch.setattr(messagebox.Message, "show", show)
+    assert msgbox("Save changes?", buttons="yesnocancel", icon="question") == "no"
+    options = asked[0]
+    assert options["message"] == "Save changes?" and options["title"] == "My App"  # (the form's title)
+    assert options["type"] == messagebox.YESNOCANCEL and options["icon"] == "question"
+    assert msgbox(42, title="Answer") == "no" and asked[1]["message"] == "42" and asked[1]["title"] == "Answer"
+
+
 def test_msgbox_returns_the_button_clicked(form):
+    """The real message box, clicked from inside the test: only where Tk draws it itself. On
+    Windows and macOS it's the system's own, which a test can't see or click."""
+    if form.root.tk.call("tk", "windowingsystem") != "x11":
+        pytest.skip("the system's own message box (a test can't click it)")
     seen = []
     answer_messagebox(form, "no", seen)
     assert msgbox("Save changes?", buttons="yesnocancel", icon="question") == "no"

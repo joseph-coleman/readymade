@@ -1,12 +1,12 @@
-*.md text eol=lf
-*.py text eol=lf
-*.txt text eol=lf
-*.form text eol=lf
-*.toml text eol=lf
-*.yml text eol=lf
+# Text files have LF line endings, in the repository and when checked out, on every
+# system (whatever its git's core.autocrlf): Python, Tk, TOML and Windows' editors all
+# read LF. "auto" lets git tell text from binary for files with no rule below.
+* text=auto eol=lf
 
+# Pictures are never text.
 *.png binary
 *.jpg binary
 *.gif binary
 *.ico binary
+*.icns binary
 *.bmp binary

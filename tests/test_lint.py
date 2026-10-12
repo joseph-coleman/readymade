@@ -40,7 +40,7 @@ def test_windows_paths_and_commands():
     problems = lint.parse(r"C:\code\app\Form1.py:3:5: E1 bad", lint.BUILT_IN["flake8"], Path("Form1.py"))
     assert [(p.line, p.column) for p in problems] == [(3, 4)]
     command = lint.command_for(lint.BUILT_IN["pylint"], "/py/python", Path("/p/Form1.py"))
-    assert command[0] == "/py/python" and command[-1] == "/p/Form1.py"
+    assert command[0] == "/py/python" and command[-1] == str(Path("/p/Form1.py"))  # (backslashes on Windows)
     assert "--msg-template={path}:{line}:{column}: {msg_id} {msg}" in command  # its own braces survive
 
 
@@ -56,7 +56,7 @@ for n, line in enumerate(source.splitlines(), 1):
 def project(tmp_path):
     project = Project.create(tmp_path / "p")
     (tmp_path / "fake_linter.py").write_text(FAKE_LINTER)
-    script = str(tmp_path / "fake_linter.py").replace("\\\\", "/")
+    script = (tmp_path / "fake_linter.py").as_posix()  # (in TOML, a backslash in a string starts an escape)
     project.pyproject.write_text(project.pyproject.read_text() + (
         "\n[tool.readymade.lint-tools.typing-check]\n"
         f'command = ["{{python}}", "{script}", "--stdin", "{{file}}"]\nstdin = true\n'
