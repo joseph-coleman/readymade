@@ -27,8 +27,9 @@ from readymade.controls.arrays import ControlArray
 from readymade.controls.base import (REGISTRY, Control, Event, control_of, create, focus_widget, grid_of, inner_for,
                                      option_group, page_at, register, repaint_inside, show_as_default, show_page,
                                      shown_page, tab_numbers)
-from readymade.controls.traits import (GRID_CELL, LOOK_CHOICES, Aligned, Anchored, BackColor, Cursor, Font,
-                                       ForeColor, Oriented, Picture, Ranged, TabIndex, TabStop, Tooltip, VAligned, WidgetText)
+from readymade.controls.traits import (GRID_CELL, LOOK_CHOICES, Aligned, Anchored, BackColor, Cursor, Flat, Font,
+                                       ForeColor, Oriented, Picture, Ranged, TabIndex, TabStop, Tooltip, VAligned,
+                                       WidgetText)
 
 # isort: off
 # (The order they register in is the Toolbox's order.)
@@ -47,10 +48,10 @@ from readymade.controls.timer import Timer
 # isort: on
 
 __all__ = [
-    "REGISTRY", "Control", "ControlArray", "Event", "control_of", "create", "focus_widget", "grid_of", "inner_for", "option_group",
-    "page_at", "register", "repaint_inside", "show_as_default", "show_page", "shown_page", "tab_numbers",
-    "GRID_CELL", "LOOK_CHOICES", "Aligned", "Anchored", "BackColor", "Cursor", "Font", "ForeColor", "TabIndex",
-    "Oriented", "Picture", "Ranged", "TabStop", "Tooltip", "VAligned", "WidgetText",
+    "REGISTRY", "Control", "ControlArray", "Event", "control_of", "create", "focus_widget", "grid_of", "inner_for",
+    "option_group", "page_at", "register", "repaint_inside", "show_as_default", "show_page", "shown_page", "tab_numbers",
+    "GRID_CELL", "LOOK_CHOICES", "Aligned", "Anchored", "BackColor", "Cursor", "Flat", "Font", "ForeColor", "Oriented",
+    "Picture", "Ranged", "TabIndex", "TabStop", "Tooltip", "VAligned", "WidgetText",
     "Label", "TextBox", "Frame", "TabStrip", "Button", "CheckBox", "OptionButton", "ComboBox", "ListBox", "TreeView",
     "ListView", "ScrollBar", "Slider", "UpDown", "ProgressBar", "Image", "Canvas", "Grid", "Timer", "Node", "ListItem",
 ]

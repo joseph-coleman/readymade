@@ -369,6 +369,8 @@ def home(platform=sys.platform):
         "  A control's anchor keeps it to edges of the form (or its Frame) as that resizes:",
         "  \"bottom right\" for OK buttons, \"top left right\" to stretch across. Or dock it:",
         "  top, bottom, left or right fills that edge, fill takes what's left (a toolbar, a status line).",
+        "  A toolbar: a Frame with border False docked to the top, holding flat Buttons with pictures;",
+        "  a CheckBox or OptionButton with appearance \"button\" is a toggle (Bold) or one of a group.",
         "  A Grid lays controls out in rows and columns (columns = \"auto, *, 2*, 120\"):",
         "  draw controls into its cells; arrows move them between cells, Shift+arrows span more.",
         "  Format > Tab Order: click the controls in the order Tab should visit them. Click a",

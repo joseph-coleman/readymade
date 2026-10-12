@@ -493,3 +493,48 @@ def test_tabstrip_pages_are_the_same_size_in_every_theme(tmp_path, closing):
     finally:
         style.configure("TNotebook", padding="")
     assert usual[0] >= 296  # (just the page's own border, if the theme draws one)
+
+
+# ----- a toolbar's parts: flat buttons, a borderless Frame, toggles that look like buttons -----
+
+def test_toolbar_parts(tmp_path, closing):
+    form = make_form(tmp_path, ("Frame", "Bar", None, {"border": False, "dock": "top", "height": 36}),
+                     ("Button", "New", "Bar", {"flat": True, "dock": "left", "width": 32}),
+                     ("CheckBox", "Bold", "Bar", {"appearance": "button", "flat": True, "dock": "left", "width": 32}),
+                     ("OptionButton", "Left", "Bar", {"appearance": "button", "dock": "left", "width": 32}),
+                     ("OptionButton", "Right", "Bar", {"appearance": "button", "dock": "left", "width": 32}),
+                     ("CheckBox", "Plain", None, {"top": 60}))
+    closing(form)
+    assert int(form.Bar.widget.cget("borderwidth")) == 0
+    new, bold = form.New.widget, form.Bold.widget
+    assert (str(new.cget("relief")), str(new.cget("overrelief"))) == ("flat", "raised")  # raised under the mouse
+    # A toggle: flat while off, pressed in while on (Tk's own sunken), raised under the mouse.
+    assert (str(bold.cget("offrelief")), str(bold.cget("overrelief"))) == ("flat", "raised")
+    assert not bool(int(bold.cget("indicatoron"))) and bool(int(form.Plain.widget.cget("indicatoron")))
+    form.New.flat = False
+    assert str(new.cget("relief")) == "raised" and str(new.cget("overrelief")) == ""
+    form.Left.value = True
+    form.Right.value = True  # (one group: Left / Center / Right)
+    assert not form.Left.value
+    form.Bar.border = True
+    assert int(form.Bar.widget.cget("borderwidth")) > 0
+    with pytest.raises(ValueError, match="appearance must be one of"):
+        form.Bold.appearance = "toggle"
+    assert REGISTRY["CheckBox"].choices("appearance") == ("normal", "button")
+    assert "picture" in REGISTRY["OptionButton"].prop_defaults() and "flat" not in REGISTRY["Label"].prop_defaults()
+
+
+def test_a_borderless_frame_is_outlined_in_the_designer(tmp_path):
+    import tkinter as tk
+
+    from readymade.controls import create
+
+    root = tk.Tk()
+    try:
+        spec = {**REGISTRY["Frame"].new_spec("Frame1", 8, 8), "border": False}
+        designed = create(root, spec, design=True)
+        running = create(root, {**spec, "name": "Frame2"})
+        assert int(designed.widget.cget("highlightthickness")) == 1  # (so it can be found and clicked)
+        assert int(running.widget.cget("highlightthickness")) == 0 and int(running.widget.cget("borderwidth")) == 0
+    finally:
+        root.destroy()

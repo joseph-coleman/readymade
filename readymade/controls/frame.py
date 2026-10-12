@@ -20,7 +20,7 @@ class Frame(WidgetText, BackColor, ForeColor, Font, Aligned, TabIndex, Cursor, T
     is_container = True
     inherits_backcolor = True
     events = _MOUSE_EVENTS
-    extra_props = {"text": ""}
+    extra_props = {"text": "", "border": True}
 
     def create_widget(self, parent):
         frame = tk.LabelFrame(parent)
@@ -31,6 +31,20 @@ class Frame(WidgetText, BackColor, ForeColor, Font, Aligned, TabIndex, Cursor, T
 
     def widgets(self):
         return [self.widget, self.inner]
+
+    @property
+    def border(self):
+        """Whether it's drawn with its edge. Without (False), just what's in it shows: a row of
+        buttons for a toolbar, say. (The designer still outlines it, so it can be found.)"""
+        return getattr(self, "_border", True)
+
+    @border.setter
+    def border(self, value):
+        self._border = bool(value)
+        self._set(self.widget, "borderwidth", None if self._border else 0)
+        if self.design:  # a thin outline instead, in the designer only
+            self._set(self.widget, "highlightthickness", None if self._border else 1)
+            self._set(self.widget, "highlightbackground", None if self._border else "gray60")
 
     @property
     def enabled(self):

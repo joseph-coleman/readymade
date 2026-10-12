@@ -11,8 +11,8 @@ from pathlib import Path
 from tkinter import font as tkfont
 
 from readymade import appearance, keys, layout
-from readymade.controls.traits import (GRID_CELL, LOOK_CHOICES, Aligned, Anchored, BackColor, Cursor, Font, ForeColor,
-                                       Picture, TabIndex, TabStop, Tooltip, VAligned)
+from readymade.controls.traits import (GRID_CELL, LOOK_CHOICES, Aligned, Anchored, BackColor, Cursor, Flat, Font,
+                                       ForeColor, Picture, TabIndex, TabStop, Tooltip, VAligned)
 
 
 @dataclass(frozen=True)
@@ -173,6 +173,8 @@ class Control:
         if issubclass(cls, Picture):
             look["picture"] = ""
             look["picture_position"] = "left"
+        if issubclass(cls, Flat):
+            look["flat"] = False
         return {
             **copy.deepcopy(cls.extra_props),
             **look,

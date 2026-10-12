@@ -469,3 +469,26 @@ class Picture:
                     print(f"{self.name}: can't show the picture {self._picture!r} ({e})", file=sys.stderr)
         self._photo = photo
         self.widget.configure(image=photo or "", compound=self._picture_position if photo else "none")
+
+
+class Flat:
+    """flat: no border until the mouse is over it, as a toolbar's buttons are (a Button's; a
+    CheckBox's or OptionButton's with appearance "button")."""
+
+    _flat = False
+
+    @property
+    def flat(self):
+        """Whether it's drawn without a border until the mouse is over it (for a toolbar). A
+        CheckBox or OptionButton with appearance "button" still looks pressed while it's on.
+        (On macOS, buttons are the system's own and keep their border.)"""
+        return self._flat
+
+    @flat.setter
+    def flat(self, value):
+        self._flat = bool(value)
+        # (A check box or option button's relief is how it looks while on, pressed in: Tk's flat
+        # toggle is flat while off instead, raised under the mouse.)
+        toggle = "offrelief" in self.widget.keys()
+        for option, flat in (("offrelief" if toggle else "relief", "flat"), ("overrelief", "raised")):
+            self._set(self.widget, option, flat if self._flat else None)

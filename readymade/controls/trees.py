@@ -54,9 +54,10 @@ def _with_plain_field(style, layout):
     """A Treeview layout with ttk's plain field (it shows fieldbackground) in place of the theme's."""
     if _PLAIN_FIELD not in style.element_names():  # (an element is made in the theme in use)
         style.element_create(_PLAIN_FIELD, "from", "default", "field")
-    return [(_PLAIN_FIELD if name.endswith(".field") else name,
-             {**options, "children": _with_plain_field(style, options["children"])} if "children" in options else options)
-            for name, options in layout]
+    def inner(options):
+        return {**options, "children": _with_plain_field(style, options["children"])} if "children" in options else options
+
+    return [(_PLAIN_FIELD if name.endswith(".field") else name, inner(options)) for name, options in layout]
 
 
 class Node:

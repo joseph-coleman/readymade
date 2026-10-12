@@ -5,14 +5,36 @@ from __future__ import annotations
 import tkinter as tk
 import weakref
 
+from readymade import appearance
 from readymade.controls.base import _FOCUS_EVENTS, Control, Event, register
-from readymade.controls.traits import (Aligned, Anchored, BackColor, Cursor, Font, ForeColor, Picture, TabStop,
+from readymade.controls.traits import (Aligned, Anchored, BackColor, Cursor, Flat, Font, ForeColor, Picture, TabStop,
                                        Tooltip, VAligned, WidgetText)
 
 
+APPEARANCES = ("normal", "button")
+
+
+class _Appearance:
+    """appearance: a CheckBox or OptionButton drawn as itself, or as a button that stays pressed
+    while it's on (a toolbar's Bold, or Left / Center / Right)."""
+
+    prop_choices = {"appearance": APPEARANCES}
+    _appearance = "normal"
+
+    @property
+    def appearance(self):
+        """"normal", or "button": no box or circle, a button that stays pressed in while it's on."""
+        return self._appearance
+
+    @appearance.setter
+    def appearance(self, value):
+        self._appearance = appearance.check_choice("appearance", value, APPEARANCES)
+        self.widget["indicatoron"] = self._appearance == "normal"
+
+
 @register
-class Button(WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, Picture, TabStop, Cursor, Tooltip, Anchored,
-             Control):
+class Button(WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, Picture, Flat, TabStop, Cursor, Tooltip,
+             Anchored, Control):
     """A push button, with a picture too if you like. Its click event runs when it's clicked, or
     pressed with Space while it has the focus. (On macOS, buttons keep the system's own colors.)"""
 
@@ -36,15 +58,17 @@ class Button(WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, Picture,
 
 
 @register
-class CheckBox(WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, TabStop, Cursor, Tooltip, Anchored, Control):
-    """A box that can be ticked. value is True while it's ticked; click runs each time it changes."""
+class CheckBox(_Appearance, WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, Picture, Flat, TabStop, Cursor,
+               Tooltip, Anchored, Control):
+    """A box that can be ticked (or with appearance "button", a button that stays pressed). value
+    is True while it's ticked; click runs each time it changes."""
 
     type_name = "CheckBox"
     access_key_action = "choose"
     inherits_backcolor = True
     default_size = (120, 24)
     events = (Event("click", policy="latest"), *_FOCUS_EVENTS)
-    extra_props = {"text": "", "value": False}
+    extra_props = {"text": "", "value": False, "appearance": "normal"}
 
     def create_widget(self, parent):
         self._var = tk.BooleanVar(parent, False)
@@ -71,15 +95,17 @@ _option_groups: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 @register
-class OptionButton(WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, TabStop, Cursor, Tooltip, Anchored, Control):
-    """A radio button. Option buttons in the same container form one group, as in VB."""
+class OptionButton(_Appearance, WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, Picture, Flat, TabStop,
+                   Cursor, Tooltip, Anchored, Control):
+    """A radio button. Option buttons in the same container form one group, as in VB: one chosen
+    at a time (with appearance "button", the one pressed in, as a toolbar's Left / Center / Right)."""
 
     type_name = "OptionButton"
     access_key_action = "choose"
     inherits_backcolor = True
     default_size = (120, 24)
     events = (Event("click", policy="latest"), *_FOCUS_EVENTS)
-    extra_props = {"text": "", "value": False}
+    extra_props = {"text": "", "value": False, "appearance": "normal"}
 
     def create_widget(self, parent):
         if parent not in _option_groups:
