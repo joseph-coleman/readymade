@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tkinter as tk
 from fractions import Fraction
+from pathlib import Path
 
 from readymade import appearance
 
@@ -43,13 +44,16 @@ def need_pillow(what):
 
 def load(path, size=None, keep_shape=False, master=None):
     """(Tk image, the picture's own size) for the picture at path, scaled to size (width,
-    height) if given; with keep_shape, scaled to fit inside size instead. Raises OSError
-    (or tk.TclError) if it can't be read."""
+    height) if given; with keep_shape, scaled to fit inside size instead. Raises OSError if
+    it can't be read (with Pillow or without)."""
     if have_pillow():
         with _PILImage.open(path) as picture:
             picture.load()
             return to_photo(picture, size, keep_shape, master), picture.size
-    photo = tk.PhotoImage(master=master, file=str(path))
+    try:
+        photo = tk.PhotoImage(master=master, file=str(path))
+    except tk.TclError as e:  # (Tk's own reading: the same error as Pillow's, for code to catch)
+        raise (FileNotFoundError if not Path(path).exists() else OSError)(f"{path}: {e}") from None
     natural = (photo.width(), photo.height())
     if size:
         photo = _scale(photo, size, keep_shape)

@@ -16,11 +16,15 @@ leave almost no time between having an idea and running the program.
   design menus in the Menu Editor, and set the tab order by clicking. Control arrays work
   as in VB: `Digit[0]`, `Digit[1]`... share one `Digit_click(self, index)`. Anchors, docking
   (WinForms-style: a control fills an edge, or what's left) and Grids (rows and columns sized
-  like WPF's: `auto, *, 2*, 120`) make forms that resize well. Buttons and Labels can show pictures.
+  like WPF's: `auto, *, 2*, 120`) make forms that resize well. Buttons and Labels can show
+  pictures, and flat buttons and button-look toggles make toolbars.
 - **Double-click to code.** Double-clicking a control takes you to its event handler,
   written for you as a method named after it: `Button1_click`, `Form_load`.
 - **F5 to run.** While your program runs, the Immediate window runs Python inside it.
-  A run-time error takes you to the line that failed.
+- **A debugger, as in VB.** A run-time error pauses the program on the line that failed,
+  with its variables in Locals and the Call Stack. Set breakpoints (F9, with conditions,
+  hit counts or log messages), step (F10, F11), set the next statement, and watch
+  expressions, or break when one changes. `examples/debugging` walks through it all.
 - **Plain Python.** A form is two files: a `.form` file (JSON, for the layout) and a
   `.py` file (your code).  One can run the form directly with python without starting
   the IDE by running just the python file, `python path/to/Form.py`.

@@ -230,7 +230,7 @@ def test_icon_needs_pillow(tmp_path, monkeypatch, platform, icon, ide_has_pillow
 
 
 def test_make_exe_uses_the_icon(tmp_path, monkeypatch):
-    from PIL import Image
+    Image = pytest.importorskip("PIL.Image", reason="converting the icon needs Pillow (the ide extra)")
 
     from readymade import pictures
 
@@ -264,6 +264,7 @@ def test_make_exe_uses_the_icon(tmp_path, monkeypatch):
 
 
 def test_an_icon_that_isnt_a_picture(tmp_path):
+    pytest.importorskip("PIL", reason="without Pillow the PNG goes to PyInstaller unread")
     project = Project.create(tmp_path / "Shop", first_form="Main")
     (project.folder / "icon.png").write_text("not a picture")
     project.set_setting("icon", "icon.png")
