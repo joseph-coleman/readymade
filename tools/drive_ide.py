@@ -156,10 +156,13 @@ class Driver:
         raise LookupError(f"no tab for {child}")
 
     def prop_editor(self, prop):
-        """The Properties panel's editor widget for prop."""
+        """The Properties panel's editor widget for prop, scrolled into view (as a person would)."""
         grid = self.app.properties.grid_frame
         label = next(w for w in grid.grid_slaves(column=0) if w.cget("text") == prop)
-        return grid.grid_slaves(row=label.grid_info()["row"], column=1)[0]
+        editor = grid.grid_slaves(row=label.grid_info()["row"], column=1)[0]
+        self.app.properties._see(editor)
+        self.pump(0.1)
+        return editor
 
     def check(self, label, actual, expected):
         ok = actual == expected
@@ -259,13 +262,22 @@ def drive(d):
     d.shot("pasted")
     d.key("ctrl+z")
     d.check("undo the paste", editor.design.control("Button3"), None)
+    editor.set_property("Button2", "index", "0")  # a control array: copies of its control join it
+    d.click(*d.at(editor.surface.controls["Button2[0]"].widget))
+    d.key("ctrl+c")
+    d.key("ctrl+v")
+    d.check("a copy of Button2[0] is Button2[1]", [c["name"] for c in editor.design.controls if c["name"].startswith("Button2")],
+            ["Button2[0]", "Button2[1]"])
+    d.key("ctrl+z")
+    d.key("ctrl+z")
+    d.check("undo the control array", editor.design.control("Button2") is not None, True)
     editor.show_code()
     d.pump(0.3)  # let Tk lay out the Code tab before measuring where to click
     d.click(*d.at(editor.code.text, 40, 8))
     d.key("Home", "shift+End")
     d.key("ctrl+c")
     d.check("Ctrl+C in the code copies text, not controls",
-            (app.root.clipboard_get(), [c["name"] for c in app.clipboard]), ("from readymade import Form", ["Button2"]))
+            (app.root.clipboard_get(), [c["name"] for c in app.clipboard]), ("from readymade import Form", ["Button2[0]"]))  # (the controls copied last)
 
     print("Indent and dedent a block of code with Tab and Shift+Tab")
     before = editor.code.get_source()

@@ -55,6 +55,11 @@ def bring_in(folder, path, into="images"):
     return target.relative_to(folder).as_posix()
 
 
+# What a docked control's drag or resize can change: its height along the top or bottom, its
+# width along a side; where it goes (and a fill's size) is the docking's.
+_DOCKED_SIZE = {"top": ("height",), "bottom": ("height",), "left": ("width",), "right": ("width",), "fill": ()}
+
+
 def _anchors_inside(spec):
     """Whether the controls in this one (a Frame) keep to its edges by their anchors when it
     changes size. (Not those in a Grid: it places them itself.)"""
@@ -164,15 +169,24 @@ class FormEditor(Editor):
         return [i["name"] for i in menus.walk(self.design.menu) if i.get("name") and not i.get("items")]
 
     def code_objects(self):
-        """The objects in the Code window's dropdown: the form, its controls and its menu commands."""
-        return self.object_names() + self.menu_commands()
+        """The objects in the Code window's dropdown: the form, its controls (a control array
+        once, by its name) and its menu commands."""
+        controls = dict.fromkeys(names.split_element(c["name"])[0] for c in self.design.controls)
+        return [FORM, *controls, *self.menu_commands()]
+
+    def elements(self, base):
+        """The names of a control array's controls, by index (none if base isn't one)."""
+        found = sorted((index, spec["name"]) for spec in self.design.controls
+                       for name, index in [names.split_element(spec["name"])] if name == base and index is not None)
+        return [name for _, name in found]
 
     def events_for(self, obj):
         if obj == FORM:
             return FORM_EVENTS
         if obj in self.menu_commands():
             return (Event("click"),)
-        spec = self.design.control(obj)
+        spec = self.design.control(obj) or next(  # (or a control array, by its name)
+            (s for s in self.design.controls if names.split_element(s["name"])[0] == obj), None)
         return REGISTRY[spec["type"]].events if spec else ()
 
     def props_for(self, obj):
@@ -187,7 +201,8 @@ class FormEditor(Editor):
         if spec is None:
             return []
         defaults = REGISTRY[spec["type"]].prop_defaults()
-        props = [("name", obj)]
+        base, index = names.split_element(obj)
+        props = [("name", base), ("index", "" if index is None else index)]  # (index: in a control array)
         if self._pages_of(spec) is not None:
             props.append(("page", spec.get("page", 0)))  # (in a TabStrip: which of its pages it's on)
         in_grid = self._grid_of(spec) is not None
@@ -372,6 +387,11 @@ class FormEditor(Editor):
             return MULTIPLE
         current = dict(self.props_for(obj))[prop]
         try:
+            if prop == "index":
+                obj = self._set_index(obj, raw.strip())
+                self.properties.update_values()
+                self.update_title()
+                return obj
             value = _convert(raw, type(current))
             choices = self.choices_for(obj, prop)
             if choices and value not in choices:
@@ -440,21 +460,73 @@ class FormEditor(Editor):
             self.code.replace_source(codegen.rename_class(source, self.design.name, new))
             self.design.name = new
             return FORM
-        check_name(new, [n for n in self.object_names() + menus.names(self.design.menu) if n != obj])
-        spec = self._spec(obj)
-        spec["name"] = new
+        base, index = names.split_element(obj)
+        if names.split_element(new)[1] is not None:
+            raise ValueError("Give just the name: index (below it) puts it in a control array")
+        if new == base:
+            return obj
+        members = self.elements(base) if index is not None else [obj]  # (a control array: all of it)
+        others = [n for n in self.object_names() + menus.names(self.design.menu) if n not in members]
+        renames = {m: names.element_name(new, names.split_element(m)[1]) for m in members}
+        for name in renames.values():
+            check_name(name, others)
+        self._check_one_type(new, self._spec(obj)["type"], members)
+        joining = bool([n for n in self.elements(new) if n not in members])  # (an array already there)
+        for old, renamed in renames.items():
+            self._rename_object(old, renamed)
+        if not joining:  # (one joining an array takes the array's handlers; its own stay as they were)
+            events = [e.name for e in REGISTRY[self._spec(renames[obj])["type"]].events]
+            self.code.replace_source(codegen.rename_control(source, base, new, events))
+        self.properties.refresh_objects()
+        self.code.refresh_objects()
+        return renames[obj]
+
+    def _rename_object(self, old, new):
+        """A control's new name, wherever the design and the designer use it."""
+        self._spec(old)["name"] = new
         for key in ("default_button", "cancel_button"):
-            if getattr(self.design, key) == obj:
+            if getattr(self.design, key) == old:
                 setattr(self.design, key, new)
         for child in self.design.controls:
-            if child.get("container") == obj:
+            if child.get("container") == old:
                 child["container"] = new
-        events = [e.name for e in REGISTRY[spec["type"]].events]
-        self.code.replace_source(codegen.rename_control(source, obj, new, events))
-        self.surface.rename(obj, new)
-        self.selected = new
-        self.properties.renamed(obj, new)
+        self.surface.rename(old, new)
+        self.selection = [new if n == old else n for n in self.selection]
+        self.properties.renamed(old, new)
+
+    def _check_one_type(self, base, kind, joining):
+        """A control array's controls are all one type, as in VB."""
+        others = [n for n in self.elements(base) if n not in joining]
+        if others and self._spec(others[0])["type"] != kind:
+            raise ValueError(f"{base} is a control array of {self._spec(others[0])['type']}s: a {kind} can't join it")
+
+    def _set_index(self, obj, raw):
+        """The index property: a number puts the control in a control array (or moves it to
+        that place in its array); none takes the last one left back out."""
+        base, index = names.split_element(obj)
+        if raw == "":
+            new_index = None
+        else:
+            try:
+                new_index = int(raw)
+            except ValueError:
+                raise ValueError(f"{raw!r} is not a whole number") from None
+            if new_index < 0:
+                raise ValueError("An index can't be less than 0")
+        if new_index == index:
+            return obj
+        if new_index is None and len(self.elements(base)) > 1:
+            others = ", ".join(n for n in self.elements(base) if n != obj)
+            raise ValueError(f"{base} has others in its control array ({others}): only the last one left can leave it")
+        new = names.element_name(base, new_index)
+        check_name(new, [n for n in self.object_names() + menus.names(self.design.menu) if n != obj])
+        self._check_one_type(base, self._spec(obj)["type"], [obj])
+        self._rename_object(obj, new)
+        if index is None or new_index is None:  # (into or out of a control array: its handlers are told which)
+            events = [e.name for e in REGISTRY[self._spec(new)["type"]].events]
+            self.code.replace_source(codegen.set_index_param(self.code.get_source(), base, events, new_index is not None))
         self.properties.refresh_objects()
+        self.properties.update_values()  # (not the old index: the panel would put it back)
         self.code.refresh_objects()
         return new
 
@@ -478,7 +550,10 @@ class FormEditor(Editor):
         for name, geometry in geometries.items():
             spec = self._spec(name)
             in_grid = self._grid_of(spec) is not None
+            docked = None if in_grid else _DOCKED_SIZE.get(spec.get("dock", "none"))  # (None: not docked)
             for key, value in zip(("left", "top", "width", "height"), geometry):
+                if docked is not None and key not in docked:
+                    continue  # (docked: just its own size along its edge, if it's free to change)
                 if key in spec and not (in_grid and key in ("left", "top")):  # (a Timer has no size;
                     spec[key] = value  # in a Grid, its cell decides where it goes)
             self.surface.refresh_control(name)
@@ -492,8 +567,8 @@ class FormEditor(Editor):
         if not (across or down):
             return moves
         for spec in self.design.controls:
-            if spec.get("container") != container or "width" not in spec:
-                continue  # elsewhere, or a Timer
+            if spec.get("container") != container or "width" not in spec or spec.get("dock", "none") != "none":
+                continue  # elsewhere, a Timer, or docked (docking places it)
             old = (spec["left"], spec["top"], spec["width"], spec["height"])
             new = layout.follow(old, spec.get("anchor", layout.DEFAULT), across, down)
             if new != old:
@@ -531,6 +606,7 @@ class FormEditor(Editor):
 
     @staticmethod
     def _free_name(type_name, taken):
+        taken = {names.split_element(name)[0] for name in taken}  # (a control array's name too)
         n = 1
         while f"{type_name}{n}" in taken:
             n += 1
@@ -671,9 +747,9 @@ class FormEditor(Editor):
         found = []
         for spec in specs:
             for event in REGISTRY[spec["type"]].events:
-                method = f"{spec['name']}_{event.name}"
+                method = f"{names.split_element(spec['name'])[0]}_{event.name}"  # (a control array's: shared)
                 text = codegen.method_text(source, method)
-                if text is not None:
+                if text is not None and all(m != method for _, m, _ in found):
                     found.append((spec["name"], method, text))
         return found
 
@@ -691,11 +767,7 @@ class FormEditor(Editor):
         taken = set(self.object_names() + menus.names(self.design.menu))
         renames = {}
         for spec in specs:
-            try:
-                check_name(spec["name"], taken)
-                renames[spec["name"]] = spec["name"]
-            except ValueError:
-                renames[spec["name"]] = self._free_name(spec["type"], taken)
+            renames[spec["name"]] = self._paste_name(spec, taken)
             taken.add(renames[spec["name"]])
         occupied = {(c["left"], c["top"]) for c in self.design.controls if c.get("container") == target}
         offset = 0
@@ -728,6 +800,23 @@ class FormEditor(Editor):
         self.update_title()
         return [s["name"] for s in added]
 
+    def _paste_name(self, spec, taken):
+        """A pasted control's name: its own if it's free; for a copy of a control array's
+        control, the array's next (Digit[3]'s copy is Digit[4]); otherwise a new name. (An
+        array starts on purpose: give a control an index.)"""
+        base, index = names.split_element(spec["name"])
+        try:
+            check_name(spec["name"], taken)
+            return spec["name"]
+        except ValueError:
+            pass
+        if index is not None:
+            array = [i for n in taken for b, i in [names.split_element(n)] if b == base and i is not None
+                     and (self.design.control(n) is None or self._spec(n)["type"] == spec["type"])]  # (or pasted now)
+            if array:
+                return names.element_name(base, max(array) + 1)
+        return self._free_name(spec["type"], taken)
+
     def _paste_handlers(self, specs, handlers, renames):
         source = self.code.get_source()
         events = {spec["name"]: [e.name for e in REGISTRY[spec["type"]].events] for spec in specs}
@@ -736,9 +825,12 @@ class FormEditor(Editor):
             if control not in renames:
                 continue
             for old, new in renames.items():  # its name, and self.Other for other controls pasted with it
-                if old != new:
-                    text = codegen.rename_control(text, old, new, events[old])
-            name = renames[control] + method[len(control):]
+                old_base, new_base = names.split_element(old)[0], names.split_element(new)[0]
+                if old_base != new_base:
+                    text = codegen.rename_control(text, old_base, new_base, events[old])
+            base, index = names.split_element(renames[control])
+            text = codegen.set_index_param(text, base, events[control], index is not None)  # (told which, in an array)
+            name = base + method[len(names.split_element(control)[0]):]
             if codegen.find_method(source, name) is not None:
                 left_out.append(name)
                 continue
@@ -752,11 +844,13 @@ class FormEditor(Editor):
     def goto_handler(self, obj, event_name):
         """Show the handler for obj's event in the code window, creating it if needed."""
         event = next(e for e in self.events_for(obj) if e.name == event_name)
+        obj = names.split_element(obj)[0]  # (a control array's controls share their handlers)
         method = f"{obj}_{event.name}"
+        params = ("index", *event.params) if self.elements(obj) else event.params
         line = codegen.find_method(self.code.get_source(), method)
         if line is None:
             try:
-                edit = codegen.add_method(self.code.get_source(), self.design.name, method, event.params)
+                edit = codegen.add_method(self.code.get_source(), self.design.name, method, params)
             except codegen.CodeGenError as e:
                 messagebox.showerror("Code", str(e), parent=self.app.root)
                 return

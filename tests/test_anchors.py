@@ -169,3 +169,89 @@ def test_old_forms_without_anchors(app):
     editor.select(FORM)
     editor.set_form_size(600, 500)
     assert spec_rect(editor, "Button1")[:2] == (16, 16)
+
+
+# ----- docking -----
+
+def test_dock_takes_edges_in_order():
+    rects = layout.dock(400, 300, [("top", (999, 30)), ("left", (100, 0)), ("none", (5, 5)), ("fill", (1, 1)),
+                                   ("bottom", (0, 20)), ("right", (50, 0))])
+    assert rects == [(0, 0, 400, 30), (0, 30, 100, 270), None, (100, 30, 250, 250), (100, 280, 300, 20),
+                     (350, 30, 50, 250)]  # (fill: what the edges leave, wherever it comes)
+    assert layout.dock(100, 50, [("top", (0, 80)), ("fill", (0, 0))]) == [(0, 0, 100, 50), (0, 50, 100, 0)]
+
+
+@pytest.fixture
+def docked(tmp_path):
+    design = formfile.FormDesign(name="Form1", width=400, height=300)
+    for type_name, name, props in (
+        ("Label", "Status", {"dock": "bottom", "height": 24}),
+        ("ListBox", "Side", {"dock": "left", "width": 100}),
+        ("Frame", "Box", {"dock": "top", "height": 60}),
+        ("Button", "Inner", {"container": "Box", "dock": "right", "width": 80}),
+        ("TextBox", "Main", {"dock": "fill"}),
+        ("Button", "Free", {"left": 150, "top": 150, "anchor": "bottom right"}),
+        ("TabStrip", "Tabs", {"left": 150, "top": 100, "width": 200, "height": 120}),
+        ("Label", "OnPage", {"container": "Tabs", "dock": "fill"}),
+    ):
+        spec = REGISTRY[type_name].new_spec(name, 0, 0)
+        spec.update(props)
+        design.controls.append(spec)
+    formfile.save(design, tmp_path / "Form1.form")
+    form = Form(tmp_path / "Form1.form")
+    form.show()
+    settle(form)
+    yield form
+    form.root.destroy()
+
+
+def test_docked_controls_fill_their_edges(docked):
+    form = docked
+    assert rect(form.Status) == (0, 276, 400, 24)
+    assert rect(form.Side) == (0, 0, 100, 276)  # (drawn before Box: the whole left side)
+    assert rect(form.Box) == (100, 0, 300, 60)
+    assert rect(form.Main) == (100, 60, 300, 216)
+    inner = form.Box.inner
+    assert rect(form.Inner) == (inner.winfo_width() - 80, 0, 80, inner.winfo_height())  # docked in the Frame
+    page = form.Tabs._inner_for(0)
+    assert rect(form.OnPage) == (0, 0, page.winfo_width(), page.winfo_height())  # and on a TabStrip page
+    assert rect(form.Free)[:2] == (150, 150)  # (not docked: where it was put)
+
+    resize(form, 500, 400)
+    assert rect(form.Status) == (0, 376, 500, 24) and rect(form.Main) == (100, 60, 400, 316)
+    assert rect(form.Free)[:2] == (250, 250)  # (its anchor, as before)
+    form.Side.visible = False  # its edge goes to the others
+    settle(form)
+    assert rect(form.Main) == (0, 60, 500, 316)
+    form.Side.visible = True
+    form.Side.width = 150  # its own width, along its edge
+    settle(form)
+    assert rect(form.Side) == (0, 0, 150, 376) and rect(form.Main) == (150, 60, 350, 316)
+    form.Status.dock = "none"
+    settle(form)
+    assert rect(form.Main)[3] == 340
+    with pytest.raises(ValueError, match="dock must be one of"):
+        form.Status.dock = "middle"
+
+
+def test_docking_in_the_designer(app):
+    editor = app.form
+    editor.add_control("Label", 40, 40)
+    editor.set_property("Label1", "dock", "top")
+    app.root.update()
+    label = editor.surface.controls["Label1"]
+    assert (label.left, label.top, label.width) == (0, 0, editor.design.width)
+    assert editor.choices_for("Label1", "dock") == ("none", "top", "bottom", "left", "right", "fill")
+    before = spec_rect(editor, "Label1")
+    editor.set_geometries({"Label1": (100, 100, 50, 48)})  # dragged and resized: just its height counts
+    after = spec_rect(editor, "Label1")
+    assert after == (before[0], before[1], before[2], 48)
+    app.root.update()
+    assert (label.top, label.width, label.height) == (0, editor.design.width, 48)
+    editor.set_property("Form", "width", "480")  # the form wider: the docked Label too
+    app.root.update()
+    assert editor.surface.controls["Label1"].width == 480
+    editor.undo()
+    editor.undo()
+    editor.undo()
+    assert editor.design.control("Label1")["dock"] == "none"

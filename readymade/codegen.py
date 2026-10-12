@@ -176,6 +176,16 @@ def rename_control(source, old, new, events):
     return re.sub(rf"\bself\.{re.escape(old)}\b", f"self.{new}", source)
 
 
+def set_index_param(source, name, events, indexed):
+    """Give a control's handlers an index parameter, after self (it's become a control array),
+    or with indexed False take it away (it's a control by itself again)."""
+    names = "|".join(re.escape(e) for e in events)
+    head = rf"^([ \t]+(?:async[ \t]+)?def[ \t]+{re.escape(name)}_(?:{names})[ \t]*\([ \t]*self)"
+    if indexed:
+        return re.sub(head + r"(?![ \t]*,[ \t]*index\b)", r"\g<1>, index", source, flags=re.M)
+    return re.sub(head + r"[ \t]*,[ \t]*index\b", r"\g<1>", source, flags=re.M)
+
+
 def rename_class(source, old, new):
     """Rename the form class everywhere it appears as a whole word."""
     return re.sub(rf"\b{re.escape(old)}\b", new, source)

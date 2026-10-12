@@ -3,15 +3,17 @@ Font, TabStop and the rest. Control.prop_defaults() sees which a class has."""
 
 from __future__ import annotations
 
+import sys
 import tkinter as tk
 
-from readymade import appearance, layout, menus
+from readymade import appearance, layout, menus, pictures
 
 
 ORIENTATIONS = ("horizontal", "vertical")
+PICTURE_POSITIONS = ("left", "top", "right", "bottom", "center")  # (center: the text over the picture)
 LOOK_CHOICES = {"alignment": appearance.ALIGNMENTS, "valignment": appearance.VALIGNMENTS,
                 "cursor": tuple(appearance.CURSORS), "anchor": layout.CHOICES,
-                "orientation": ORIENTATIONS}
+                "orientation": ORIENTATIONS, "dock": layout.DOCKS, "picture_position": PICTURE_POSITIONS}
 
 
 class BackColor:
@@ -162,6 +164,7 @@ class Anchored:
     """An anchor property (see readymade.layout)."""
 
     _anchor: str
+    _dock = "none"
 
     @property
     def anchor(self):
@@ -185,6 +188,30 @@ class Anchored:
             self._left, self._top, self._width, self._height = self._unfollow(rect)
             self._place()
 
+
+    @property
+    def dock(self):
+        """The edge of its container (the form, a Frame, a TabStrip page) it fills: "top" or
+        "bottom" (keeping its height), "left" or "right" (keeping its width), "fill" (what the
+        others leave), or "none". Docked ones take their edges in the order they were drawn
+        (Format > Order changes it), and their anchor doesn't apply. Not in a Grid."""
+        return self._dock
+
+    @dock.setter
+    def dock(self, value):
+        value = str(value or "none").lower()
+        if value not in layout.DOCKS:
+            raise ValueError(f"dock must be one of: {', '.join(layout.DOCKS)}")
+        self._dock = value
+        if not self._ready:
+            return
+        if value == "none":
+            self._dock_rect = None
+            self._place()
+        from readymade.controls.base import arrange_docked, watch_docks  # (base uses these traits)
+
+        watch_docks(self.widget.master)
+        arrange_docked(self.widget.master)
 
     def _cell_prop(name, doc, smallest):
         def get(self):
@@ -399,3 +426,46 @@ class _TtkEnabled:
     def enabled(self, value):
         self._enabled = bool(value)
         self.widget.state(["!disabled"] if self._enabled else ["disabled"])
+
+
+class Picture:
+    """picture and picture_position: a picture shown with its text (a Button's, a Label's)."""
+
+    file_props = {"picture": pictures.FILE_TYPES}  # (the Properties panel offers picture files)
+    _picture = ""
+    _picture_position = "left"
+    _photo = None  # (Tk drops an image nothing in Python holds)
+
+    @property
+    def picture(self):
+        """A picture file shown with its text, like "images/save.png" (in the program's folder)
+        or a full path; "" for none. With no text, just the picture."""
+        return self._picture
+
+    @picture.setter
+    def picture(self, path):
+        self._picture = str(path or "")
+        self._show_picture()
+
+    @property
+    def picture_position(self):
+        """Where its picture is, beside its text: "left", "top", "right", "bottom", or "center"
+        (the text over the picture)."""
+        return self._picture_position
+
+    @picture_position.setter
+    def picture_position(self, value):
+        self._picture_position = appearance.check_choice("picture_position", value, PICTURE_POSITIONS)
+        if self._photo is not None:  # (just where it goes: no need to read the file again)
+            self.widget.configure(compound=self._picture_position)
+
+    def _show_picture(self):
+        photo = None
+        if self._picture:
+            try:
+                photo, _ = pictures.load(self.folder / self._picture, master=self.widget)
+            except (OSError, tk.TclError) as e:
+                if not self.design:
+                    print(f"{self.name}: can't show the picture {self._picture!r} ({e})", file=sys.stderr)
+        self._photo = photo
+        self.widget.configure(image=photo or "", compound=self._picture_position if photo else "none")

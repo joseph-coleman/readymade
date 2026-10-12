@@ -13,8 +13,10 @@ leave almost no time between having an idea and running the program.
   CheckBox, OptionButton, ComboBox, ListBox, TreeView, ListView, ScrollBar, Slider,
   UpDown, ProgressBar, Frame, TabStrip, Grid, Image, Canvas, Timer), then set
   their properties in the Properties panel. Align and size them with the Format menu,
-  design menus in the Menu Editor, and set the tab order by clicking. Anchors and Grids
-  (rows and columns sized like WPF's: `auto, *, 2*, 120`) make forms that resize well.
+  design menus in the Menu Editor, and set the tab order by clicking. Control arrays work
+  as in VB: `Digit[0]`, `Digit[1]`... share one `Digit_click(self, index)`. Anchors, docking
+  (WinForms-style: a control fills an edge, or what's left) and Grids (rows and columns sized
+  like WPF's: `auto, *, 2*, 120`) make forms that resize well. Buttons and Labels can show pictures.
 - **Double-click to code.** Double-clicking a control takes you to its event handler,
   written for you as a method named after it: `Button1_click`, `Form_load`.
 - **F5 to run.** While your program runs, the Immediate window runs Python inside it.

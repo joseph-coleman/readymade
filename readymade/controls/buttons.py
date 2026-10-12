@@ -6,14 +6,15 @@ import tkinter as tk
 import weakref
 
 from readymade.controls.base import _FOCUS_EVENTS, Control, Event, register
-from readymade.controls.traits import (Aligned, Anchored, BackColor, Cursor, Font, ForeColor, TabStop, Tooltip,
-                                       VAligned, WidgetText)
+from readymade.controls.traits import (Aligned, Anchored, BackColor, Cursor, Font, ForeColor, Picture, TabStop,
+                                       Tooltip, VAligned, WidgetText)
 
 
 @register
-class Button(WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, TabStop, Cursor, Tooltip, Anchored, Control):
-    """A push button. Its click event runs when it's clicked, or pressed with Space while it has the focus.
-    (On macOS, buttons keep the system's own colors.)"""
+class Button(WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, Picture, TabStop, Cursor, Tooltip, Anchored,
+             Control):
+    """A push button, with a picture too if you like. Its click event runs when it's clicked, or
+    pressed with Space while it has the focus. (On macOS, buttons keep the system's own colors.)"""
 
     type_name = "Button"
     can_be_default = True

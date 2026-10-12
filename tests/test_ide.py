@@ -319,7 +319,7 @@ def test_tabstrip_in_the_designer(app):
     assert shown_page(strip) == 2 and form.design.control("TabStrip1")["tab"] == 0  # (still the starting tab)
     form.add_control("Label", 8, 8, container="TabStrip1")
     assert form.design.control("Label1")["page"] == 2
-    assert [p for p, _ in form.props_for("Label1")][:2] == ["name", "page"]  # (only for controls in a TabStrip)
+    assert [p for p, _ in form.props_for("Label1")][:3] == ["name", "index", "page"]  # (page: in a TabStrip)
     assert "page" not in dict(form.props_for("TabStrip1"))
 
     form.select("Button1")  # on a page that isn't showing: it shows

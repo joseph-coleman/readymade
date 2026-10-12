@@ -8,7 +8,7 @@ import inspect
 import sys
 from dataclasses import dataclass
 
-from readymade import menus
+from readymade import menus, names
 from readymade.controls import REGISTRY
 from readymade.form import FORM_EVENTS, Form
 from readymade.menus import MenuItem
@@ -63,8 +63,12 @@ def _members(cls, names):
 
 
 def _events(owner, events):
+    """The handlers' lines; for a control array's control (owner "Digit[3]"), the array's
+    shared handlers, told which control by index."""
+    base, index = names.split_element(owner)
+    first = ("self",) if index is None else ("self", "index")
     return "\n".join(
-        f"  {owner}_{e.name}({', '.join(('self', *e.params))})\n      runs when {EVENTS.get(e.name, e.name)}"
+        f"  {base}_{e.name}({', '.join((*first, *e.params))})\n      runs when {EVENTS.get(e.name, e.name)}"
         for e in events
     )
 
@@ -116,6 +120,11 @@ def prop(type_name, name):
     cls = Form if type_name == "Form" else REGISTRY[type_name]
     if name == "name":
         text = "The name your code uses for it, as in self.Label1, and in its handlers' names, like Label1_click."
+    elif name == "index":
+        text = ("Its index in a control array: controls with one name that share their event handlers, as "
+                "VB's did. Digit[0], Digit[1]... are self.Digit[0], self.Digit[1]... in code too, and "
+                "Digit_click(self, index) is told which was clicked. Give a control an index (0, say) to start "
+                "an array; a pasted copy of one of its controls joins it. Empty: not in one.")
     elif name == "page":
         text = ("Which page of its TabStrip it's on, counting from 0. It shows only while that page does. "
                 "Set in the designer: a new number moves it (and what's in it) to that page.")
@@ -358,12 +367,15 @@ def home(platform=sys.platform):
         *(["  and their menus have no access keys (macOS draws them)."] if mac else []),
         f"  Tools > Menu Editor ({keys('Ctrl+E')}) designs the form's menus.",
         "  A control's anchor keeps it to edges of the form (or its Frame) as that resizes:",
-        "  \"bottom right\" for OK buttons, \"top left right\" to stretch across.",
+        "  \"bottom right\" for OK buttons, \"top left right\" to stretch across. Or dock it:",
+        "  top, bottom, left or right fills that edge, fill takes what's left (a toolbar, a status line).",
         "  A Grid lays controls out in rows and columns (columns = \"auto, *, 2*, 120\"):",
         "  draw controls into its cells; arrows move them between cells, Shift+arrows span more.",
         "  Format > Tab Order: click the controls in the order Tab should visit them. Click a",
         "  Label just before its box: Tab passes it by, but its access key goes to the next one.",
         "  On a TabStrip, click a tab to number what's on that page; the numbers carry on.",
+        "  Control arrays, as in VB: give a control an index (0), then paste copies of it.",
+        "  Digit[0], Digit[1]... (self.Digit[0] in code) share Digit_click(self, index).",
         "",
         "Code",
         f"  F12 or {click} goes to a definition; {complete} completes a name.",

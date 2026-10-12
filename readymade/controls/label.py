@@ -5,14 +5,15 @@ from __future__ import annotations
 import tkinter as tk
 
 from readymade.controls.base import _MOUSE_EVENTS, Control, register
-from readymade.controls.traits import (Aligned, Anchored, BackColor, Cursor, Font, ForeColor, TabIndex, Tooltip,
-                                       VAligned, WidgetText)
+from readymade.controls.traits import (Aligned, Anchored, BackColor, Cursor, Font, ForeColor, Picture, TabIndex,
+                                       Tooltip, VAligned, WidgetText)
 
 
 @register
-class Label(WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, TabIndex, Cursor, Tooltip, Anchored,
+class Label(WidgetText, BackColor, ForeColor, Font, Aligned, VAligned, Picture, TabIndex, Cursor, Tooltip, Anchored,
             Control):
-    """Text on a form, such as a caption or a result. It can't be typed in, but it can be clicked."""
+    """Text on a form, such as a caption or a result, maybe with a picture beside it. It can't
+    be typed in, but it can be clicked."""
 
     type_name = "Label"
     inherits_backcolor = True

@@ -290,3 +290,71 @@ def test_choosing_a_picture_in_the_designer(tmp_path, monkeypatch):
     finally:
         app.runner.stop()
         root.destroy()
+
+
+# ----- pictures on Buttons and Labels -----
+
+def make_buttons(folder, *controls):
+    design = formfile.FormDesign(name="Form1")
+    for type_name, name, props in controls:
+        spec = REGISTRY[type_name].new_spec(name, 8, 8)
+        spec.update(props)
+        design.controls.append(spec)
+    formfile.save(design, folder / "Form1.form")
+    form = Form(folder / "Form1.form")
+    form.show()
+    form.root.update()
+    return form
+
+
+def test_a_picture_beside_the_text(tmp_path, loader):
+    write_png(tmp_path / "images" / "save.png", 16, 16)
+    form = make_buttons(tmp_path, ("Button", "Save", {"text": "&Save", "picture": "images/save.png",
+                                                       "picture_position": "top"}),
+                        ("Label", "Logo", {"text": "", "picture": "images/save.png"}))
+    try:
+        button = form.Save.widget
+        assert form.Save._photo.width() == 16 and str(button.cget("compound")) == "top"
+        assert button.cget("text") == "Save" and button.cget("underline") == 0  # (its access key still shows)
+        form.Save.picture_position = "right"
+        assert str(button.cget("compound")) == "right"
+        with pytest.raises(ValueError, match="picture_position must be one of"):
+            form.Save.picture_position = "middle"
+        assert form.Logo._photo is not None  # (no text: just the picture)
+        form.Save.picture = ""
+        assert str(button.cget("image")) == "" and str(button.cget("compound")) == "none"
+    finally:
+        form.root.destroy()
+
+
+def test_a_missing_button_picture_is_reported_once(tmp_path, capsys):
+    form = make_buttons(tmp_path, ("Button", "Gone", {"picture": "images/gone.png", "picture_position": "top"}))
+    try:
+        assert capsys.readouterr().err.count("Gone: can't show the picture 'images/gone.png'") == 1
+        assert form.Gone.widget.cget("text") == "Gone"  # (its text still shows)
+    finally:
+        form.root.destroy()
+
+
+def test_button_pictures_in_the_designer_and_make_exe(tmp_path, monkeypatch):
+    from readymade.ide.app import App
+
+    picture = write_png(tmp_path / "Pictures" / "ok.png", 12, 12)
+    root = tk.Tk()
+    app = App(root, tmp_path / "Pets")
+    try:
+        editor = app.form
+        editor.add_control("Button", 16, 16)
+        panel = app.properties
+        assert panel.app.file_types_for("Button1", "picture") == pictures.FILE_TYPES
+        assert editor.choices_for("Button1", "picture_position") == ("left", "top", "right", "bottom", "center")
+        monkeypatch.setattr(filedialog, "askopenfilename", lambda **kw: str(picture))
+        panel._choose("picture")
+        assert editor._spec("Button1")["picture"] == "images/ok.png"
+        assert editor.surface.controls["Button1"]._photo is not None
+        assert app.save()
+        files, missing = package.bundled_files(app.project)
+        assert (app.project.folder / "images" / "ok.png", "images") in files and missing == []
+    finally:
+        app.runner.stop()
+        root.destroy()

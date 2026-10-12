@@ -17,14 +17,16 @@ program ends when the last loaded form closes.
 
 from __future__ import annotations
 
+import copy
+import functools
 import inspect
 import sys
 import tkinter as tk
 from pathlib import Path
 
 from readymade import appearance, events, formfile, forms, keys, menus, names, pictures
-from readymade.controls import (Event, OptionButton, TabIndex, TabStop, WidgetText, control_of, create, focus_widget,
-                                inner_for, option_group, repaint_inside, show_as_default, tab_numbers)
+from readymade.controls import (ControlArray, Event, OptionButton, TabIndex, TabStop, WidgetText, control_of, create,
+                                focus_widget, inner_for, option_group, repaint_inside, show_as_default, tab_numbers)
 
 FORM = "Form"
 FORM_EVENTS = (
@@ -179,14 +181,11 @@ class Form:
         self._containers = {}  # control name -> the Frame (or Grid) it's in, or None
         self._designed_size = self._configured_size = (design.width, design.height)
         self._on_form = []  # the controls straight on the form (the rest follow their Frame)
+        self._specs = {}  # control name -> its .form spec (a control array's add() copies one)
+        self._added_elements = set()  # the names of control array elements made by add()
         for spec in design.controls:
             check_name(spec["name"], self.controls)
-            control = create(self._parent_widget(spec), spec, folder=self.path.parent)
-            self.controls[control.name] = control
-            setattr(self, control.name, control)
-            if spec.get("container") is None:
-                self._on_form.append(control)
-            self._containers[control.name] = spec.get("container")
+            self._make(spec)
         for control in self.controls.values():  # (made before what's in them, so arranged now)
             if control.arranges_inside:
                 control.arrange()
@@ -476,12 +475,29 @@ class Form:
         handler = self._handlers[name]
         return handler(*args) if handler else None
 
+    def _make(self, spec):
+        """Create a control from its .form spec: self.Name, or in a control array self.Name[index]."""
+        control = create(self._parent_widget(spec), spec, folder=self.path.parent)
+        self.controls[control.name] = control
+        self._specs[control.name] = spec
+        base, index = names.split_element(control.name)
+        if index is None:
+            setattr(self, base, control)
+        else:
+            array = self.__dict__.get(base)
+            if not isinstance(array, ControlArray):
+                array = ControlArray(base, self)
+                setattr(self, base, array)
+            array._items[index] = control
+            control.index = index
+        if spec.get("container") is None:
+            self._on_form.append(control)
+        self._containers[control.name] = spec.get("container")
+        return control
+
     def _connect_events(self):
-        for name, control in self.controls.items():
-            for event in control.events:
-                func = getattr(self, f"{name}_{event.name}", None)
-                if callable(func):
-                    control.bind_event(event.name, events.Handler(self, func, events.policy_for(func, event.name, event.policy)))
+        for control in self.controls.values():
+            self._connect(control)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         # Bindings on the root also see events from every control, so filter to the form itself.
         self.root.bind("<Configure>", self._on_configure, add="+")
@@ -541,6 +557,53 @@ class Form:
                     self.root.after_cancel(job)
                 self._released(key)
 
+    def _connect(self, control):
+        """Bind control's handlers: Name_event, which for a control array's elements is told
+        which one, by index, before the event's own arguments."""
+        base, index = names.split_element(control.name)
+        for event in control.events:
+            func = getattr(self, f"{base}_{event.name}", None)
+            if callable(func):
+                call = func if index is None else functools.partial(func, index)
+                control.bind_event(event.name, events.Handler(self, call, events.policy_for(func, event.name, event.policy)))
+
+    def _add_element(self, array, index):
+        """ControlArray.add(): a copy of the array's lowest-numbered control, hidden."""
+        spec = copy.deepcopy(self._specs[array[array.indexes[0]].name])
+        spec["name"] = names.element_name(array.name, index)
+        spec["visible"] = False
+        if "tabindex" in spec:  # (last in the Tab order)
+            spec["tabindex"] = max(getattr(c, "tabindex", 0) for c in self.controls.values()) + 1
+        control = self._make(spec)
+        self._added_elements.add(control.name)
+        self._design_order.append(control.name)
+        container = self.controls.get(spec.get("container"))
+        if container is None:
+            grown = (self._size[0] - self._designed_size[0], self._size[1] - self._designed_size[1])
+            control.follow_container(*grown)
+        elif container.arranges_inside:
+            container.arrange()
+        else:
+            container._place()  # (it puts what's in it where its size says)
+        self._connect(control)
+        return control
+
+    def _remove_element(self, array, control):
+        """ControlArray.remove()."""
+        if control.name not in self._added_elements:
+            raise ValueError(f"{control.name} was made in the designer, so it can't be removed "
+                             "(set its visible to False to hide it)")
+        if any(container == control.name for container in self._containers.values()):
+            raise ValueError(f"{control.name} has controls in it")
+        control.widget.destroy()
+        del array._items[control.index]
+        for collection in (self.controls, self._specs, self._containers):
+            collection.pop(control.name, None)
+        self._added_elements.discard(control.name)
+        self._design_order.remove(control.name)
+        if control in self._on_form:
+            self._on_form.remove(control)
+
     def _on_configure(self, e):
         # (Compared with the last size seen here: the width and height setters change _size first.)
         if e.widget is self.root and (e.width, e.height) != self._configured_size and e.width > 1:
@@ -569,12 +632,19 @@ _RESERVED = {name for name in dir(Form)} | {"root", "controls", "menus", "path",
 
 
 def check_name(name, existing=()):
-    """Raise ValueError unless name can be used for a new control."""
-    names.check_python_name(name)
-    if name in _RESERVED:
-        raise ValueError(f"{name!r} is reserved by the Form class")
+    """Raise ValueError unless name can be used for a new control: a Python name, or a
+    control array's element, "Digit[3]" (as long as Digit isn't a control by itself)."""
+    names.check_control_name(name)
+    base, index = names.split_element(name)
+    if base in _RESERVED:
+        raise ValueError(f"{base!r} is reserved by the Form class")
     if name in existing:
         raise ValueError(f"There is already a control named {name!r}")
+    others = {names.split_element(n) for n in existing}
+    if index is None and any(b == base and i is not None for b, i in others):
+        raise ValueError(f"{base!r} is already the name of a control array")
+    if index is not None and (base, None) in others:
+        raise ValueError(f"There is already a control named {base!r} (not in a control array)")
 
 
 def _access_sequence(widget):

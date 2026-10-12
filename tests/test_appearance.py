@@ -381,7 +381,7 @@ def test_properties_scroll_when_they_dont_fit(app):
     last.focus_force()  # as if reached with Tab
     app.root.update()
     assert panel._scroller.yview()[0] > 0
-    app.root.geometry("1000x900")
+    app.root.geometry("1000x1300")  # (tall enough for all of a Label's)
     app.root.update()
     assert not panel._bar.winfo_ismapped()
     app.root.geometry("1000x360")

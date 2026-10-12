@@ -12,7 +12,7 @@ from tkinter import font as tkfont
 
 from readymade import appearance, keys, layout
 from readymade.controls.traits import (GRID_CELL, LOOK_CHOICES, Aligned, Anchored, BackColor, Cursor, Font, ForeColor,
-                                       TabIndex, TabStop, Tooltip, VAligned)
+                                       Picture, TabIndex, TabStop, Tooltip, VAligned)
 
 
 @dataclass(frozen=True)
@@ -75,11 +75,14 @@ def _geometry(attr, doc):
 
     def set(self, value):
         grid = self._grid() if self._ready else None
-        if not self._ready or grid is not None:
-            # (In a Grid: width and height are the size it asks for; its place is the Grid's to decide.)
+        if not self._ready or grid is not None or self._docked():
+            # (In a Grid: width and height are the size it asks for; its place is the Grid's to decide.
+            # Docked: its own width or height, along its edge; where it goes is the docking's.)
             setattr(self, "_" + attr, int(value))
             if grid is not None:
                 grid.arrange()
+            elif self._ready:
+                arrange_docked(self.widget.master)
             return
         rect = list(self._rect())
         rect[index] = int(value)
@@ -123,6 +126,8 @@ class Control:
     # With no backcolor of its own, a label-like control shows its container's color.
     inherits_backcolor = False
 
+    index = None  # in a control array, its index (self.Digit[3].index is 3); otherwise None
+
     def __init__(self, parent, spec, design=False, folder=None):
         self.name = spec["name"]
         self.design = design
@@ -146,6 +151,9 @@ class Control:
         self._apply_alignment()
         self._apply_cursor()
         self._place()
+        if self._docked():
+            watch_docks(self.widget.master)
+            arrange_docked(self.widget.master)
 
     @classmethod
     def prop_defaults(cls):
@@ -162,6 +170,9 @@ class Control:
             look["alignment"] = cls.default_alignment
         if issubclass(cls, VAligned):
             look["valignment"] = cls.default_valignment
+        if issubclass(cls, Picture):
+            look["picture"] = ""
+            look["picture_position"] = "left"
         return {
             **copy.deepcopy(cls.extra_props),
             **look,
@@ -169,7 +180,7 @@ class Control:
             "top": 0,
             "width": width,
             "height": height,
-            **({"anchor": layout.DEFAULT} if issubclass(cls, Anchored) else {}),
+            **({"anchor": layout.DEFAULT, "dock": "none"} if issubclass(cls, Anchored) else {}),
             "enabled": True,
             "visible": True,
             **({"tabindex": 0} if issubclass(cls, TabIndex) else {}),
@@ -243,6 +254,8 @@ class Control:
     def visible(self, value):
         self._visible = bool(value)
         self._place()
+        if self._ready and self._docked():
+            arrange_docked(self.widget.master)  # (a hidden one leaves its edge to the others)
 
     @property
     def enabled(self):
@@ -259,6 +272,10 @@ class Control:
     _grown = (0, 0)  # how much its container has grown since it was designed (across, down)
 
     _grid_rect = None  # in a Grid: where the Grid put it
+    _dock_rect = None  # docked: where docking put it (see arrange_docked)
+
+    def _docked(self):
+        return getattr(self, "_dock", "none") != "none" and self._grid() is None
 
     def _grid(self):
         """The Grid it's in, or None."""
@@ -271,6 +288,8 @@ class Control:
         (or in a Grid, where its row, column and anchor put it)."""
         if self._grid_rect is not None and self._grid() is not None:
             return self._grid_rect
+        if self._dock_rect is not None and self._docked():
+            return self._dock_rect
         base = (self._left, self._top, self._width, self._height)
         if self._grown == (0, 0) or not isinstance(self, Anchored):
             return base
@@ -454,6 +473,43 @@ def option_group(option):
 def show_as_default(button, default):
     """Give a Button the heavier border of the form's default button (Enter clicks it), or not."""
     button._set(button.widget, "default", "active" if default else None)
+
+
+def arrange_docked(widget, width=None, height=None):
+    """Lay out the docked controls in a container widget (the form, a Frame's inside, a
+    TabStrip page), in the order they were made: see layout.dock. Until the widget has a size
+    of its own there's nothing to do; its <Configure> (see watch_docks) does it then."""
+    if width is None:
+        width, height = widget.winfo_width(), widget.winfo_height()
+    if width <= 1 and height <= 1:
+        return
+    docked = []
+    for child in widget.winfo_children():
+        ref = _controls.get(child)
+        control = ref() if ref else None
+        if control is not None and control._docked() and (control._visible or control.design):
+            docked.append(control)
+    rects = layout.dock(width, height, [(c._dock, (c._width, c._height)) for c in docked])
+    for control, rect in zip(docked, rects):
+        if control._dock_rect != rect:
+            control._dock_rect = rect
+            control._place()
+
+
+_watching = weakref.WeakSet()  # container widgets that lay out their docked controls when resized
+
+
+def watch_docks(widget):
+    """Re-dock a container widget's controls whenever it changes size."""
+    if widget in _watching:
+        return
+    _watching.add(widget)
+
+    def resized(e):
+        if e.widget is widget:  # (a window's bindings also see its controls' events)
+            arrange_docked(widget, e.width, e.height)
+
+    widget.bind("<Configure>", resized, add="+")
 
 
 def inner_for(container, spec):

@@ -1,4 +1,5 @@
-"""Anchors: how a control follows its container (the form, or a Frame) when that changes size.
+"""Anchors and docking: how a control follows its container (the form, or a Frame) when that
+changes size, and how a docked one fills an edge of it (dock()).
 
 A control's anchor names the edges of its container it keeps its distance to:
 "top left" (the usual) keeps it where it was drawn; "bottom right" keeps it in that
@@ -74,6 +75,37 @@ def _one_way(start, size, grown, near, far):
 class Track:
     kind: str  # "auto", "star" or "fixed"
     size: float = 0  # a star's weight, or a fixed track's pixels
+
+
+DOCKS = ("none", "top", "bottom", "left", "right", "fill")
+
+
+def dock(width, height, items):
+    """Docking, as in WinForms: each of items, (dock, (own width, own height)) in order,
+    takes an edge of what the ones before it left of a width x height container, keeping its
+    own height (top, bottom) or width (left, right). Then fill takes all that's left (each
+    fill the same space). Returns their (left, top, width, height); None for one not docked."""
+    left, top, right, bottom = 0, 0, width, height
+    rects = [None] * len(items)
+    for i, (edge, (own_width, own_height)) in enumerate(items):
+        across, down = max(0, right - left), max(0, bottom - top)
+        tall, wide = min(own_height, down), min(own_width, across)
+        if edge == "top":
+            rects[i] = (left, top, across, tall)
+            top += tall
+        elif edge == "bottom":
+            rects[i] = (left, bottom - tall, across, tall)
+            bottom -= tall
+        elif edge == "left":
+            rects[i] = (left, top, wide, down)
+            left += wide
+        elif edge == "right":
+            rects[i] = (right - wide, top, wide, down)
+            right -= wide
+    for i, (edge, _) in enumerate(items):
+        if edge == "fill":
+            rects[i] = (left, top, max(0, right - left), max(0, bottom - top))
+    return rects
 
 
 def parse_tracks(text):

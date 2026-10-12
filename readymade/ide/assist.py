@@ -7,6 +7,7 @@ added to the class, in Jedi's copy only:
     class Form1(Form):
         from readymade import controls as _readymade_controls, menus as _readymade_menus
         Label1: _readymade_controls.Label
+        Digit: _readymade_controls.ControlArray[_readymade_controls.Button]   (a control array)
         mnuOpen: _readymade_menus.MenuItem
 
 Then `self.` completes to the controls and `self.Label1.` to a Label's
@@ -21,6 +22,8 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from readymade import names
 
 jedi: Any = None
 try:
@@ -73,9 +76,15 @@ def prepare(source, class_name="", controls=(), menu_items=()):
     indent = body[: len(body) - len(body.lstrip())] or "    "
     added_lines = [f"{indent}from readymade import controls as {_HIDDEN}controls, menus as {_HIDDEN}menus"]
     added = {header + 1: ("import", "", "")}
+    declared = set()
     for type_name, name in controls:
-        added[header + 1 + len(added_lines)] = ("control", name, type_name)
-        added_lines.append(f"{indent}{name}: {_HIDDEN}controls.{type_name}")
+        base, index = names.split_element(name)
+        if base in declared:
+            continue  # (a control array: once, by its name)
+        declared.add(base)
+        added[header + 1 + len(added_lines)] = ("control", name, type_name)  # (an array: its first, to select)
+        kind = f"{_HIDDEN}controls.{type_name}"
+        added_lines.append(f"{indent}{base}: {kind if index is None else f'{_HIDDEN}controls.ControlArray[{kind}]'}")
     for name in menu_items:
         added[header + 1 + len(added_lines)] = ("menu", name, "MenuItem")
         added_lines.append(f"{indent}{name}: {_HIDDEN}menus.MenuItem")
@@ -135,7 +144,7 @@ class Assistant:
             except Exception:  # Jedi can fail on unusual code
                 return None
         if not text.strip() and full.startswith("readymade."):
-            text = _readymade_doc(full)  # e.g. properties, whose docstrings Jedi doesn't read
+            full, text = _readymade_doc(full)  # e.g. properties, whose docstrings Jedi doesn't read
         where = full.rsplit(".", 1)[0] if "." in full and kind != "module" else ""
         subtitle = kind + (f" in {where}" if where and where != "builtins" else "")
         return Topic(full, subtitle, text.strip() or "(No documentation.)", _docs_url(kind, full))
@@ -179,7 +188,9 @@ def _docs_url(kind, full):
 
 
 def _readymade_doc(full):
-    """The docstring of something in readymade, read from readymade itself (it's loaded in the IDE)."""
+    """(its name, its docstring) for something in readymade, read from readymade itself (it's
+    loaded in the IDE). Jedi sometimes names an attribute where something sets it, inside a
+    method ("Label.accesskey.text" for self.text = ... there): that's the class's attribute."""
     import importlib
     import inspect
 
@@ -189,9 +200,15 @@ def _readymade_doc(full):
             thing = importlib.import_module(".".join(parts[:split]))
         except ImportError:
             continue
-        for part in parts[split:]:
-            thing = inspect.getattr_static(thing, part, None)
-            if thing is None:
-                return ""
-        return inspect.getdoc(thing) or ""
-    return ""
+        path = parts[:split]
+        for part in parts[split:-1]:
+            inner = inspect.getattr_static(thing, part, None)
+            if not (inspect.isclass(inner) or inspect.ismodule(inner)):
+                break  # (inside a method: the attribute is the class's)
+            thing = inner
+            path.append(part)
+        found = inspect.getattr_static(thing, parts[-1], None)  # (a class's: from its parents too)
+        if found is None:
+            return full, ""
+        return ".".join([*path, parts[-1]]), inspect.getdoc(found) or ""
+    return full, ""

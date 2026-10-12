@@ -89,3 +89,19 @@ def test_help_on_code(tmp_path):
     assert help_at(8, 15).docs_url == "https://docs.python.org/3/library/functions.html#len"
     msgbox = help_at(8, 10)
     assert msgbox.title == "readymade.dialogs.msgbox" and "Show a message" in msgbox.text and msgbox.docs_url == ""
+
+
+@needs_jedi
+def test_completion_in_a_control_array(tmp_path):
+    source = ("from readymade import Form\n\n\nclass Form1(Form):\n    def Digit_click(self, index):\n"
+              "        self.Digit[index].te\n        self.Digit.ad\n")
+    prepared = assist.prepare(source, "Form1", [("Button", "Digit[0]"), ("Button", "Digit[1]")])
+    assistant = assist.Assistant(Path(__file__).parent.parent)
+
+    def complete(line, column):
+        return [c.name for c in assistant.complete(prepared, line, column, tmp_path / "Form1.py", tmp_path, None)]
+
+    assert complete(6, 28) == ["text"]  # self.Digit[index].te|: one of the Buttons
+    assert complete(7, 21) == ["add"]  # self.Digit.ad|: the array
+    # F1 and Go to Definition on self.Digit: its first control (the designer selects it; help shows index)
+    assert assistant.help(prepared, 6, 17, tmp_path / "Form1.py", tmp_path, None) == ("control", "Digit[0]", "Button")
