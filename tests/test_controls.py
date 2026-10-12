@@ -406,6 +406,9 @@ def test_treeview(tmp_path, closing):
     leek.text = "Leeks"
     veg.remove()
     assert tree.node("leek") is None and [n.text for n in tree.nodes] == ["Fruit"] and tree.selected is None
+    assert repr(leek) == "<Node (removed)>"
+    with pytest.raises(ValueError, match="no longer has this node"):  # (not Tk's "Item I004 not found")
+        leek.text
     tree.items = ["One", "    Two"]  # (in too far: just under the one before)
     assert tree.items == ["One", "  Two"]
     tree.clear()
@@ -442,8 +445,11 @@ def test_listview(tmp_path, closing):
     view.add("x", key="k")
     with pytest.raises(ValueError, match="already has an item 'k'"):
         view.add("y", key="k")
-    view.item("k").remove()
-    assert view.item("k") is None and len(view.items) == 3
+    gone = view.item("k")
+    gone.remove()
+    assert view.item("k") is None and len(view.items) == 3 and repr(gone) == "<ListItem (removed)>"
+    with pytest.raises(ValueError, match="no longer has this row"):
+        gone.values
     view.multiselect = True
     view.widget.selection_set([i.key for i in view.items[:2]])
     assert [i.text for i in view.selected_items] == ["c.txt", "bee.txt"]

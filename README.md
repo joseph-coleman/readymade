@@ -64,6 +64,17 @@ show those pictures or draw on them, needs it in its own project too
 
 Press F1 in the IDE for help on whatever you're working on.
 
+## Examples
+
+The repository's `examples` folder has projects to open in the IDE (`readymade examples/controls`):
+
+- **controls**: a recipe book using most of the controls for real jobs: docking, a toolbar of
+  flat picture buttons and toggles, a control array, TabStrip, TreeView, ListView, UpDown,
+  Slider, ScrollBar, ProgressBar and a Timer. Its README walks through each.
+- **debugging**: a shopping basket with mistakes in it, and a walkthrough of the debugger.
+- **anchors**: a form whose controls follow its size.
+- **hello**: a small first program: type a name and click a button, laid out in a Grid.
+
 ## Disclosure
 
 I used Claude. 

@@ -67,6 +67,12 @@ class Node:
     def __init__(self, tree, key):
         self._tree, self._key = tree, key
 
+    def _there(self):
+        """Its key, if it's still in its tree (a removed node can't be shown or changed)."""
+        if self._tree._nodes.get(self._key) is not self:
+            raise ValueError(f"{self._tree.name} no longer has this node (it was removed)")
+        return self._key
+
     @property
     def key(self):
         """The name it's known by: TreeView.node(key) finds it."""
@@ -75,31 +81,31 @@ class Node:
     @property
     def text(self):
         """The words it shows."""
-        return self._tree.widget.item(self._key, "text")
+        return self._tree.widget.item(self._there(), "text")
 
     @text.setter
     def text(self, value):
-        self._tree.widget.item(self._key, text=str(value))
+        self._tree.widget.item(self._there(), text=str(value))
 
     @property
     def parent(self):
         """The node it's under, or None at the top."""
-        parent = self._tree.widget.parent(self._key)
+        parent = self._tree.widget.parent(self._there())
         return self._tree._nodes[parent] if parent else None
 
     @property
     def children(self):
         """The nodes just under it, in order."""
-        return [self._tree._nodes[k] for k in self._tree.widget.get_children(self._key)]
+        return [self._tree._nodes[k] for k in self._tree.widget.get_children(self._there())]
 
     @property
     def expanded(self):
         """Whether it's open, showing the nodes under it."""
-        return bool(self._tree.widget.item(self._key, "open"))
+        return bool(self._tree.widget.item(self._there(), "open"))
 
     @expanded.setter
     def expanded(self, value):
-        self._tree.widget.item(self._key, open=bool(value))
+        self._tree.widget.item(self._there(), open=bool(value))
 
     def add(self, text, key=None):
         """Add a node under this one (at the end); returns it."""
@@ -107,14 +113,15 @@ class Node:
 
     def remove(self):
         """Take it (and the nodes under it) out of the tree."""
-        self._tree._remove(self._key)
+        self._tree._remove(self._there())
 
     def see(self):
         """Open the nodes above it and scroll it into view."""
-        self._tree.widget.see(self._key)
+        self._tree.widget.see(self._there())
 
     def __repr__(self):
-        return f"<Node {self.text!r}>"
+        removed = self._tree._nodes.get(self._key) is not self
+        return "<Node (removed)>" if removed else f"<Node {self.text!r}>"
 
 
 @register
@@ -246,6 +253,12 @@ class ListItem:
     def __init__(self, view, key):
         self._view, self._key = view, key
 
+    def _there(self):
+        """Its key, if it's still in its list (a removed row can't be shown or changed)."""
+        if self._view._items.get(self._key) is not self:
+            raise ValueError(f"{self._view.name} no longer has this row (it was removed)")
+        return self._key
+
     @property
     def key(self):
         """The name it's known by: ListView.item(key) finds it."""
@@ -254,12 +267,12 @@ class ListItem:
     @property
     def values(self):
         """Its values, one for each column, as strings. Set a list to change them all."""
-        values = [str(v) for v in self._view.widget.item(self._key, "values")]
+        values = [str(v) for v in self._view.widget.item(self._there(), "values")]
         return values + [""] * (len(self._view.columns) - len(values))
 
     @values.setter
     def values(self, values):
-        self._view.widget.item(self._key, values=[str(v) for v in values])
+        self._view.widget.item(self._there(), values=[str(v) for v in values])
 
     @property
     def text(self):
@@ -273,19 +286,20 @@ class ListItem:
     @property
     def index(self):
         """Its place in the list as shown, counting from 0."""
-        return self._view.widget.index(self._key)
+        return self._view.widget.index(self._there())
 
     def remove(self):
         """Take it out of the list."""
+        self._view.widget.delete(self._there())
         self._view._items.pop(self._key, None)
-        self._view.widget.delete(self._key)
 
     def see(self):
         """Scroll it into view."""
-        self._view.widget.see(self._key)
+        self._view.widget.see(self._there())
 
     def __repr__(self):
-        return f"<ListItem {self.values!r}>"
+        removed = self._view._items.get(self._key) is not self
+        return "<ListItem (removed)>" if removed else f"<ListItem {self.values!r}>"
 
 
 @register
