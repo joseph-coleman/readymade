@@ -18,15 +18,15 @@ program ends when the last loaded form closes.
 from __future__ import annotations
 
 import copy
-import functools
 import inspect
 import sys
 import tkinter as tk
 from pathlib import Path
 
 from readymade import appearance, events, formfile, forms, keys, menus, names, pictures
-from readymade.controls import (ControlArray, Event, OptionButton, TabIndex, TabStop, WidgetText, control_of, create,
-                                focus_widget, inner_for, option_group, repaint_inside, show_as_default, tab_numbers)
+from readymade.controls import (GRID_CELL, REGISTRY, ControlArray, Event, OptionButton, TabIndex, TabStop, WidgetText,
+                                control_of, create, focus_widget, inner_for, option_group, repaint_inside,
+                                show_as_default, tab_numbers)
 
 FORM = "Form"
 FORM_EVENTS = (
@@ -185,7 +185,9 @@ class Form:
         self._designed_size = self._configured_size = (design.width, design.height)
         self._on_form = []  # the controls straight on the form (the rest follow their Frame)
         self._specs = {}  # control name -> its .form spec (a control array's add() copies one)
-        self._added_elements = set()  # the names of control array elements made by add()
+        self._added = set()  # the names of controls made while the program runs (add_control, add())
+        self._listeners = {}  # the form's own events -> [(handler as given, its events.Handler)], from on()
+        self._key_tag = None  # see _listen_for_keys
         for spec in design.controls:
             check_name(spec["name"], self.controls)
             self._make(spec)
@@ -510,16 +512,54 @@ class Form:
         return entry.click(events.Handler(self, func, events.policy_for(func, "click")) if callable(func) else None)
 
     def _fire(self, event, *args):
+        """Run the form's handlers for one of its own events: Form_event, then those from on().
+        The first answer that isn't None counts (Form_unload's True keeps the form open)."""
         name = f"{FORM}_{event}"
         if name not in self._handlers:
             func = getattr(self, name, None)
             self._handlers[name] = events.Handler(self, func, events.policy_for(func, event)) if callable(func) else None
         handler = self._handlers[name]
-        return handler(*args) if handler else None
+        result = handler(*args) if handler else None
+        for _, more in list(self._listeners.get(event, ())):
+            value = more(*args)
+            result = value if result is None else result
+        return result
+
+    def on(self, event, handler=None):
+        """Run handler too when one of the form's own events happens: self.on("resize", ...).
+
+        It runs after any Form_event method, with the event's own arguments (keydown: key); a
+        plain function wanting one more is given the form first. Returns handler, so it works
+        as a decorator too: @self.on("resize")."""
+        if handler is None:
+            return lambda func: self.on(event, func)
+        kind = next((e for e in FORM_EVENTS if e.name == event), None)
+        if kind is None:
+            raise ValueError(f"a form has no {event!r} event; its events: {', '.join(e.name for e in FORM_EVENTS)}")
+        call = events.call_for(handler, self, len(kind.params))
+        self._listeners.setdefault(event, []).append((handler, events.Handler(self, call, events.policy_for(handler, event))))
+        if event in ("keydown", "keyup"):
+            self._listen_for_keys()
+        return handler
+
+    def off(self, event, handler):
+        """Stop running a handler that on() attached to one of the form's events. True if it was."""
+        attached = self._listeners.get(event, [])
+        kept = [entry for entry in attached if entry[0] != handler]
+        removed = len(kept) < len(attached)
+        attached[:] = kept
+        return removed
 
     def _make(self, spec):
         """Create a control from its .form spec: self.Name, or in a control array self.Name[index]."""
         control = create(self._parent_widget(spec), spec, folder=self.path.parent)
+        control.form = self
+        if self._key_tag:  # (keydown and keyup see every widget's keys)
+            widgets = [control.widget]
+            while widgets:
+                widget = widgets.pop()
+                widget.bindtags((self._key_tag, *widget.bindtags()))
+                widgets.extend(widget.winfo_children())
         self.controls[control.name] = control
         self._specs[control.name] = spec
         base, index = names.split_element(control.name)
@@ -547,19 +587,25 @@ class Form:
         self.root.bind("<Double-Button-1>", lambda e: self._on_form_mouse(e, "dblclick"), add="+")
         self.root.bind("<Destroy>", self._on_destroy, add="+")
         if callable(getattr(self, f"{FORM}_keydown", None)) or callable(getattr(self, f"{FORM}_keyup", None)):
-            self._held = set()  # keys down, by key_name
-            self._releasing = {}  # key -> after id: a release that may be the key repeating (on X11)
-            # A bind tag of its own, first on every widget: the form's other key bindings (Tab,
-            # Enter, arrows) would otherwise take those keys, as Tk runs one binding per tag.
-            tag = f"readymade-keys-{id(self)}"
-            self.root.bind_class(tag, "<KeyPress>", self._key_down)
-            self.root.bind_class(tag, "<KeyRelease>", self._key_up)
-            widgets = [self.root]
-            while widgets:
-                widget = widgets.pop()
-                widget.bindtags((tag, *widget.bindtags()))
-                widgets.extend(widget.winfo_children())
-            self.root.bind("<FocusOut>", lambda e: self.root.after_idle(self._focus_left), add="+")
+            self._listen_for_keys()
+
+    def _listen_for_keys(self):
+        """keydown and keyup: from here on, every key press and release in the form."""
+        if self._key_tag:
+            return
+        self._held = set()  # keys down, by key_name
+        self._releasing = {}  # key -> after id: a release that may be the key repeating (on X11)
+        # A bind tag of its own, first on every widget: the form's other key bindings (Tab,
+        # Enter, arrows) would otherwise take those keys, as Tk runs one binding per tag.
+        tag = self._key_tag = f"readymade-keys-{id(self)}"
+        self.root.bind_class(tag, "<KeyPress>", self._key_down)
+        self.root.bind_class(tag, "<KeyRelease>", self._key_up)
+        widgets = [self.root]
+        while widgets:
+            widget = widgets.pop()
+            widget.bindtags((tag, *widget.bindtags()))
+            widgets.extend(widget.winfo_children())
+        self.root.bind("<FocusOut>", lambda e: self.root.after_idle(self._focus_left), add="+")
 
     # ----- keydown and keyup: once per press and release, for games -----
 
@@ -600,14 +646,77 @@ class Form:
                 self._released(key)
 
     def _connect(self, control):
-        """Bind control's handlers: Name_event, which for a control array's elements is told
-        which one, by index, before the event's own arguments."""
+        """Attach control's handlers: Name_event, which for a control array's elements is told
+        which one, by index, before the event's own arguments; then any its array's on() has."""
         base, index = names.split_element(control.name)
+        first = () if index is None else (index,)
         for event in control.events:
             func = getattr(self, f"{base}_{event.name}", None)
             if callable(func):
-                call = func if index is None else functools.partial(func, index)
-                control.bind_event(event.name, events.Handler(self, call, events.policy_for(func, event.name, event.policy)))
+                control._listen(event.name, func, first)
+        array = self.__dict__.get(base) if index is not None else None
+        for event, func in array._listeners if isinstance(array, ControlArray) else ():
+            control._listen(event, func, first)
+
+    # ----- controls made while the program runs -----
+
+    def add_control(self, type_name, name, container=None, **props):
+        """Make a control while the program runs, as the designer would, and return it.
+
+            box = self.add_control("TextBox", "Search", left=8, top=40, width=200, text="")
+
+        props are its properties (any of the Properties panel's; the rest as designed). name
+        is how code knows it: self.Search, and a Search_change method handles its change
+        event, as for a drawn control (or attach handlers with box.on("change", ...)). A name
+        like "Digit[3]" puts it in the Digit control array (starting it, if need be).
+        container is a Frame, TabStrip or Grid (or its name) to put it in, with page= for a
+        TabStrip's page. It goes last in the Tab order."""
+        if type_name not in REGISTRY:
+            raise ValueError(f"there's no {type_name!r} control; the controls: {', '.join(REGISTRY)}")
+        check_name(name, {**self.controls, **self.menus})
+        base, index = names.split_element(name)
+        array = self.__dict__.get(base)
+        if isinstance(array, ControlArray) and len(array) and array[array.indexes[0]].type_name != type_name:
+            raise ValueError(f"{base} is a control array of {array[array.indexes[0]].type_name}s, not {type_name}s")
+        if container is not None:
+            container = getattr(container, "name", container)
+            if container not in self.controls or not self.controls[container].is_container:
+                raise ValueError(f"{container!r} isn't a container on this form (a Frame, TabStrip or Grid)")
+        kind = REGISTRY[type_name]
+        known = set(kind.prop_defaults()) | set(GRID_CELL) | {"page"}
+        unknown = sorted(set(props) - known)
+        if unknown:
+            raise ValueError(f"a {type_name} has no {', '.join(unknown)}; its properties: {', '.join(kind.prop_defaults())}")
+        spec = kind.new_spec(name, props.pop("left", 0), props.pop("top", 0), container=container)
+        spec.update(props)
+        if "tabindex" in spec and "tabindex" not in props:  # (last in the Tab order)
+            spec["tabindex"] = max((getattr(c, "tabindex", 0) for c in self.controls.values()), default=-1) + 1
+        return self._settle(self._make(spec))
+
+    def remove_control(self, control):
+        """Take away a control that add_control() (or a control array's add()) made: the
+        control, or its name. Those drawn in the designer stay (hide them with visible)."""
+        name = getattr(control, "name", control)
+        control = self.controls.get(name)
+        if control is None:
+            raise ValueError(f"there's no control named {name!r}")
+        if name not in self._added:
+            raise ValueError(f"{name} was made in the designer, so it can't be removed (set its visible to False "
+                             "to hide it)")
+        if any(container == name for container in self._containers.values()):
+            raise ValueError(f"{name} has controls in it: remove those first")
+        control.widget.destroy()
+        base, index = names.split_element(name)
+        if index is None:
+            self.__dict__.pop(base, None)
+        else:
+            self.__dict__[base]._items.pop(index, None)
+        for collection in (self.controls, self._specs, self._containers):
+            collection.pop(name, None)
+        self._added.discard(name)
+        self._design_order.remove(name)
+        if control in self._on_form:
+            self._on_form.remove(control)
 
     def _add_element(self, array, index):
         """ControlArray.add(): a copy of the array's lowest-numbered control, hidden."""
@@ -616,10 +725,14 @@ class Form:
         spec["visible"] = False
         if "tabindex" in spec:  # (last in the Tab order)
             spec["tabindex"] = max(getattr(c, "tabindex", 0) for c in self.controls.values()) + 1
-        control = self._make(spec)
-        self._added_elements.add(control.name)
+        return self._settle(self._make(spec))
+
+    def _settle(self, control):
+        """A control made while the program runs: in its place (its container's grown, say),
+        and its handlers attached."""
+        self._added.add(control.name)
         self._design_order.append(control.name)
-        container = self.controls.get(spec.get("container"))
+        container = self.controls.get(self._containers[control.name])
         if container is None:
             grown = (self._size[0] - self._designed_size[0], self._size[1] - self._designed_size[1])
             control.follow_container(*grown)
@@ -629,22 +742,6 @@ class Form:
             container._place()  # (it puts what's in it where its size says)
         self._connect(control)
         return control
-
-    def _remove_element(self, array, control):
-        """ControlArray.remove()."""
-        if control.name not in self._added_elements:
-            raise ValueError(f"{control.name} was made in the designer, so it can't be removed "
-                             "(set its visible to False to hide it)")
-        if any(container == control.name for container in self._containers.values()):
-            raise ValueError(f"{control.name} has controls in it")
-        control.widget.destroy()
-        del array._items[control.index]
-        for collection in (self.controls, self._specs, self._containers):
-            collection.pop(control.name, None)
-        self._added_elements.discard(control.name)
-        self._design_order.remove(control.name)
-        if control in self._on_form:
-            self._on_form.remove(control)
 
     def _on_configure(self, e):
         # (Compared with the last size seen here: the width and height setters change _size first.)

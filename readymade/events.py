@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import functools
 import gc
 import inspect
 import sys
@@ -63,6 +64,26 @@ def while_running(policy):
         return func
 
     return mark
+
+
+def call_for(func, form, given, first=()):
+    """How to call a handler attached with on(), given an event's own arguments (given of them),
+    after first (a control array's index). A plain function wanting one more than that
+    (def handler(form): ..., in another module, say) is passed the form first; a method of
+    the form (self.handler) or a closure already has it."""
+    if _wants_form(func, len(first) + given):
+        return functools.partial(func, form, *first)
+    return functools.partial(func, *first) if first else func
+
+
+def _wants_form(func, given):
+    if not inspect.isfunction(func):  # (bound methods, partials and the like: as they are)
+        return False
+    parameters = inspect.signature(func).parameters.values()
+    if any(p.kind is p.VAR_POSITIONAL for p in parameters):
+        return False
+    required = [p for p in parameters if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) and p.default is p.empty]
+    return len(required) == given + 1
 
 
 def policy_for(func, event_name, declared=""):

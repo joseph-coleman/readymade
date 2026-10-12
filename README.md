@@ -19,7 +19,9 @@ leave almost no time between having an idea and running the program.
   like WPF's: `auto, *, 2*, 120`) make forms that resize well. Buttons and Labels can show
   pictures, and flat buttons and button-look toggles make toolbars.
 - **Double-click to code.** Double-clicking a control takes you to its event handler,
-  written for you as a method named after it: `Button1_click`, `Form_load`.
+  written for you as a method named after it: `Button1_click`, `Form_load`. Code can add
+  controls too (`self.add_control("Button", "Save", text="Save")`) and attach more handlers,
+  as JavaScript does: `self.Save.on("click", self.save_all)`.
 - **F5 to run.** While your program runs, the Immediate window runs Python inside it.
 - **A debugger, as in VB.** A run-time error pauses the program on the line that failed,
   with its variables in Locals and the Call Stack. Set breakpoints (F9, with conditions,
@@ -75,6 +77,8 @@ The repository's `examples` folder has projects to open in the IDE (`readymade e
 - **controls**: a recipe book using most of the controls for real jobs: docking, a toolbar of
   flat picture buttons and toggles, a control array, TabStrip, TreeView, ListView, UpDown,
   Slider, ScrollBar, ProgressBar and a Timer. Its README walks through each.
+- **arrays**: controls made while the program runs: adding to a control array, `add_control()`,
+  and handlers attached with `on()`.
 - **debugging**: a shopping basket with mistakes in it, and a walkthrough of the debugger.
 - **anchors**: a form whose controls follow its size.
 - **hello**: a small first program: type a name and click a button, laid out in a Grid.

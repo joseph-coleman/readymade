@@ -127,6 +127,8 @@ class Control:
     inherits_backcolor = False
 
     index = None  # in a control array, its index (self.Digit[3].index is 3); otherwise None
+    form = None  # the Form it's on, while a program runs (None in the designer)
+    _listeners = None  # event name -> [(the handler as given, its events.Handler)]
 
     def __init__(self, parent, spec, design=False, folder=None):
         self.name = spec["name"]
@@ -359,6 +361,56 @@ class Control:
             self.widget.place(x=left, y=top, width=width, height=height)
         else:
             self.widget.place_forget()
+
+    # ----- handlers attached from code -----
+
+    def on(self, event, handler=None):
+        """Run handler too when event happens: box.on("change", self.filter_list).
+
+        Handlers run in the order attached, after a Name_event method on the form. Each gets
+        the event's own arguments: none for click, x and y for mousedown, key for keypress
+        (F1 on the control lists them). A method of the form (self.save), or a lambda or
+        function made inside one, can use self; a plain function wanting one more argument
+        is given the form first, def handler(form): ..., for handlers in another module.
+        Returns handler, so it works as a decorator too: @self.Search.on("change")."""
+        if handler is None:
+            return lambda func: self.on(event, func)
+        self._listen(event, handler)
+        return handler
+
+    def off(self, event, handler):
+        """Stop running a handler that on() attached. True if it was attached."""
+        attached = (self._listeners or {}).get(event, [])
+        kept = [entry for entry in attached if entry[0] != handler]
+        removed = len(kept) < len(attached)
+        attached[:] = kept
+        return removed
+
+    def _listen(self, event, func, first=()):
+        """Attach func to event (first: arguments before the event's, a control array's index)."""
+        from readymade import events  # (events finds the form module when it runs handlers)
+
+        kind = next((e for e in self.events if e.name == event), None)
+        if kind is None:
+            raise ValueError(f"a {self.type_name} has no {event!r} event; its events: "
+                             f"{', '.join(e.name for e in self.events) or 'none'}")
+        if self.form is None:
+            raise RuntimeError(f"{self.name} isn't on a running form, so its events don't run")
+        call = events.call_for(func, self.form, len(kind.params), first)
+        handler = events.Handler(self.form, call, events.policy_for(func, event, kind.policy))
+        if self._listeners is None:
+            self._listeners = {}
+        if event not in self._listeners:  # (Tk is told once; the handlers run from this list)
+            self._listeners[event] = []
+            self.bind_event(event, lambda *args, name=event: self._dispatch(name, args))
+        self._listeners[event].append((func, handler))
+
+    def _dispatch(self, event, args):
+        result = None
+        for _, handler in list(self._listeners.get(event, ())):
+            value = handler(*args)
+            result = value if result is None else result
+        return result
 
     def bind_event(self, event, handler):
         sequence, accept, args = _BINDINGS[event]

@@ -104,7 +104,7 @@ def form(name="Form1"):
         _doc(Form),
         "Properties\n" + _members(Form, ["text", "width", "height", "minwidth", "minheight", "maxwidth", "maxheight",
                                          "resizable", "backcolor", "cursor", "default_button", "cancel_button"]),
-        "Methods\n" + _members(Form, ["show", "hide", "close", "run"]),
+        "Methods\n" + _members(Form, ["show", "hide", "close", "run", "add_control", "remove_control", "on", "off"]),
         "Events (double-click the form in the designer to write Form_load)\n" + _events("Form", FORM_EVENTS),
     ]
     return Topic(name, "Form, readymade.Form", "\n\n".join(parts))

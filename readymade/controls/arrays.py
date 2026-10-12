@@ -16,12 +16,14 @@ class ControlArray(Generic[T]):
             self.Display.text += str(index)
 
     Indexes needn't run on without gaps. add() makes another one while the program runs,
-    and remove() (or del self.Digit[9]) takes away one made that way."""
+    and remove() (or del self.Digit[9]) takes away one made that way. on() attaches a handler
+    to all of them, those added later too."""
 
     def __init__(self, name, form):
         self.name = name
         self._form = form
         self._items = {}  # index -> control
+        self._listeners = []  # (event, handler): on() for every control, those added later too
 
     def __getitem__(self, index) -> T:
         try:
@@ -55,10 +57,30 @@ class ControlArray(Generic[T]):
 
     def remove(self, index):
         """Take away a control that add() made (not one from the designer)."""
-        self._form._remove_element(self, self[index])
+        self._form.remove_control(self[index])
 
     def __delitem__(self, index):
         self.remove(index)
+
+    def on(self, event, handler=None):
+        """Run handler too when event happens to any of its controls, those added later too.
+
+        It's told which by index first, as Name_event(self, index) is: def lit(index): ...
+        (a plain function wanting one more argument is given the form before index). Returns
+        handler, so it works as a decorator too."""
+        if handler is None:
+            return lambda func: self.on(event, func)
+        for control in self:
+            control._listen(event, handler, first=(control.index,))
+        self._listeners.append((event, handler))
+        return handler
+
+    def off(self, event, handler):
+        """Stop running a handler that on() attached to its controls. True if it was attached."""
+        attached = (event, handler) in self._listeners
+        if attached:
+            self._listeners.remove((event, handler))
+        return any([control.off(event, handler) for control in self]) or attached
 
     def _which(self):
         return f" (it has {', '.join(map(str, self.indexes))})" if self._items else ""
