@@ -27,6 +27,7 @@ from readymade.controls.traits import Anchored, BackColor, Cursor, Font, ForeCol
 from readymade.controls.trees import _TreeLook
 
 CHECK_MARK = "✓"
+CURSOR_COLOR = "#2f6fd0"  # (the cell cursor; on a chosen row, the chosen text's color)
 _TRUE = {"true", "yes", "y", "1", "x", "on", CHECK_MARK}
 _FALSE = {"false", "no", "n", "0", "", "off"}
 _WHOLE = re.compile(r"^[+-]?\d+$")
@@ -373,13 +374,17 @@ class Table(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anc
         frame.columnconfigure(0, weight=1)
         self._parts = [frame, self._tree, bar]
         # The cell cursor: four thin lines around the cell.
-        self._lines = [tk.Frame(self._tree, background="#2f6fd0") for _ in range(4)]
+        self._lines = [tk.Frame(self._tree, background=CURSOR_COLOR) for _ in range(4)]
         if not self.design:
             tree = self._tree
             tree.bind("<ButtonPress-1>", self._click, add="+")
             tree.bind("<Double-Button-1>", self._double, add="+")
             tree.bind("<KeyPress>", self._key)
+            # The tree has the keyboard back while an editor is open (Esc in a choice's list):
+            # the edit is over.
+            tree.bind("<FocusIn>", lambda e: self.widget.after_idle(self._focus_left), add="+")
         self._tree.bind("<Configure>", lambda e: (self._fit_columns(), self._follow()), add="+")
+        self._tree.bind("<<TreeviewSelect>>", lambda e: self._follow(), add="+")  # (its color)
         return frame
 
     def widgets(self):
@@ -667,13 +672,23 @@ class Table(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anc
                 self._editor.place_forget()
             return
         x, y, w, h = box
+        color = self._cursor_color(iid in self._tree.selection())
         for line, (lx, ly, lw, lh) in zip(self._lines, ((x, y, w, 2), (x, y + h - 2, w, 2), (x, y, 2, h),
                                                          (x + w - 2, y, 2, h))):
+            line.configure(background=color)
             line.place(x=lx, y=ly, width=lw, height=lh)
             line.lift()
         if self._editor is not None:
             self._editor.place(x=x, y=y, width=w, height=h)
             self._editor.lift()
+
+    def _cursor_color(self, chosen):
+        """The cell cursor's color: blue; on a chosen row (often blue too, as on Windows), the
+        chosen rows' text color."""
+        if not chosen:
+            return CURSOR_COLOR
+        style = ttk.Style(self._tree)
+        return style.lookup(self._tree.cget("style") or "Treeview", "foreground", ("selected",)) or "white"
 
     # ----- moving the cell cursor -----
 
@@ -721,7 +736,9 @@ class Table(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anc
 
     def _key(self, e):
         if self._editor is not None:
-            return None
+            self._focus_left()  # (the keys are the tree's: the editor was left)
+            if self._editor is not None:
+                return "break"
         key, row, column = e.keysym, *self._cur
         shift = bool(e.state & 0x1)
         ctrl = bool(e.state & 0x4)
@@ -788,7 +805,9 @@ class Table(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anc
             if typed:
                 start = next((c for c in kind.choices if c.lower().startswith(typed.lower())), current)
             editor.set(start)
-            editor.bind("<<ComboboxSelected>>", lambda e: self._finish(), add="+")
+            # (finished once Tk's own handling of the choice is done)
+            editor.bind("<<ComboboxSelected>>", lambda e: editor.after_idle(
+                lambda: editor is self._editor and self._finish()), add="+")
         else:
             editor = ttk.Entry(self._tree)
             editor.insert(0, typed if typed is not None else kind.show(current) if row < len(self._data) else "")
@@ -812,18 +831,22 @@ class Table(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anc
         self._follow()
         editor.focus_set()
         if kind.kind == "choice" and typed is None:
-            editor.after_idle(lambda: editor.winfo_exists() and editor.event_generate("<Down>"))  # (its list opens)
+            editor.after_idle(lambda: self._post(editor))
+
+    def _post(self, editor):
+        """Open a choice's list. (Not a generated <Down>: key events go to the focus, which may
+        not have reached the new editor yet.)"""
+        if editor is self._editor and editor.winfo_exists():
+            editor.update_idletasks()
+            editor.tk.call("ttk::combobox::Post", editor)
 
     def _focus_left(self):
         """The editor lost the keyboard (a click elsewhere): keep what's typed, if it fits."""
         if self._editor is None:
             return
-        try:
-            focus = self._tree.focus_get()
-        except (KeyError, tk.TclError):
-            focus = None
-        if focus is self._editor or str(focus).startswith(str(self._editor)):
-            return  # (a choice's own list)
+        focus = str(self._tree.tk.call("focus"))  # (a path: focus_get() fails in a choice's list)
+        if focus == str(self._editor) or focus.startswith(str(self._editor) + "."):
+            return  # (the editor, or a choice's own list)
         if not self._finish():
             self._cancel()
 
@@ -856,6 +879,11 @@ class Table(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anc
 
     def _close_editor(self):
         if self._editor is not None:
+            if isinstance(self._editor, ttk.Combobox):
+                try:
+                    self._editor.tk.call("ttk::combobox::Unpost", self._editor)  # (and its grab)
+                except tk.TclError:
+                    pass
             self._editor.destroy()
         self._editor = self._editing = None
         self._tree.focus_set()

@@ -1,11 +1,13 @@
 """The Table control: typed columns, its data the Pythonic way, and spreadsheet editing."""
 
 import time
+from tkinter import ttk
 
 import pytest
 
 from readymade import Form, formfile
 from readymade.controls import REGISTRY, Column
+from readymade.controls import table as table_module
 from readymade.controls.table import ColumnKind
 
 COLUMNS = ["Item", "Price : number 2", "Qty : number", "In stock : check", "Size : S | M | L",
@@ -244,3 +246,43 @@ def test_csv_and_changing_columns(make_form, tmp_path):
     assert table.headers == ["Item", "Size"]
     with pytest.raises(ValueError, match="same header: item"):
         table.columns = ["Item", "item"]
+
+
+@pytest.mark.usefixtures("display")
+def test_a_choices_list_from_the_keyboard(make_form):
+    form = make_form()
+    table, call = form.Stock, form.root.tk.call
+    table.rows = ROWS
+    table._tree.focus_force()
+    settle(form)
+
+    def in_list(keysym):
+        call("event", "generate", f"{table._editor}.popdown.f.l", "<KeyPress>", "-keysym", keysym)
+        settle(form)
+
+    table.current = (0, "Size")
+    key(form, "Return")  # its list opens (and the row stays chosen)
+    assert call("winfo", "ismapped", f"{table._editor}.popdown") and table._tree.selection() == ("0",)
+    in_list("Down")
+    in_list("Return")  # chosen: saved, and the keys are the table's again
+    assert table[0, "Size"] == "L" and table._editor is None and not call("grab", "current")
+    key(form, "Return")
+    in_list("Up")
+    in_list("Escape")  # never mind: no change, nothing left open
+    assert table[0, "Size"] == "L" and table._editor is None and not call("grab", "current")
+    key(form, "Down")
+    assert table.current == (1, 4)
+
+
+@pytest.mark.usefixtures("display")
+def test_the_cell_cursor_shows_on_a_chosen_row(make_form):
+    form = make_form()
+    table = form.Stock
+    table.rows = ROWS
+    table.current = (1, 0)
+    settle(form)
+    chosen = ttk.Style(table._tree).lookup("Treeview", "foreground", ("selected",))
+    assert table._lines[0].cget("background") == chosen  # (not blue on Windows' blue)
+    table._tree.selection_set("0")
+    settle(form)
+    assert table._lines[0].cget("background") == table_module.CURSOR_COLOR
