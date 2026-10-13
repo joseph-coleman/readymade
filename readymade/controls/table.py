@@ -27,7 +27,7 @@ from readymade.controls.traits import Anchored, BackColor, Cursor, Font, ForeCol
 from readymade.controls.trees import _TreeLook
 
 CHECK_MARK = "✓"
-CURSOR_COLOR = "#2f6fd0"  # (the cell cursor; on a chosen row, the chosen text's color)
+CURSOR_COLOR = "#2f6fd0"  # (the cell cursor, if the theme has no highlight color)
 _TRUE = {"true", "yes", "y", "1", "x", "on", CHECK_MARK}
 _FALSE = {"false", "no", "n", "0", "", "off"}
 _WHOLE = re.compile(r"^[+-]?\d+$")
@@ -683,12 +683,19 @@ class Table(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anc
             self._editor.lift()
 
     def _cursor_color(self, chosen):
-        """The cell cursor's color: blue; on a chosen row (often blue too, as on Windows), the
-        chosen rows' text color."""
-        if not chosen:
-            return CURSOR_COLOR
+        """The cell cursor's color: the theme's highlight, as chosen rows have (so the system's
+        accent color, where Tk follows it); on a chosen row, the chosen rows' text color."""
         style = ttk.Style(self._tree)
-        return style.lookup(self._tree.cget("style") or "Treeview", "foreground", ("selected",)) or "white"
+        name = self._tree.cget("style") or "Treeview"
+        if chosen:
+            color, fallback = style.lookup(name, "foreground", ("selected",)), "white"
+        else:
+            color, fallback = style.lookup(name, "background", ("selected",)), CURSOR_COLOR
+        try:
+            self._tree.winfo_rgb(color)  # (a color Tk knows, by value or by system name)
+        except tk.TclError:
+            return fallback
+        return color or fallback
 
     # ----- moving the cell cursor -----
 

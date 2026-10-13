@@ -281,8 +281,17 @@ def test_the_cell_cursor_shows_on_a_chosen_row(make_form):
     table.rows = ROWS
     table.current = (1, 0)
     settle(form)
-    chosen = ttk.Style(table._tree).lookup("Treeview", "foreground", ("selected",))
-    assert table._lines[0].cget("background") == chosen  # (not blue on Windows' blue)
+    style = ttk.Style(table._tree)
+    chosen_text = style.lookup("Treeview", "foreground", ("selected",))
+    highlight = style.lookup("Treeview", "background", ("selected",))
+    assert table._lines[0].cget("background") == chosen_text  # (not blue on Windows' blue)
     table._tree.selection_set("0")
     settle(form)
-    assert table._lines[0].cget("background") == table_module.CURSOR_COLOR
+    assert table._lines[0].cget("background") == highlight  # (the system's, as the chosen rows)
+    usual = style.map("Treeview", "background")
+    style.map("Treeview", background=[("selected", "")])  # a theme without one: blue
+    try:
+        table._follow()
+        assert table._lines[0].cget("background") == table_module.CURSOR_COLOR
+    finally:
+        style.map("Treeview", background=usual)
