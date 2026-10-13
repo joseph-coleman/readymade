@@ -40,6 +40,11 @@ EVENTS = {
     "collapse": "a node is closed; node is the Node",
     "itemclick": "a row is chosen (clicked, or with the arrow keys); item is the ListItem",
     "columnclick": "a column's header is clicked; column is its number, counting from 0",
+    "cellchange": "the user changes a cell (code changing one doesn't run it); row and column are its numbers, "
+                  "counting from 0",
+    "rowadd": "the user makes a new row (in the blank row at the bottom); row is its number: a place for defaults",
+    "rowdelete": "the user deletes a row (with Delete); row was its number, and values are what it held",
+    "rowclick": "the cell cursor moves to another row; row is its number",
     "load": "the form is loaded, before it's first shown",
     "unload": "the form is closing; return True to keep it open",
     "resize": "the form changes size",

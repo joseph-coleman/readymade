@@ -8,8 +8,8 @@ available everywhere.
 
     base.py     Control, Event, the registry, and functions for the form and designer
     traits.py   properties controls share, as mixins: BackColor, Font, TabStop, Anchored...
-    label.py, textbox.py, frame.py, tabstrip.py, buttons.py, lists.py, trees.py, ranges.py, image.py, canvas.py,
-    grid.py, timer.py    the controls
+    label.py, textbox.py, frame.py, tabstrip.py, buttons.py, lists.py, trees.py, table.py,
+    ranges.py, image.py, canvas.py, grid.py, timer.py    the controls
 
 A control class lists the traits it has before Control, and registers itself:
 
@@ -40,6 +40,7 @@ from readymade.controls.tabstrip import TabStrip
 from readymade.controls.buttons import Button, CheckBox, OptionButton
 from readymade.controls.lists import ComboBox, ListBox
 from readymade.controls.trees import ListItem, ListView, Node, TreeView
+from readymade.controls.table import Column, Table
 from readymade.controls.ranges import ProgressBar, ScrollBar, Slider, UpDown
 from readymade.controls.image import Image
 from readymade.controls.canvas import Canvas
@@ -49,9 +50,11 @@ from readymade.controls.timer import Timer
 
 __all__ = [
     "REGISTRY", "Control", "ControlArray", "Event", "control_of", "create", "focus_widget", "grid_of", "inner_for",
-    "option_group", "page_at", "register", "repaint_inside", "show_as_default", "show_page", "shown_page", "tab_numbers",
+    "option_group", "page_at", "register", "repaint_inside", "show_as_default", "show_page", "shown_page",
+    "tab_numbers",
     "GRID_CELL", "LOOK_CHOICES", "Aligned", "Anchored", "BackColor", "Cursor", "Flat", "Font", "ForeColor", "Oriented",
     "Picture", "Ranged", "TabIndex", "TabStop", "Tooltip", "VAligned", "WidgetText",
     "Label", "TextBox", "Frame", "TabStrip", "Button", "CheckBox", "OptionButton", "ComboBox", "ListBox", "TreeView",
-    "ListView", "ScrollBar", "Slider", "UpDown", "ProgressBar", "Image", "Canvas", "Grid", "Timer", "Node", "ListItem",
+    "ListView", "Table", "ScrollBar", "Slider", "UpDown", "ProgressBar", "Image", "Canvas", "Grid", "Timer",
+    "Node", "ListItem", "Column",
 ]

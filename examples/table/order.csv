@@ -1,0 +1,10 @@
+Item,Category,Price,Qty,Taxable
+Apples (1 kg),Food,3.49,2,False
+Bread,Food,2.99,1,False
+Coffee beans,Food,11.50,1,False
+Hammer,Hardware,14.95,1,True
+Wood screws (box),Hardware,6.25,3,True
+Work gloves,Hardware,8.99,0,True
+Tomato plants,Garden,4.50,6,True
+Potting soil,Garden,9.75,2,True
+Watering can,Garden,12.00,0,True

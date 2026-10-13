@@ -138,6 +138,16 @@ def listview(p):
         p.lines((9, y), (13.4, y), color="soft", width=1)
 
 
+def table(p):
+    p.rect(1, 2, 15, 14, fill="field")
+    p.rect(1, 2, 15, 5, fill="face")
+    for x in (6, 10.5):
+        p.lines((x, 2), (x, 14), width=1)
+    for y in (8, 11):
+        p.lines((1, y), (15, y), width=1)
+    p.rect(6, 8, 10.5, 11, fill=None, line="accent", width=1.4)  # the cell cursor
+
+
 def scrollbar(p):
     p.rect(1, 4.5, 15, 11.5, fill="face")
     p.shape((4.6, 5.8), (4.6, 10.2), (1.9, 8))
@@ -200,7 +210,7 @@ def unknown(p):
 
 
 ICONS = {"Pointer": pointer, "Label": label, "TextBox": textbox, "Frame": frame, "TabStrip": tabstrip, "Button": button,
-         "CheckBox": checkbox, "OptionButton": optionbutton, "ComboBox": combobox, "ListBox": listbox, "TreeView": treeview, "ListView": listview,
+         "CheckBox": checkbox, "OptionButton": optionbutton, "ComboBox": combobox, "ListBox": listbox, "TreeView": treeview, "ListView": listview, "Table": table,
          "ScrollBar": scrollbar, "Slider": slider, "UpDown": updown, "ProgressBar": progressbar, "Image": image,
          "Canvas": canvas, "Grid": grid, "Timer": timer, "Unknown": unknown}
 

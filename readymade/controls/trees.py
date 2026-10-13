@@ -19,6 +19,10 @@ class _TreeLook:
 
     widget: ttk.Treeview
 
+    def _look_tree(self):
+        """The Treeview to style (a Table's is inside its frame)."""
+        return self.widget
+
     def _style_name(self):
         if self._background() or self._foreground() or self._font:
             return f"readymade{id(self)}.Treeview"
@@ -29,7 +33,7 @@ class _TreeLook:
             return
         name = self._style_name()
         if name.startswith("readymade"):
-            style = ttk.Style(self.widget)
+            style = ttk.Style(self._look_tree())
             bg, fg = self._background(), self._foreground()
             style.configure(name, **{k: v for k, v in (("background", bg), ("fieldbackground", bg), ("foreground", fg))
                                      if v})
@@ -37,11 +41,11 @@ class _TreeLook:
             # fieldbackground: with a backcolor, the space under the rows is ttk's plain field instead.
             style.layout(name, _with_plain_field(style, style.layout("Treeview")) if bg else style.layout("Treeview"))
             if self._font:
-                usual = tkfont.nametofont("TkDefaultFont", root=self.widget).actual()
-                font = tkfont.Font(root=self.widget, font=appearance.tk_font(self._font, usual))
+                usual = tkfont.nametofont("TkDefaultFont", root=self._look_tree()).actual()
+                font = tkfont.Font(root=self._look_tree(), font=appearance.tk_font(self._font, usual))
                 style.configure(name, font=font.actual(), rowheight=font.metrics("linespace") + 4)
                 style.configure(f"{name}.Heading", font=font.actual())
-        self.widget["style"] = name
+        self._look_tree()["style"] = name
 
     def _apply_font(self):
         self._paint()  # (a Treeview's font is its style's)
