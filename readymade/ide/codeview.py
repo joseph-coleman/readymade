@@ -14,6 +14,7 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 from readymade import codegen, menus
+from readymade.appearance import CHECK_MARK, FANCY_GLYPHS
 from readymade.ide import highlight, options, tooltips
 from readymade.ide.panels import MONO
 
@@ -169,7 +170,7 @@ def _scan(line):
             open_brackets.pop()
         i += 1
     return line, open_brackets  # VB marked the current line in yellow
-_IMPLEMENTED = "  ✓"
+_IMPLEMENTED = "  " + (CHECK_MARK if FANCY_GLYPHS else "*")  # (a handler that's written)
 
 
 class CodeView(ttk.Frame):

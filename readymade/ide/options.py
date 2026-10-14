@@ -231,7 +231,7 @@ class OptionsDialog(Dialog):
         shown.grid(row=0, column=1, sticky="w", padx=(8, 4))
         self.font.trace_add("write", lambda *_: shown.configure(text=self.font.get() or "(the usual)"))
         shown.configure(text=self.font.get() or "(the usual)")
-        ttk.Button(body, text="…", width=3, command=self._choose_font).grid(row=0, column=2)
+        ttk.Button(body, text="...", width=3, command=self._choose_font).grid(row=0, column=2)
         ttk.Button(body, text="Usual", command=lambda: self.font.set("")).grid(row=0, column=3, padx=(4, 0))
         ttk.Label(body, text="Indent:").grid(row=1, column=0, sticky="w", pady=4)
         indent = ttk.Frame(body)

@@ -9,6 +9,13 @@ or the same as a tuple, ("Arial", 12, "bold"); empty parts mean the usual font's
 from __future__ import annotations
 
 import re
+import sys
+
+# Linux's Tk can't be trusted to draw characters beyond Latin-1 (its font fallback depends on
+# the font and size: a box, or the wrong glyph altogether), so what's shown there sticks to
+# them. Windows' and macOS's fonts have these.
+FANCY_GLYPHS = sys.platform in ("win32", "darwin")
+CHECK_MARK = "\u2713" if FANCY_GLYPHS else "X"  # a ticked cell, say
 
 ALIGNMENTS = ("left", "center", "right")
 VALIGNMENTS = ("top", "middle", "bottom")

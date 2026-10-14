@@ -42,9 +42,10 @@ class _TreeLook:
             style.layout(name, _with_plain_field(style, style.layout("Treeview")) if bg else style.layout("Treeview"))
             if self._font:
                 usual = tkfont.nametofont("TkDefaultFont", root=self._look_tree()).actual()
-                font = tkfont.Font(root=self._look_tree(), font=appearance.tk_font(self._font, usual))
-                style.configure(name, font=font.actual(), rowheight=font.metrics("linespace") + 4)
-                style.configure(f"{name}.Heading", font=font.actual())
+                spec = appearance.tk_font(self._font, usual)  # (a Tk font description: a dict isn't one)
+                font = tkfont.Font(root=self._look_tree(), font=spec)
+                style.configure(name, font=spec, rowheight=font.metrics("linespace") + 4)
+                style.configure(f"{name}.Heading", font=spec)
         self._look_tree()["style"] = name
 
     def _apply_font(self):

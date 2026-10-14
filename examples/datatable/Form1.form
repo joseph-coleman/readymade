@@ -79,7 +79,7 @@
       "tabindex": 4,
       "tabstop": true,
       "tag": "",
-      "text": "Save...",
+      "text": "&Save...",
       "tooltip": "Save the order as a CSV file",
       "valignment": "middle",
       "visible": true
@@ -107,7 +107,7 @@
       "tabindex": 6,
       "tabstop": true,
       "tag": "",
-      "text": "Prices +10%",
+      "text": "&Prices +10%",
       "tooltip": "Every price up 10%: one line of Column arithmetic",
       "valignment": "middle",
       "visible": true
@@ -135,7 +135,7 @@
       "tabindex": 9,
       "tabstop": true,
       "tag": "",
-      "text": "Biggest first",
+      "text": "&Biggest first",
       "tooltip": "Sort by Total, the largest first",
       "valignment": "middle",
       "visible": true
@@ -163,7 +163,7 @@
       "tabindex": 12,
       "tabstop": true,
       "tag": "",
-      "text": "Drop unordered",
+      "text": "&Drop unordered",
       "tooltip": "Remove the rows with no Qty",
       "valignment": "middle",
       "visible": true
@@ -191,7 +191,7 @@
       "tabindex": 14,
       "tabstop": true,
       "tag": "",
-      "text": "Garden -10%",
+      "text": "&Garden -10%",
       "tooltip": "10% off the Garden rows: a condition chooses them",
       "valignment": "middle",
       "visible": true
@@ -404,16 +404,17 @@
       "columns": [
         "Item",
         "Category : Food | Hardware | Garden",
-        "Price : number 2",
+        "Price : money",
         "Qty : number",
         "Taxable : check",
-        "Total : number 2, readonly"
+        "Total : money, readonly"
       ],
       "cursor": "default",
       "deletable": true,
       "dock": "fill",
       "editable": true,
       "enabled": true,
+      "enter_moves": "right",
       "font": "",
       "forecolor": "",
       "sortable": true,

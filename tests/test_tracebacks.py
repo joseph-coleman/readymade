@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from readymade.ide.tracebacks import TracebackWatcher
 
 

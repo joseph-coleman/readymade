@@ -3,6 +3,7 @@
 import importlib.util
 import shutil
 import time
+from decimal import Decimal as D
 from pathlib import Path
 
 import pytest
@@ -40,7 +41,7 @@ def settle(form):
 
 
 def test_loaded_and_totaled(form):
-    assert len(form.Items.rows) == 9 and form.Items.rows[0] == ["Apples (1 kg)", "Food", 3.49, 2, False, 6.98]
+    assert len(form.Items.rows) == 9 and form.Items.rows[0] == ["Apples (1 kg)", "Food", D("3.49"), 2, False, D("6.98")]  # (money: exact)
     assert form.Totals.text.split() == ["9", "rows", "Subtotal", "101.67", "Tax", "6.42", "Total", "108.09"]
 
 
@@ -52,18 +53,18 @@ def test_editing_works_out_the_totals(form):
     items._edit(typed="5")
     items._finish(down=1)
     settle(form)
-    assert items[0, "Total"] == 17.45 and "Subtotal 112.14" in form.Totals.text
+    assert items[0, "Total"] == D("17.45") and "Subtotal 112.14" in form.Totals.text
     assert form.Status.text == "Bread: 1 at 2.99 = 2.99"  # (Enter moved down a row)
     items._move(len(items.rows), 0)  # the blank row: a new row with its defaults
     items._edit(typed="Rake")
     items._finish(down=1)
     settle(form)
-    assert items.rows[-1] == ["Rake", "Food", 0, 1, True, 0] and "10 rows" in form.Totals.text
+    assert items.rows[-1] == ["Rake", "Food", D("0.00"), 1, True, D("0.00")] and "10 rows" in form.Totals.text
 
 
 def test_the_buttons(form, program, monkeypatch, tmp_path):
     form.RaiseButton.widget.invoke()
-    assert form.Items[0, "Price"] == 3.84 and form.Items[0, "Total"] == 7.68
+    assert form.Items[0, "Price"] == D("3.84") and form.Items[0, "Total"] == D("7.68")  # (3.49 * 1.1, to the cent)
     form.DropButton.widget.invoke()
     assert len(form.Items.rows) == 7 and all(form.Items["Qty"])
     form.SortButton.widget.invoke()
@@ -80,8 +81,8 @@ def test_the_buttons(form, program, monkeypatch, tmp_path):
 
 def test_a_condition_chooses_the_garden_rows(form):
     form.SaleButton.widget.invoke()
-    assert form.Items[form.Items["Category"].eq("Garden"), "Price"] == [4.05, 8.78, 10.8]
-    assert form.Items[0, "Price"] == 3.49  # (Food: no sale)
+    assert form.Items[form.Items["Category"].eq("Garden"), "Price"] == [D("4.05"), D("8.78"), D("10.80")]
+    assert form.Items[0, "Price"] == D("3.49")  # (Food: no sale)
     assert form.Totals.text.split()[3] == f"{form.Items['Total'].sum():,.2f}"
 
 
@@ -100,3 +101,15 @@ def test_qty_cant_go_below_zero(form, program, monkeypatch):
     items._edit(typed="-2")
     assert items._finish(down=1) is False and said == ["Qty can't be less than 0"] and items[0, "Qty"] == 2
     items._cancel()
+
+
+def test_unordered_rows_are_gray_and_ctrl_z_takes_an_edit_back(form):
+    items = form.Items
+    assert [row["Item"] for row in items.rows if row.forecolor] == ["Work gloves", "Watering can"]
+    items.current = (5, "Qty")  # Work gloves
+    items._edit(typed="2")
+    items._finish(down=1)
+    assert items.rows[5].forecolor == "" and items[5, "Total"] == D("17.98")
+    items.undo()  # its cellchange works the totals out again, and the gray comes back
+    assert items[5, "Qty"] == 0 and items[5, "Total"] == D("0.00") and items.rows[5].forecolor == "#909090"
+    assert form.Totals.text.split()[3] == "101.67"

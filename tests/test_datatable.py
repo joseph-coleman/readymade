@@ -2,6 +2,8 @@
 
 import re
 import time
+from decimal import Decimal as D
+from tkinter import font as tkfont
 from tkinter import ttk
 from types import SimpleNamespace
 
@@ -50,6 +52,24 @@ def test_sharing_out_widths():
     assert _shared(100, [60, 60]) == [60, 60]  # (they don't fit: the least, scrolled sideways)
 
 
+def test_money_is_exact():
+    money, yen = ColumnKind.parse("Price : money"), ColumnKind.parse("Yen : money 0, readonly")
+    assert (money.kind, money.decimals, money.line(), yen.line()) == ("money", 2, "Price : money", "Yen : money 0, readonly")
+    assert money.convert("2.675") == D("2.68")  # (a half up, as a receipt; a float rounds this to 2.67)
+    assert money.convert(1.1) == D("1.10") and money.convert(3) == D("3.00") and money.convert("") == D("0.00")
+    assert money.convert("$1,234.5") == D("1234.50") and money.convert(" \u20ac9.99 ") == D("9.99")
+    assert yen.convert("1500.4") == D("1500")
+    assert money.show(D("1234.5")) == "1,234.50" and money.text(D("1234.5")) == "1234.50"  # (CSV: no commas)
+    for bad in ("lots", True, "NaN", "inf"):
+        with pytest.raises(ValueError, match="isn't a number"):
+            money.convert(bad)
+    price = Column([D("3.49"), D("12.00")], "Price")
+    assert price * 1.1 == [D("3.839"), D("13.200")] and 2 * price == [D("6.98"), D("24.00")]  # (a float goes with money)
+    assert price + 0.01 == [D("3.50"), D("12.01")] and (price > 5) == [False, True] and price.sum() == D("15.49")
+    assert Block([[D("1.00"), 2]], ["A", "B"]) * 0.5 == [[D("0.500"), 1.0]]
+    assert ColumnKind.parse("N : number 2").convert(D("3.456")) == 3.46  # (number takes money too)
+
+
 def test_columns_arithmetic_is_element_wise():
     price, qty = Column([1.5, 2.0, 4.0], "Price"), Column([2, 3, 0], "Qty")
     assert price * qty == [3.0, 6.0, 0.0]
@@ -69,6 +89,8 @@ def test_conditions_choose_values():
     assert (0 < qty) == [True, False, True, True]  # (the number first works too)
     assert size.eq("M") == [False, True, False, True] and size.ne("M") == [True, False, True, False]
     assert size == ["S", "M", "L", "M"]  # (== is still the whole column)
+    assert size.isin(["S", "L"]) == [True, False, True, False] and size.isin("M") == [False, True, False, True]
+    assert qty[qty.isin(range(1, 3))] == [2, 1] and size.isin([]) == [False] * 4
     assert ((qty > 0) & size.eq("M")) == [False, False, False, True]
     assert ((qty > 4) | size.eq("S")) == [True, False, True, False] and ~(qty > 0) == [False, True, False, False]
     assert qty[qty > 1] == [2, 5] and qty[qty > 1].sum() == 7 and qty[qty > 9] == []
@@ -703,3 +725,192 @@ def test_columnclick_and_sorting_your_own_way(make_form):
     assert table["Item"] == ["c", "b", "a"]
     with pytest.raises(TypeError, match="Item can't be sorted that way"):
         table.sort("Item", key=lambda value: None if value == "a" else value)
+
+
+@pytest.mark.usefixtures("display")
+def test_enter_moves_where_its_told(make_form):
+    form = make_form(enter_moves="right")  # (as set in the designer)
+    table = form.Stock
+    table.rows = ROWS
+    table._tree.focus_force()
+    table.current = (0, "Item")
+    settle(form)
+    for typed in ("Figs", "3.5", "4"):  # typing along a row, with no arrow keys
+        key(form, typed[0])
+        table._editor.delete(0, "end")
+        table._editor.insert(0, typed)
+        key(form, "Return")
+    assert table.rows[0][:3] == ["Figs", 3.5, 4] and table.current == (0, 3)
+    table.current = (0, "Size")
+    key(form, "Return")  # a choice's list, answered with Enter: right too
+    table._editor.set("L")
+    table._choice_keyed = True
+    table._editor.event_generate("<<ComboboxSelected>>")
+    settle(form)
+    assert table[0, "Size"] == "L" and table.current == (0, 5)
+    for where, then in (("stay", (1, 2)), ("left", (1, 1)), ("up", (0, 2)), ("down", (2, 2)), ("right", (1, 3))):
+        table.enter_moves = where
+        table.current = (1, "Qty")
+        key(form, "7")
+        key(form, "Return")
+        assert table.current == then, where
+    with pytest.raises(ValueError, match="enter_moves must be one of: down, right, left, up, stay"):
+        table.enter_moves = "sideways"
+
+
+@pytest.mark.usefixtures("display")
+def test_undo_and_redo_the_users_changes(make_form):
+    events = []
+
+    class Form1(Form):
+        def Stock_cellchange(self, row, column):
+            events.append(("change", row, column))
+
+        def Stock_rowadd(self, row):
+            self.Stock[row, "Qty"] = 1  # (a default: code's, so not a step of its own)
+
+        def Stock_rowdelete(self, row, values):
+            events.append(("delete", row, values[0]))
+
+    form = make_form(Form1)
+    table = form.Stock
+    table.rows = ROWS
+    table._tree.focus_force()
+    assert not table.can_undo and not table.can_redo
+    table.current = (0, "Price")
+    settle(form)
+    key(form, "9")
+    key(form, "Return")  # an edit...
+    assert table[0, "Price"] == 9 and table.can_undo
+    events.clear()
+    key(form, "z", state=0x4)  # ...taken back with Ctrl+Z
+    assert table[0, "Price"] == 1.2 and events == [("change", 0, 1)] and table.current == (0, 1)
+    key(form, "y", state=0x4)  # and made again (Ctrl+Y; Ctrl+Shift+Z too)
+    assert table[0, "Price"] == 9 and not table.can_redo
+    table[1, "Price"] = 5  # code's changes aren't steps
+    table.undo()
+    assert table[0, "Price"] == 1.2 and table[1, "Price"] == 5
+
+    table._move(3, 0)  # the blank row: a new row, with rowadd's default
+    key(form, "K", state=0x1)
+    key(form, "Return")
+    assert table.rows[3][:3] == ["K", 0, 1]
+    events.clear()
+    table.undo()  # the whole new row goes
+    assert len(table.rows) == 3 and events == [("delete", 3, "K")]
+    table.redo()  # and comes back as it was, default and all
+    assert table.rows[3][:3] == ["K", 0, 1]
+
+    table.sort("Item")  # (rows sorted between: undo still finds its rows)
+    table.current = (0, "Item")
+    table._choose_row(0)
+    table._tree.selection_add("1")
+    gone = [table[0, "Item"], table[1, "Item"]]
+    key(form, "Delete")  # two rows deleted...
+    assert len(table.rows) == 2
+    events.clear()
+    key(form, "z", state=0x5)  # (Ctrl+Shift+Z is redo: nothing to redo yet)
+    assert len(table.rows) == 2
+    table.undo()  # ...put back where they were, each cell a cellchange (totals and the like follow)
+    assert table["Item"][:2] == gone and len(events) == 2 * 6
+    table.current = (0, "Price")
+    table.paste("1\n2\n3\n4\n5")  # a paste: one step, its new row too
+    assert len(table.rows) == 5
+    table.undo()
+    assert len(table.rows) == 4 and table[0, "Price"] != 1
+
+    table.rows = ROWS  # new rows: what came before is forgotten
+    assert not table.can_undo and not table.can_redo
+    table.current = (0, "Price")
+    key(form, "7")
+    key(form, "Return")
+    table.editable = False  # (the user can't change it now: nor undo)
+    assert not table.can_undo
+    table.undo()
+    assert table[0, "Price"] == 7
+
+
+@pytest.mark.usefixtures("display")
+def test_row_colors_stay_with_their_rows(make_form):
+    form = make_form()
+    table = form.Stock
+    table.rows = ROWS
+    table.rows[1].backcolor = "#ffe0e0"  # (an odd row: its color, not the shading)
+    table.rows[2].forecolor = "#c00000"
+    tree = table._tree
+
+    def tags(iid):
+        return list(tree.item(iid, "tags"))
+
+    assert tags("1") == ["color #ffe0e0 "] and str(tree.tag_configure("color #ffe0e0 ", "background")) == "#ffe0e0"
+    assert tags("2") == ["color  #c00000"]
+    assert table.rows[1].backcolor == "#ffe0e0" and table.rows[0].backcolor == "" and table.rows[2].forecolor == "#c00000"
+    table.sort("Item", descending=True)  # Plums, Pears, Apples: the colors go with them
+    assert table.rows[0].forecolor == "#c00000" and table.rows[1].backcolor == "#ffe0e0"
+    assert tags("1") == ["color #ffe0e0 "] and tags("0") == ["color  #c00000"]
+    table.rows[1].backcolor = ""  # (back to the usual: shaded, as an odd row)
+    assert tags("1") == ["odd"]
+    with pytest.raises(ValueError):
+        table.rows[0].backcolor = "reddish"
+    table.rows = ROWS  # new rows: no colors
+    assert table.rows[2].forecolor == "" and all(tags(i) in ([], ["odd"], ["new"]) for i in tree.get_children())
+
+
+@pytest.mark.usefixtures("display")
+def test_numbers_and_money_line_up_on_the_right(make_form):
+    table = make_form().Stock
+    table.columns = ["Item", "Price : money", "Qty : number", "Ok : check"]
+    assert [str(table._tree.column(f"c{i}", "anchor")) for i in range(4)] == ["w", "e", "e", "center"]
+
+
+@pytest.mark.usefixtures("display")
+def test_the_editor_isnt_clipped_by_short_rows(make_form):
+    form = make_form()
+    table = form.Stock
+    table.rows = ROWS
+    style = ttk.Style(table._tree)
+    usual = style.lookup("Treeview", "rowheight")
+    style.configure("Treeview", rowheight=12)  # (shorter than a text box: as on a Mac)
+    try:
+        table._refresh()
+        table._tree.focus_force()
+        table.current = (1, "Item")
+        settle(form)
+        table._edit()
+        settle(form)
+        editor, (_, y, _, h) = table._editor_box, table._tree.bbox("1", "c0")
+        assert h < editor.winfo_reqheight() == editor.winfo_height()  # all of it, not the cell's height
+        assert abs((editor.winfo_y() + editor.winfo_height() / 2) - (y + h / 2)) <= 1  # centered on the cell
+    finally:
+        style.configure("Treeview", rowheight=usual)  # ("": as before, the theme's own)
+
+
+@pytest.mark.usefixtures("display")
+def test_a_big_fonts_editor_is_as_tall_as_its_text(make_form):
+    form = make_form(font="TkDefaultFont, 20")
+    table = form.Stock
+    table.rows = ROWS
+    table._tree.focus_force()
+    table.current = (0, "Item")
+    settle(form)
+    table._edit()
+    settle(form)
+    box, entry = table._editor_box, table._editor
+    assert box.winfo_height() >= entry.winfo_reqheight() and box.winfo_ismapped()
+    assert tkfont.Font(font=entry.cget("font")).actual("size") == 20
+    shown = ttk.Style(table._tree).lookup(table._tree.cget("style"), "font")  # (the rows' font: 20 too)
+    assert tkfont.Font(font=shown).actual("size") == 20
+    assert entry.cget("justify") == "left"
+    table._cancel()
+    table.current = (0, "Price")
+    table._edit()
+    assert table._editor.cget("justify") == "right"  # (as the column's numbers line up: no jump)
+    table._cancel()
+    style = ttk.Style(table._tree)
+    table.current = (1, "Item")
+    table._edit()
+    assert str(table._editor_box.cget("highlightcolor")) == str(table._cursor_color(False))  # the cursor's color
+    table._cancel()
+    table._choose_row(1)
+    table._edit()  # on a chosen row: the chosen text's color, as the cursor (not lost in the highlight)
+    assert str(table._editor_box.cget("highlightcolor")) == str(style.lookup(table._tree.cget("style"), "foreground", ("selected",)))

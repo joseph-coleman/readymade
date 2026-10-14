@@ -1,9 +1,12 @@
 """An order sheet: a DataTable edited like a spreadsheet, its totals worked out in code.
 README.md walks through it."""
 
+from decimal import ROUND_HALF_UP, Decimal
+
 from readymade import Form, app_path, msgbox, open_file_dialog, save_file_dialog
 
-TAX_RATE = 0.08  # on the rows ticked Taxable
+TAX_RATE = Decimal("0.08")  # on the rows ticked Taxable (Price and Total are money: Decimals)
+CENT = Decimal("0.01")
 CSV_FILES = {"CSV files": "*.csv", "All files": "*.*"}
 
 
@@ -20,6 +23,9 @@ class Form1(Form):
         items["Total"] = items["Price"] * items["Qty"]
         subtotal = items["Total"].sum()
         tax = items["Total"][items["Taxable"]].sum() * TAX_RATE  # (the Totals where Taxable is ticked)
+        tax = tax.quantize(CENT, rounding=ROUND_HALF_UP)  # to the cent, a half up, as a receipt does
+        for row in items.rows:  # rows with nothing ordered, grayed (a row's color stays with it)
+            row.forecolor = "#909090" if row["Qty"] == 0 else ""
         self.Totals.text = (f"{len(items.rows)} rows     Subtotal {subtotal:,.2f}     "
                             f"Tax {tax:,.2f}     Total {subtotal + tax:,.2f}  ")
 

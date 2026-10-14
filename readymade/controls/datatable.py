@@ -20,29 +20,35 @@ from __future__ import annotations
 
 import csv
 import io
+from contextlib import contextmanager
 import operator
 import re
 import tkinter as tk
 from collections.abc import MutableSequence, Sequence
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import messagebox, ttk
 
 from readymade import keys
+from readymade.appearance import CHECK_MARK, check_color
 from readymade.controls.base import _FOCUS_EVENTS, Control, Event, register
 from readymade.controls.traits import Anchored, BackColor, Cursor, Font, ForeColor, TabStop, Tooltip
 from readymade.controls.trees import _TreeLook
 from readymade.menus import primary_mask
 
-CHECK_MARK = "✓"
 _PRIMARY = primary_mask()  # Ctrl in a Tk event's state (⌘ on a Mac), as in Ctrl+click
 PADDING = 16  # a column's room around its text, in pixels
 NARROWEST = 30  # (a column's least width)
+ENTER_MOVES = ("down", "right", "left", "up", "stay")  # where Enter after an edit takes the cursor
+_ENTER_STEPS = {"down": (1, 0), "right": (0, 1), "left": (0, -1), "up": (-1, 0), "stay": (0, 0)}
+UNDO_STEPS = 100  # how many of the user's changes Ctrl+Z can take back
 CURSOR_COLOR = "#2f6fd0"  # (the cell cursor, if the theme has no highlight color)
-_TRUE = {"true", "yes", "y", "1", "x", "on", CHECK_MARK}
+_TRUE = {"true", "yes", "y", "1", "x", "on", "\u2713"}  # (and a check mark, as Windows and macOS show a tick)
 _FALSE = {"false", "no", "n", "0", "", "off"}
 _WHOLE = re.compile(r"^[+-]?\d+$")
+_CURRENCY = "$\u20ac\u00a3\u00a5 "  # (what a pasted amount may have around it: $ € £ ¥)
 
 
 # ----- columns: what each holds -----
@@ -51,11 +57,11 @@ _WHOLE = re.compile(r"^[+-]?\d+$")
 class ColumnKind:
     """One column: its header, its kind of value, and whether the user can edit it. Written
     as a line of the DataTable's columns: "Price : number 2", "Size : S | M | L", "Total :
-    number, readonly"."""
+    money, readonly"."""
 
     name: str
-    kind: str = "text"  # text, number, check or choice
-    decimals: int | None = None  # for a number: the places it keeps (None: as it comes)
+    kind: str = "text"  # text, number, money, check or choice
+    decimals: int | None = None  # for a number: the places it keeps (None: as it comes); money's (2)
     choices: tuple = ()  # for a choice
     readonly: bool = False
 
@@ -79,20 +85,27 @@ class ColumnKind:
             if len(words) == 2 and not words[1].isdigit():
                 raise ValueError(f"{line!r}: after number, how many decimal places (number 2)")
             return cls(name, "number", decimals=int(words[1]) if len(words) == 2 else None, readonly=readonly)
+        if words[0] == "money" and len(words) <= 2:
+            if len(words) == 2 and not words[1].isdigit():
+                raise ValueError(f"{line!r}: after money, how many decimal places (money 0, for yen)")
+            return cls(name, "money", decimals=int(words[1]) if len(words) == 2 else 2, readonly=readonly)
         if words in (["text"], ["check"]):
             return cls(name, words[0], readonly=readonly)
-        raise ValueError(f"{line!r}: a column's kind is text, number (number 2: with 2 decimal places), check, "
-                         "or choices like S | M | L; and maybe readonly")
+        raise ValueError(f"{line!r}: a column's kind is text, number (number 2: with 2 decimal places), money, "
+                         "check, or choices like S | M | L; and maybe readonly")
 
     def line(self):
         """How it's written in the DataTable's columns."""
         kind = {"text": "", "check": "check", "choice": " | ".join(self.choices),
-                "number": "number" + (f" {self.decimals}" if self.decimals is not None else "")}[self.kind]
+                "number": "number" + (f" {self.decimals}" if self.decimals is not None else ""),
+                "money": "money" + (f" {self.decimals}" if self.decimals != 2 else "")}[self.kind]
         extras = ", ".join(p for p in (kind, "readonly" if self.readonly else "") if p)
         return f"{self.name} : {extras}" if extras else self.name
 
     def blank(self):
         """An empty cell's value."""
+        if self.kind == "money":
+            return Decimal(0).quantize(self._cents())
         return {"text": "", "number": 0, "check": False}.get(self.kind, self.choices[0] if self.choices else "")
 
     def convert(self, value):
@@ -113,7 +126,29 @@ class ColumnKind:
             if match is None:
                 raise ValueError(f"{self.name}: {value!r} isn't one of {', '.join(self.choices)}")
             return match
+        if self.kind == "money":
+            return self._money(value)
         return self._number(value)
+
+    def _cents(self):
+        return Decimal(1).scaleb(-self.decimals)  # (0.01, for 2 places)
+
+    def _money(self, value):
+        """An amount as a Decimal, rounded to its places (a half up, as on a receipt): a float's
+        own digits (1.1 is 1.10, not 1.100000000000000088817841970012523233890533447265625)."""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return self.blank()
+        if isinstance(value, bool):
+            raise ValueError(f"{self.name}: {value!r} isn't a number")
+        if isinstance(value, float):
+            value = repr(value)
+        try:
+            amount = Decimal(str(value).strip().strip(_CURRENCY).replace(",", ""))  # ($1,234.50)
+        except InvalidOperation:
+            raise ValueError(f"{self.name}: {value!r} isn't a number") from None
+        if not amount.is_finite():
+            raise ValueError(f"{self.name}: {value!r} isn't a number")
+        return amount.quantize(self._cents(), rounding=ROUND_HALF_UP)
 
     def _number(self, value):
         if value is None or (isinstance(value, str) and not value.strip()):
@@ -128,7 +163,7 @@ class ColumnKind:
                 raise ValueError(f"{self.name}: {value!r} isn't a number") from None
         elif not isinstance(value, (int, float)):
             try:
-                value = float(value)
+                value = float(value)  # (a Decimal, from a money column)
             except (TypeError, ValueError):
                 raise ValueError(f"{self.name}: {value!r} isn't a number") from None
         return round(float(value), self.decimals) if self.decimals is not None else value
@@ -139,11 +174,15 @@ class ColumnKind:
             return CHECK_MARK if value else ""
         if self.kind == "number" and self.decimals is not None:
             return f"{value:.{self.decimals}f}"
+        if self.kind == "money":
+            return f"{value:,.{self.decimals}f}"  # (1,234.50)
         return str(value)
 
     def text(self, value):
-        """A value as text for a CSV file or the clipboard: numbers with their decimals, a
-        check as True or False (which convert() reads back)."""
+        """A value as text for a CSV file or the clipboard: numbers with their decimals (money
+        without its thousands' commas), a check as True or False (which convert() reads back)."""
+        if self.kind == "money":
+            return f"{value:.{self.decimals}f}"
         if self.kind == "number":
             return self.show(value)
         return str(bool(value)) if self.kind == "check" else str(value)
@@ -154,6 +193,18 @@ class ColumnKind:
         if self.kind == "choice":
             return self.choices.index(value) if value in self.choices else len(self.choices)
         return value
+
+
+def _mixed(op):
+    """op, able to take a float with money: Python won't mix a Decimal with a float, so the
+    float becomes a Decimal of its own digits (price * 1.1 is price * Decimal("1.1"))."""
+    def run(a, b):
+        if isinstance(a, Decimal) and isinstance(b, float):
+            b = Decimal(repr(b))
+        elif isinstance(b, Decimal) and isinstance(a, float):
+            a = Decimal(repr(a))
+        return op(a, b)
+    return run
 
 
 def _shared(total, least):
@@ -208,8 +259,9 @@ class Column(Sequence):
     Comparing with < <= > >= is element-wise too, giving a Column of True/False: a condition,
     to choose rows with (table[table["Qty"] > 0, :]) or values (column[column > 0]). Combine
     conditions with & | ~ (and, or, not). == compares whole columns, as lists do; for each
-    value, column.eq("Garden") and column.ne(0). A Column isn't True or False itself (if
-    column > 20: is an error, as in numpy): ask column.any() or column.all()."""
+    value, column.eq("Garden"), column.ne(0) and column.isin(["S", "M"]) (one of them). A
+    Column isn't True or False itself (if column > 20: is an error, as in numpy): ask
+    column.any() or column.all()."""
 
     def __init__(self, values, name=""):
         self._values = list(values)
@@ -259,6 +311,7 @@ class Column(Sequence):
             pairs = zip(self._values, other)
         else:
             pairs = ((value, other) for value in self._values)
+        op = _mixed(op)
         return Column([op(b, a) if reverse else op(a, b) for a, b in pairs], self.name)
 
     def __add__(self, other):
@@ -314,6 +367,12 @@ class Column(Sequence):
     def ne(self, other):
         """Whether each value differs from other: a Column of True/False."""
         return self._each(other, operator.ne)
+
+    def isin(self, values):
+        """Whether each value is one of values: a Column of True/False, a condition.
+        table[table["Size"].isin(["S", "M"]), "Item"]."""
+        values = list(values) if not isinstance(values, (str, bytes)) else [values]
+        return Column([value in values for value in self._values], self.name)
 
     def __and__(self, other):
         return self._each(other, lambda a, b: bool(a and b))
@@ -419,6 +478,7 @@ class Block(Sequence):
                 raise ValueError(f"blocks of different shapes: {_shape_of(self._rows)} and {_shape_of(others)}")
         else:
             others = [[other] * len(self.headers) for _ in self._rows]
+        op = _mixed(op)
         return Block([[op(b, a) if reverse else op(a, b) for a, b in zip(row, more)]
                       for row, more in zip(self._rows, others)], self.headers)
 
@@ -506,6 +566,25 @@ class Row(Sequence):
         """Its values, as a list."""
         return list(self._table._data[self._index])
 
+    @property
+    def backcolor(self):
+        """The row's background color, "#rrggbb" ("" for the usual). Set from code: rows have no
+        colors in the designer. It stays with the row as rows are sorted, added or deleted."""
+        return self._table._colors_of(self._index)[0]
+
+    @backcolor.setter
+    def backcolor(self, value):
+        self._table._color_row(self._index, back=check_color(value))
+
+    @property
+    def forecolor(self):
+        """The row's text color ("" for the usual), as backcolor."""
+        return self._table._colors_of(self._index)[1]
+
+    @forecolor.setter
+    def forecolor(self, value):
+        self._table._color_row(self._index, fore=check_color(value))
+
     def asdict(self):
         """Its values by header: {"Item": "Apples", "Price": 1.2}."""
         return {kind.name: value for kind, value in zip(self._table._kinds, self._table._data[self._index])}
@@ -579,13 +658,14 @@ _SEQUENCES = (list, tuple, Column, Row)  # (what holds several values, for _pick
 @register
 class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anchored, Control):
     """A table of data, as a database has: each column holds one kind of value (text, a
-    number, a tick or a choice) for every row, and a new row starts with each column's blank
-    value. The user edits it like a spreadsheet.
+    number, money, a tick or a choice) for every row, and a new row starts with each
+    column's blank value. The user edits it like a spreadsheet.
 
     columns says what each column holds, one per line: "Item", "Price : number 2", "In stock :
-    check", "Size : S | M | L", "Total : number 2, readonly". The blank values: empty text, 0,
-    no tick, the first choice; rowadd can set others for a new row. Code reaches the data
-    Pythonically:
+    check", "Size : S | M | L", "Total : money, readonly". Money is a decimal.Decimal, exact to
+    the cent. The blank values: empty text, 0, no tick, the first choice; rowadd can set others
+    for a new row. enter_moves says where Enter goes after an edit (down; right, for typing
+    along rows). Code reaches the data Pythonically:
 
         self.Stock.rows = [["Apples", 1.2, True, "M"], ["Pears", 0.95, False, "L"]]
         self.Stock[0, "Price"] = 1.25
@@ -606,6 +686,10 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     made (for defaults); rowdelete as one is deleted; columnclick when a header is clicked
     (after sorting, if sortable: off, it can sort its own way, with sort()'s key).
 
+    Ctrl+Z takes back the user's last change, and Ctrl+Y (or Ctrl+Shift+Z) makes it again: undo()
+    and redo() from code, can_undo and can_redo for an Edit menu. A row's backcolor and
+    forecolor are set from code (self.Stock.rows[2].backcolor = "#ffe0e0"), and stay with it.
+
     The columns share its width out (none narrower than its header), and scroll sideways when
     they don't fit. autosize_columns() fits some or all to what they hold, and widths sets
     them; those keep their widths, and the others share what's left."""
@@ -618,18 +702,24 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
               Event("rowclick", ("row",), policy="latest"), Event("columnclick", ("column",)),
               Event("dblclick"), *_FOCUS_EVENTS)
     extra_props = {"columns": ["Name", "Amount : number"], "editable": True, "addable": True, "deletable": True,
-                   "sortable": True}
+                   "sortable": True, "enter_moves": "down"}
+    prop_choices = {"enter_moves": ENTER_MOVES}
 
     def create_widget(self, parent):
         self._data, self._kinds = [], []
         self._cur = (0, 0)
         self._anchor = 0  # where Shift+arrows start choosing rows from
         self._editor = None
+        self._editor_box = None  # what's placed over the cell: a text editor's frame (a choice's list is itself)
         self._editing = None  # (row, column) being edited
         self._sorted = None  # (column, descending, key)
         self._telling = False  # a message is up (the editor losing the keyboard to it isn't leaving)
         self._raisers = {}  # event -> what on() (or a Name_event method) attached
         self._editable = self._addable = self._deletable = self._sortable = True
+        self._enter_moves = "down"
+        self._undone, self._redone = [], []  # steps: lists of ("cell", row, column, old, new), ("add"/"delete", row, index)
+        self._recording = None  # the step being recorded (a user's change under way)
+        self._row_colors = {}  # id(row) -> (row, backcolor, forecolor)
         self._enabled = True
         self._sized = set()  # the columns whose widths are someone's (dragged, set, autosized); the rest share
         self._choice_keyed = False  # a choice's list was answered with Enter (so: down a row)
@@ -694,12 +784,13 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             raise ValueError(f"two columns have the same header: {', '.join(repeated)}")
         old = self._kinds
         self._kinds = kinds
+        self._forget()
         self._data = [[self._keep(kinds[i], row[i]) if i < len(old) else kinds[i].blank() for i in range(len(kinds))]
                       for row in self._data]
         ids = [f"c{i}" for i in range(len(kinds))]
         self._tree.configure(columns=ids, displaycolumns=ids)
         for i, kind in enumerate(kinds):
-            anchor = {"number": "e", "check": "center"}.get(kind.kind, "w")
+            anchor = {"number": "e", "money": "e", "check": "center"}.get(kind.kind, "w")
             self._tree.column(ids[i], anchor=anchor, stretch=False, minwidth=NARROWEST)
             self._tree.heading(ids[i], text=kind.name, anchor=anchor, command=lambda c=i: self._header_clicked(c))
         self._sorted = None
@@ -827,6 +918,23 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     del _switch
 
     @property
+    def enter_moves(self):
+        """Where Enter takes the cell cursor after an edit: "down" (the usual), "right" (along
+        the row, then on to the next, for typing in rows: "left" for right-to-left ones), "up",
+        or "stay"."""
+        return self._enter_moves
+
+    @enter_moves.setter
+    def enter_moves(self, value):
+        if value not in ENTER_MOVES:
+            raise ValueError(f"enter_moves must be one of: {', '.join(ENTER_MOVES)}")
+        self._enter_moves = value
+
+    def _after_enter(self):
+        """Finish the edit (Enter), and move as enter_moves says."""
+        return self._finish(*_ENTER_STEPS[self._enter_moves])
+
+    @property
     def enabled(self):
         """Whether it responds to the user. A disabled control is grayed out."""
         return self._enabled
@@ -848,6 +956,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     @rows.setter
     def rows(self, rows):
         self._data = [self._convert_row(row) for row in rows]
+        self._forget()
         self._unsort()
         self._refresh()
 
@@ -989,6 +1098,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
                         raise ValueError(f"{path.name}, line {number}: {e}") from None
             rows.append(row)
         self._data = rows
+        self._forget()
         self._unsort()
         self._refresh()
 
@@ -1028,7 +1138,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         chosen, before = tree.selection(), len(tree.get_children())
         tree.delete(*tree.get_children())
         for i, row in enumerate(self._data):
-            tree.insert("", "end", iid=str(i), values=self._shown(row), tags=("odd",) if i % 2 else ())
+            tree.insert("", "end", iid=str(i), values=self._shown(row), tags=self._row_tags(i, row))
         if self._new_row():
             tree.insert("", "end", iid="new", values=[""] * len(self._kinds), tags=("new",))
         last = len(self._data) if self._new_row() else len(self._data) - 1
@@ -1042,6 +1152,34 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         self._check_sorted()
         self._paint_rows()
         self._follow()
+
+    def _row_tags(self, i, row):
+        """A row's tags: every other one shaded, unless it has a backcolor; its colors, if any."""
+        _, back, fore = self._row_colors.get(id(row), (None, "", ""))
+        tags = ["odd"] if i % 2 and not back else []
+        if back or fore:
+            tag = f"color {back} {fore}"
+            self._tree.tag_configure(tag, **{option: color for option, color in
+                                             (("background", back), ("foreground", fore)) if color})
+            tags.append(tag)
+        return tuple(tags)
+
+    def _colors_of(self, row):
+        _, back, fore = self._row_colors.get(id(self._data[self._row_at(row)]), (None, "", ""))
+        return back, fore
+
+    def _color_row(self, row, back=None, fore=None):
+        """Color a row (the list itself, kept with it, so its colors go where it goes)."""
+        index = self._row_at(row)
+        values = self._data[index]
+        _, old_back, old_fore = self._row_colors.get(id(values), (None, "", ""))
+        back, fore = old_back if back is None else back, old_fore if fore is None else fore
+        if back or fore:
+            self._row_colors[id(values)] = (values, back, fore)  # (holding the row: its id stays its own)
+        else:
+            self._row_colors.pop(id(values), None)
+        if self._tree.exists(str(index)):  # (just this row: a loop coloring many stays quick)
+            self._tree.item(str(index), tags=self._row_tags(index, values))
 
     def _check_sorted(self):
         """After a change: if the rows aren't in their sorted order now, the header's arrow goes."""
@@ -1087,7 +1225,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             for line in self._lines:
                 line.place_forget()
             if self._editor is not None:
-                self._editor.place_forget()
+                (self._editor_box or self._editor).place_forget()
                 self.widget.after_idle(self._edit_out_of_sight)
             return
         x, y, w, h = box
@@ -1098,8 +1236,14 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             line.place(x=lx, y=ly, width=lw, height=lh)
             line.lift()
         if self._editor is not None:
-            self._editor.place(x=x, y=y, width=w, height=h)
-            self._editor.lift()
+            # As tall as it needs, if that's more than the cell (a Mac's text box is taller than
+            # its rows), centered on it: over the rows beside it while it's open, not clipped.
+            placed = self._editor_box or self._editor
+            if not placed.winfo_ismapped():
+                placed.update_idletasks()  # (its size, from its font, before it's first placed)
+            tall = max(h, placed.winfo_reqheight())
+            placed.place(x=x, y=y - (tall - h) // 2, width=w, height=tall)
+            placed.lift()
 
     def _cursor_color(self, chosen):
         """The cell cursor's color: the theme's highlight, as chosen rows have (so the system's
@@ -1219,7 +1363,8 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if name == "Esc" and self._tree.selection():
             self._tree.selection_set(())
             return "break"
-        shortcuts = {"Ctrl+C": self.copy, "Ctrl+X": lambda: self._keyed(self.cut, "Cut", "cut"),
+        shortcuts = {"Ctrl+Z": self.undo, "Ctrl+Y": self.redo, "Ctrl+Shift+Z": self.redo,
+                     "Ctrl+C": self.copy, "Ctrl+X": lambda: self._keyed(self.cut, "Cut", "cut"),
                      "Ctrl+V": lambda: self._keyed(self.paste, "Paste", "pasted"), "Ctrl+A": self.select_all}
         if name in shortcuts:
             shortcuts[name]()
@@ -1275,24 +1420,24 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             if typed:
                 start = next((c for c in kind.choices if c.lower().startswith(typed.lower())), current)
             editor.set(start)
-            # (finished once Tk's own handling of the choice is done; chosen with Enter: down a row,
-            # as Enter does elsewhere; with a click: here)
+            # (finished once Tk's own handling of the choice is done; chosen with Enter: on, as
+            # enter_moves says, as Enter does elsewhere; with a click: here)
             self._choice_keyed = False
             self._listen_for_enter(editor)
             editor.bind("<<ComboboxSelected>>", lambda e: editor.after_idle(
-                lambda: editor is self._editor and self._finish(1 if self._choice_keyed else 0, 0)), add="+")
+                lambda: editor is self._editor and (self._after_enter() if self._choice_keyed else self._finish())),
+                add="+")
         else:
-            editor = ttk.Entry(self._tree)
+            editor = self._text_editor(kind)
             editor.insert(0, typed if typed is not None else kind.show(current) if row < len(self._data) else "")
             editor.icursor("end")
         style_font = ttk.Style(self._tree).lookup(self._tree.cget("style") or "Treeview", "font")
-        if style_font:
-            try:
-                editor.configure(font=style_font)
-            except tk.TclError:
-                pass
+        try:
+            editor.configure(font=style_font or "TkDefaultFont")
+        except tk.TclError:
+            pass
         self._editor, self._editing = editor, (row, column)
-        for sequence, action in (("<Return>", lambda: self._finish(1, 0)), ("<KP_Enter>", lambda: self._finish(1, 0)),
+        for sequence, action in (("<Return>", self._after_enter), ("<KP_Enter>", self._after_enter),
                                  ("<Tab>", lambda: self._finish(0, 1)), ("<Escape>", self._cancel)):
             editor.bind(sequence, lambda e, a=action: (a(), "break")[1])
         for sequence in ("<Shift-Tab>", "<ISO_Left_Tab>"):
@@ -1305,6 +1450,21 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         editor.focus_set()
         if kind.kind == "choice" and typed is None:
             editor.after_idle(lambda: self._post(editor))
+
+    def _text_editor(self, kind):
+        """A text cell's editor: a classic Entry in a thin frame of the cursor's color, the cell
+        cursor opened up. (Not ttk's: a Mac's native text box is half again as tall as a row.)"""
+        style, name = ttk.Style(self._tree), self._tree.cget("style") or "Treeview"
+        back = self._background() or style.lookup(name, "fieldbackground") or "#ffffff"
+        fore = self._foreground() or style.lookup(name, "foreground") or "#000000"
+        edge = self._cursor_color(self._iid(self._cur[0]) in self._tree.selection())  # (as the cursor's, on a chosen row too)
+        box = tk.Frame(self._tree, background=back, bd=0, highlightthickness=1,
+                       highlightbackground=edge, highlightcolor=edge)
+        editor = tk.Entry(box, relief="flat", bd=0, highlightthickness=0, background=back, foreground=fore,
+                          insertbackground=fore, justify="right" if kind.kind in ("number", "money") else "left")
+        editor.pack(fill="both", expand=True, padx=(2, 1))  # (the text a little in, as a cell's is)
+        self._editor_box = box
+        return editor
 
     def _listen_for_enter(self, editor):
         """Note Enter in a choice's list (Tk's own, which a click chooses in too)."""
@@ -1403,21 +1563,113 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
                     self._editor.tk.call("ttk::combobox::Unpost", self._editor)  # (and its grab)
                 except tk.TclError:
                     pass
-            self._editor.destroy()
-        self._editor = self._editing = None
+            (self._editor_box or self._editor).destroy()
+        self._editor = self._editing = self._editor_box = None
         self._tree.focus_set()
         self._follow()
 
     def _store(self, row, column, value):
         """The user's change to a cell (on the new row: a new row first)."""
-        if row == len(self._data):
-            self._data.append([kind.blank() for kind in self._kinds])
-            self._refresh()
-            self._raise("rowadd", row)
-        if self._data[row][column] != value:
-            self._data[row][column] = value
-            self._show_row(row)
-            self._raise("cellchange", row, column)
+        with self._step():
+            if row == len(self._data):
+                self._data.append([kind.blank() for kind in self._kinds])
+                self._record("add", self._data[row], row)
+                self._refresh()
+                self._raise("rowadd", row)
+            if self._data[row][column] != value:
+                self._record("cell", self._data[row], column, self._data[row][column], value)
+                self._data[row][column] = value
+                self._show_row(row)
+                self._raise("cellchange", row, column)
+
+    # ----- undo -----
+
+    @contextmanager
+    def _step(self):
+        """One user change (an edit, a paste, a delete), recorded as one step for undo."""
+        if self._recording is not None:  # (inside another: part of it)
+            yield
+            return
+        self._recording = []
+        try:
+            yield
+        finally:
+            step, self._recording = self._recording, None
+            if step:
+                self._undone.append(step)
+                del self._undone[:-UNDO_STEPS]
+                self._redone.clear()
+
+    def _record(self, *change):
+        if self._recording is not None:
+            self._recording.append(change)
+
+    def _forget(self):
+        """Its rows are new (set from code, loaded, new columns): no taking back changes to the
+        old ones, and their colors go with them."""
+        self._undone.clear()
+        self._redone.clear()
+        self._row_colors.clear()
+
+    @property
+    def can_undo(self):
+        """Whether undo() has a change of the user's to take back (for an Edit menu's Undo)."""
+        return bool(self._undone) and self._editable and self._enabled
+
+    @property
+    def can_redo(self):
+        """Whether redo() has an undone change to make again."""
+        return bool(self._redone) and self._editable and self._enabled
+
+    def undo(self):
+        """Take back the user's last change: an edit, a paste, a cut, a Delete (rows and all).
+        Ctrl+Z (⌘Z on a Mac). It's the user changing things back, so the same events run:
+        cellchange for each cell changed back (each cell of a row put back), rowdelete for a
+        row taken away. Changes made by code aren't taken back, and setting rows (or loading
+        them, or new columns) forgets what came before."""
+        if self.can_undo:
+            self._replay(self._undone.pop(), backward=True)
+
+    def redo(self):
+        """Make the last undone change again. Ctrl+Y, or Ctrl+Shift+Z (⌘⇧Z on a Mac)."""
+        if self.can_redo:
+            self._replay(self._redone.pop(), backward=False)
+
+    def _replay(self, step, backward):
+        data = self._data
+
+        def place(row):  # (a row's number now: rows are kept by themselves, so sorting doesn't matter)
+            return next((i for i, r in enumerate(data) if r is row), None)
+
+        deleted, touched = [], []
+        was = {id(change[1]): list(change[1]) for change in step}  # (a row taken away: as it was before)
+        for change in reversed(step) if backward else step:
+            kind, row = change[0], change[1]
+            if kind == "cell":
+                _, _, column, old, new = change
+                if place(row) is not None:
+                    row[column] = old if backward else new
+                    touched.append((row, column))
+            else:
+                index = change[2]
+                if (kind == "add") == backward:  # taken away again
+                    where = place(row)
+                    if where is not None:
+                        data.pop(where)
+                        deleted.append((where, was[id(row)]))
+                else:  # put back
+                    data.insert(min(index, len(data)), row)
+                    touched.extend((row, column) for column in range(len(self._kinds)))
+        (self._redone if backward else self._undone).append(step)
+        self._refresh()
+        first = next(((place(row), column) for row, column in touched if place(row) is not None), None)
+        if first is not None:  # (the cursor goes to what changed, as in a spreadsheet)
+            self._move(*first, by_user=False)
+        for where, values in deleted:
+            self._raise("rowdelete", where, values)
+        for row, column in touched:
+            if place(row) is not None:
+                self._raise("cellchange", place(row), column)
 
     # ----- the clipboard -----
 
@@ -1506,20 +1758,23 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             refused = self._refusal(row, column, value)
             if refused:
                 raise ValueError(f"row {row}: {refused}")
-        added = range(len(self._data), max(row for row, _ in cells) + 1)
-        for _ in added:
-            self._data.append([kind.blank() for kind in self._kinds])
-        if added:
-            self._refresh()
+        with self._step():
+            added = range(len(self._data), max(row for row, _ in cells) + 1)
             for row in added:
-                self._raise("rowadd", row)
-        changed = [(row, column) for (row, column), value in sorted(cells.items())
-                   if self._data[row][column] != value]
-        for row, column in changed:
-            self._data[row][column] = cells[row, column]
-        self._refresh()
-        for row, column in changed:
-            self._raise("cellchange", row, column)
+                self._data.append([kind.blank() for kind in self._kinds])
+                self._record("add", self._data[row], row)
+            if added:
+                self._refresh()
+                for row in added:
+                    self._raise("rowadd", row)
+            changed = [(row, column) for (row, column), value in sorted(cells.items())
+                       if self._data[row][column] != value]
+            for row, column in changed:
+                self._record("cell", self._data[row], column, self._data[row][column], cells[row, column])
+                self._data[row][column] = cells[row, column]
+            self._refresh()
+            for row, column in changed:
+                self._raise("cellchange", row, column)
 
     # ----- deleting and sorting -----
 
@@ -1537,10 +1792,12 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if not (self._deletable and self._editable and self._enabled):
             self._tree.bell()
             return
-        for row in chosen:
-            values = self._data.pop(row)
-            self._raise("rowdelete", row, values)
-        self._refresh()
+        with self._step():
+            for row in chosen:
+                values = self._data.pop(row)
+                self._record("delete", values, row)
+                self._raise("rowdelete", row, values)
+            self._refresh()
 
     def _header_clicked(self, column):
         if self.design or self._editor is not None:

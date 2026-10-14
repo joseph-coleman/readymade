@@ -25,17 +25,25 @@ Select the table in the designer and look at `columns` in the Properties panel, 
 
     Item
     Category : Food | Hardware | Garden
-    Price : number 2
+    Price : money
     Qty : number
     Taxable : check
-    Total : number 2, readonly
+    Total : money, readonly
 
 A header, then maybe a kind: text (the usual), `number` (`number 2` keeps two decimal places),
-`check` (a tick), or choices separated by `|`. `readonly` means the user can't edit it (code
-still can). Values are converted to their column's kind: `"3"` in Qty becomes the number 3,
+`money`, `check` (a tick), or choices separated by `|`. `readonly` means the user can't edit it
+(code still can). The parts after the `:` go in any order. Values are converted to their column's kind: `"3"` in Qty becomes the number 3,
 and a value that can't be raises a ValueError saying which column and value.
 
 There are no rows in the designer: they come from code.
+
+**Money** is exact. A `number 2` column holds a float, and floats can't hold most cents exactly
+(2.675 rounds to 2.67, as it's really 2.67499999...). A `money` column holds a
+`decimal.Decimal`, kept to the cent (`money 0` for yen), rounding a half up as a receipt does:
+2.675 is 2.68. Cells show thousands' commas (1,234.50), and an amount typed or pasted with a
+currency sign is fine ($1,234.50). In code, a money value is a Decimal: arithmetic on a Column
+of them takes plain numbers (`items["Price"] * 1.1`), but on its own a Decimal won't mix with a
+float, so the tax rate here is `Decimal("0.08")`.
 
 **Widths** aren't part of `columns` (that says what each column holds, not how it looks).
 The columns share the table's width, none narrower than its header, and a scrollbar appears
@@ -56,9 +64,12 @@ Drag a header's edge to make a column wider or narrower: from then on, the width
 - The arrows (and Home/End, Page Up/Down) move the cell cursor. Tab moves right and on to the
   next row. Tab from the last cell leaves the table for the next control.
 - Type to replace a cell. Enter, F2 or a double-click edits what's there. Enter saves and
-  moves down, and Esc cancels. A Price of "lots" is refused (a beep) and the editor stays open.
-- Category gives a list to choose from (Enter in it chooses and moves down; a click chooses
-  and stays), and Space ticks Taxable.
+  moves down, and Esc cancels. A Price of "lots" is refused, saying why, and the editor stays
+  open to fix it. For typing along rows, set the table's `enter_moves` to "right" in the
+  Properties panel: Enter then moves to the next cell along (and on to the next row), as Tab
+  does. ("left" for right-to-left languages; "up", or "stay".)
+- Category gives a list to choose from (Enter in it chooses and moves on, as Enter does; a
+  click chooses and stays), and Space ticks Taxable.
 - Type in the blank row at the bottom to add a row. Qty and Taxable start filled in.
 - Ctrl with an arrow jumps to the edge: the top, the bottom, the first or last column.
 - As in a spreadsheet, moving selects no rows: only the cell has the cursor. Select rows on
@@ -71,6 +82,12 @@ Drag a header's edge to make a column wider or narrower: from then on, the width
   rows from Excel (or this table) and paste them in. One value pasted with rows selected goes
   in each. Total, being readonly, is skipped. A value that doesn't suit its column stops the
   paste, with a message saying which. Ctrl+X cuts. (⌘ in place of Ctrl on a Mac.)
+- Ctrl+Z takes back your last change (an edit, a paste, a Delete: rows and all), and Ctrl+Y
+  makes it again (Ctrl+Shift+Z too; ⌘Z and ⌘⇧Z on a Mac). The totals follow, as undo runs the
+  same events as a change: `cellchange` for each cell changed back, `rowdelete` for a row it
+  takes away. For an Edit menu: `self.Items.undo()`, `redo()`, and `can_undo` and `can_redo`
+  to say whether there's anything to undo or redo. Changes your code makes aren't taken back,
+  and setting the rows (or loading them) starts afresh.
 - Click a header to sort by it, and again for the other way.
 - Untick the switches at the bottom to turn off `editable`, `addable`, `deletable` and
   `sortable`.
@@ -133,6 +150,7 @@ def work_out_totals(self):
     items["Total"] = items["Price"] * items["Qty"]
     subtotal = items["Total"].sum()
     tax = items["Total"][items["Taxable"]].sum() * TAX_RATE  # (the Totals where Taxable is ticked)
+    tax = tax.quantize(CENT, rounding=ROUND_HALF_UP)  # to the cent, a half up, as a receipt does
 ```
 
 (`items["Total"][items["Taxable"]]` is the Totals of the ticked rows: a column of True/False
@@ -141,7 +159,7 @@ chooses values, as below.)
 Two columns go together row by row; with one number, each value gets it: **Prices +10%** is
 
 ```python
-self.Items["Price"] = self.Items["Price"] * 1.1  # (Price keeps 2 decimals: it rounds)
+self.Items["Price"] = self.Items["Price"] * 1.1  # (Price is money: to the cent)
 ```
 
 Setting a column to one value sets every row (`self.Items["Taxable"] = True`). A Column also
@@ -227,8 +245,20 @@ def Items_columnclick(self, column):
 ```
 
 `self.Items.rows.sort(key=...)` sorts by whole rows, as a list's `sort()`: say, by Category,
-then the biggest Total first, `key=lambda row: (row["Category"], -row["Total"])`. Plain Python works on
-`rows` as on any list, conditions or not.
+then the biggest Total first, `key=lambda row: (row["Category"], -row["Total"])`. Plain Python
+works on `rows` as on any list, conditions or not.
+
+### Row colors
+
+A row has a `backcolor` and a `forecolor`, set from code, and they stay with the row as rows
+are sorted, added and deleted. Rows with nothing ordered are grayed after each change:
+
+```python
+for row in items.rows:
+    row.forecolor = "#909090" if row["Qty"] == 0 else ""
+```
+
+(Colors are for whole rows: Tk's tables can't color a single cell.)
 
 ## CSV files
 

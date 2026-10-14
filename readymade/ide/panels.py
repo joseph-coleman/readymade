@@ -476,23 +476,27 @@ class PropertiesPanel(ttk.Frame):
             if chooser:  # typed, or chosen in a dialog with the "..." button
                 editor = ttk.Frame(self.grid_frame)
                 entry = ttk.Entry(editor, textvariable=var, width=8)
-                entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
                 entry.bind("<Return>", lambda e, p=prop: self.commit(p))
                 entry.bind("<FocusOut>", lambda e, p=prop: self.commit(p))
+                swatch = None
                 if chooser == "color":
                     swatch = self._swatches[prop] = tk.Label(editor, width=2, relief="solid", bd=1)
-                    swatch.pack(side=tk.LEFT, padx=(2, 0), fill=tk.Y)
                     self._swatch_usual = swatch.cget("background")  # shown for "", the usual color
                     self._show_swatch(prop, value)
-                ttk.Button(editor, text="\u2026", width=2, style="Dots.TButton",
-                           command=lambda p=prop: self._choose(p)).pack(side=tk.LEFT)
+                dots = ttk.Button(editor, text="...", width=3, style="Dots.TButton",
+                                  command=lambda p=prop: self._choose(p))
+                # (packed from the right first, so the button and swatch keep their room)
+                dots.pack(side=tk.RIGHT)
+                if swatch is not None:
+                    swatch.pack(side=tk.RIGHT, padx=(2, 0), fill=tk.Y)
+                entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
             elif choices:
                 editor = ttk.Combobox(self.grid_frame, textvariable=var, values=choices, state="readonly", width=16)
                 editor.bind("<<ComboboxSelected>>", lambda e, p=prop: self.commit(p))
             elif in_dialog:
                 editor = ttk.Frame(self.grid_frame)
                 ttk.Entry(editor, textvariable=var, width=8, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
-                ttk.Button(editor, text="\u2026", width=2, style="Dots.TButton",
+                ttk.Button(editor, text="...", width=3, style="Dots.TButton",
                            command=lambda p=prop: self._edit_lines(p)).pack(side=tk.LEFT)
             else:
                 editor = ttk.Entry(self.grid_frame, textvariable=var, width=18)
