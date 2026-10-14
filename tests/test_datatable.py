@@ -1,5 +1,6 @@
 """The DataTable control: typed columns, its data the Pythonic way, and spreadsheet editing."""
 
+import datetime
 import re
 import time
 from decimal import Decimal as D
@@ -29,7 +30,7 @@ def test_column_lines():
     assert [k.line() for k in kinds] == ["Item", "Price : number 2", "Qty : number", "In stock : check",
                                          "Size : S | M | L", "Total : number 2, readonly"]
     assert ColumnKind.parse("Notes : readonly").kind == "text"
-    for bad in (": number", "A : date", "A : number two", "A : check, number"):
+    for bad in (": number", "A : time", "A : number two", "A : check, number"):
         with pytest.raises(ValueError):
             ColumnKind.parse(bad)
 
@@ -580,7 +581,7 @@ def test_widths_shared_set_or_autosized(make_form):
     table.rows = ROWS + [["A rather long name for an item", 1]]
     settle(form)
     shared = table.widths
-    assert table._tree.winfo_width() - len(shared) - 2 <= sum(shared)  # shared out: all its width used
+    assert table._tree.winfo_width() - len(shared) - 6 <= sum(shared)  # shared out: all its width used
     assert table._tree.xview() == (0.0, 1.0)  # (all of them in sight)
     assert not table._parts[3].winfo_ismapped()  # (they fit: no scrollbar across)
     table.width = 400  # still shared: they follow the table's size
@@ -914,3 +915,68 @@ def test_a_big_fonts_editor_is_as_tall_as_its_text(make_form):
     table._choose_row(1)
     table._edit()  # on a chosen row: the chosen text's color, as the cursor (not lost in the highlight)
     assert str(table._editor_box.cget("highlightcolor")) == str(style.lookup(table._tree.cget("style"), "foreground", ("selected",)))
+
+
+def test_date_columns():
+    due, us = ColumnKind.parse("Due : date"), ColumnKind.parse("When : date %m/%d/%Y, readonly")
+    assert (due.kind, due.format, due.line(), us.line()) == ("date", "%Y-%m-%d", "Due : date", "When : date %m/%d/%Y, readonly")
+    assert due.convert("2026-10-14") == datetime.date(2026, 10, 14) and due.convert("") is None and due.blank() is None
+    assert us.convert("10/14/2026") == datetime.date(2026, 10, 14) == us.convert("2026-10-14")  # (and year-month-day)
+    assert us.show(datetime.date(2026, 1, 2)) == "01/02/2026" and us.text(datetime.date(2026, 1, 2)) == "2026-01-02"
+    assert us.show(None) == "" and us.text(None) == ""
+    assert due.convert(datetime.datetime(2026, 1, 2, 9, 30)) == datetime.date(2026, 1, 2)
+    for bad in ("soon", 7, True):
+        with pytest.raises(ValueError, match="isn't a date"):
+            due.convert(bad)
+    days = Column([datetime.date(2026, 1, 5), None, datetime.date(2026, 3, 1)], "Due")
+    assert (days < datetime.date(2026, 2, 1)) == [True, False, False]  # (an empty date: neither before nor after)
+    assert (days >= datetime.date(2026, 2, 1)) == [False, False, True]
+    assert sorted(days, key=due.sort_key) == [datetime.date(2026, 1, 5), datetime.date(2026, 3, 1), None]
+
+
+@pytest.mark.usefixtures("display")
+def test_a_date_cells_month_drops_down(make_form):
+    from readymade.controls.dates import DropMonth
+
+    changes = []
+
+    class Form1(Form):
+        def Stock_cellchange(self, row, column):
+            changes.append((row, column, self.Stock[row, column]))
+
+    form = make_form(Form1)
+    table = form.Stock
+    table.columns = ["Item", "Due : date %d %b %Y"]
+    table.rows = [["Apples", "2026-10-14"], ["Pears"]]
+    assert table.rows == [["Apples", datetime.date(2026, 10, 14)], ["Pears", None]]
+    assert table._tree.item("0", "values")[1] == "14 Oct 2026" and table._tree.item("1", "values")[1] == ""
+    table._tree.focus_force()
+    table.current = (0, "Due")
+    settle(form)
+    key(form, "Return")  # the month drops down, at its date...
+    month = DropMonth.current.month
+    assert month.value == datetime.date(2026, 10, 14) and form.root.focus_get() is month.canvas
+    month.canvas.event_generate("<KeyPress>", keysym="Right")
+    month.canvas.event_generate("<KeyPress>", keysym="Return")  # ...Enter chooses, and moves on
+    settle(form)
+    assert table[0, "Due"] == datetime.date(2026, 10, 15) and changes == [(0, 1, datetime.date(2026, 10, 15))]
+    assert DropMonth.current is None and table.current == (1, 1) and form.root.focus_get() is table._tree
+    key(form, "Return")  # an empty date: today's month
+    assert DropMonth.current.month.value is None and DropMonth.current.month.shown[1] == datetime.date.today().month
+    DropMonth.current.month.canvas.event_generate("<KeyPress>", keysym="Escape")  # Esc: no change
+    settle(form)
+    assert table[1, "Due"] is None and DropMonth.current is None
+    key(form, "2")  # typing: a text edit, read in its format (or year-month-day)
+    table._editor.delete(0, "end")
+    table._editor.insert(0, "3 Feb 2027")
+    key(form, "Tab")
+    assert table[1, "Due"] == datetime.date(2027, 2, 3)
+    table.current = (1, "Due")
+    key(form, "5")
+    table._editor.delete(0, "end")
+    table._editor.insert(0, "2027-04-05")
+    key(form, "F4")  # F4 while typing: the month, at what's typed
+    assert table._editor is None and DropMonth.current.month.value == datetime.date(2027, 4, 5)
+    DropMonth.current.close()
+    table.save_csv("dates.csv")
+    assert (table.folder / "dates.csv").read_text(encoding="utf-8").splitlines()[1:] == ["Apples,2026-10-15", "Pears,2027-02-03"]

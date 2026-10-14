@@ -19,6 +19,7 @@ A ttk Treeview shows it, with an editor placed over the cell being edited.
 from __future__ import annotations
 
 import csv
+import datetime
 import io
 from contextlib import contextmanager
 import operator
@@ -34,6 +35,7 @@ from tkinter import messagebox, ttk
 from readymade import keys
 from readymade.appearance import CHECK_MARK, check_color
 from readymade.controls.base import _FOCUS_EVENTS, Control, Event, register
+from readymade.controls.dates import ISO, DropMonth, _check_format, read_date, to_date
 from readymade.controls.traits import Anchored, BackColor, Cursor, Font, ForeColor, TabStop, Tooltip
 from readymade.controls.trees import _TreeLook
 from readymade.menus import primary_mask
@@ -60,10 +62,11 @@ class ColumnKind:
     money, readonly"."""
 
     name: str
-    kind: str = "text"  # text, number, money, check or choice
+    kind: str = "text"  # text, number, money, date, check or choice
     decimals: int | None = None  # for a number: the places it keeps (None: as it comes); money's (2)
     choices: tuple = ()  # for a choice
     readonly: bool = False
+    format: str = ISO  # for a date: how it shows (strftime's codes)
 
     @classmethod
     def parse(cls, line):
@@ -89,16 +92,20 @@ class ColumnKind:
             if len(words) == 2 and not words[1].isdigit():
                 raise ValueError(f"{line!r}: after money, how many decimal places (money 0, for yen)")
             return cls(name, "money", decimals=int(words[1]) if len(words) == 2 else 2, readonly=readonly)
+        if words[0] == "date":
+            format = _check_format(spec[len("date"):].strip() or ISO)
+            return cls(name, "date", format=format, readonly=readonly)
         if words in (["text"], ["check"]):
             return cls(name, words[0], readonly=readonly)
         raise ValueError(f"{line!r}: a column's kind is text, number (number 2: with 2 decimal places), money, "
-                         "check, or choices like S | M | L; and maybe readonly")
+                         "date (date %m/%d/%Y: shown so), check, or choices like S | M | L; and maybe readonly")
 
     def line(self):
         """How it's written in the DataTable's columns."""
         kind = {"text": "", "check": "check", "choice": " | ".join(self.choices),
                 "number": "number" + (f" {self.decimals}" if self.decimals is not None else ""),
-                "money": "money" + (f" {self.decimals}" if self.decimals != 2 else "")}[self.kind]
+                "money": "money" + (f" {self.decimals}" if self.decimals != 2 else ""),
+                "date": "date" + (f" {self.format}" if self.format != ISO else "")}[self.kind]
         extras = ", ".join(p for p in (kind, "readonly" if self.readonly else "") if p)
         return f"{self.name} : {extras}" if extras else self.name
 
@@ -106,6 +113,8 @@ class ColumnKind:
         """An empty cell's value."""
         if self.kind == "money":
             return Decimal(0).quantize(self._cents())
+        if self.kind == "date":
+            return None  # (a date has no zero: an empty date is None, as a database's NULL)
         return {"text": "", "number": 0, "check": False}.get(self.kind, self.choices[0] if self.choices else "")
 
     def convert(self, value):
@@ -128,6 +137,13 @@ class ColumnKind:
             return match
         if self.kind == "money":
             return self._money(value)
+        if self.kind == "date":
+            if isinstance(value, str) and value.strip():
+                return read_date(value, self.format, self.name)
+            try:
+                return to_date(value, self.name)
+            except ValueError:
+                raise ValueError(f"{self.name}: {value!r} isn't a date") from None
         return self._number(value)
 
     def _cents(self):
@@ -176,6 +192,8 @@ class ColumnKind:
             return f"{value:.{self.decimals}f}"
         if self.kind == "money":
             return f"{value:,.{self.decimals}f}"  # (1,234.50)
+        if self.kind == "date":
+            return value.strftime(self.format) if value else ""
         return str(value)
 
     def text(self, value):
@@ -183,6 +201,8 @@ class ColumnKind:
         without its thousands' commas), a check as True or False (which convert() reads back)."""
         if self.kind == "money":
             return f"{value:.{self.decimals}f}"
+        if self.kind == "date":
+            return value.isoformat() if value else ""  # (year-month-day, whatever's shown)
         if self.kind == "number":
             return self.show(value)
         return str(bool(value)) if self.kind == "check" else str(value)
@@ -192,7 +212,17 @@ class ColumnKind:
             return str(value).casefold()
         if self.kind == "choice":
             return self.choices.index(value) if value in self.choices else len(self.choices)
+        if self.kind == "date":
+            return (value is None, value or datetime.date.min)  # (empty ones last)
         return value
+
+
+def _known(op):
+    """A comparison where an empty value (None: a date not given) is neither more nor less than
+    anything: False, as a database's NULL is in a condition."""
+    def run(a, b):
+        return False if a is None or b is None else op(a, b)
+    return run
 
 
 def _mixed(op):
@@ -348,16 +378,16 @@ class Column(Sequence):
         return self._each(other, operator.pow)
 
     def __lt__(self, other):
-        return self._each(other, operator.lt)
+        return self._each(other, _known(operator.lt))
 
     def __le__(self, other):
-        return self._each(other, operator.le)
+        return self._each(other, _known(operator.le))
 
     def __gt__(self, other):
-        return self._each(other, operator.gt)
+        return self._each(other, _known(operator.gt))
 
     def __ge__(self, other):
-        return self._each(other, operator.ge)
+        return self._each(other, _known(operator.ge))
 
     def eq(self, other):
         """Whether each value equals other (a value, or a column's values, row by row): a
@@ -790,7 +820,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         ids = [f"c{i}" for i in range(len(kinds))]
         self._tree.configure(columns=ids, displaycolumns=ids)
         for i, kind in enumerate(kinds):
-            anchor = {"number": "e", "money": "e", "check": "center"}.get(kind.kind, "w")
+            anchor = {"number": "e", "money": "e", "check": "center"}.get(kind.kind, "w")  # (dates: as text)
             self._tree.column(ids[i], anchor=anchor, stretch=False, minwidth=NARROWEST)
             self._tree.heading(ids[i], text=kind.name, anchor=anchor, command=lambda c=i: self._header_clicked(c))
         self._sorted = None
@@ -814,7 +844,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         _, heading = self._fonts()
         taken = sum(int(self._tree.column(f"c{column}", "width")) for column in self._sized)
         least = [self._header_width(heading, self._kinds[column]) for column in free]
-        for column, share in zip(free, _shared(width - 2 - taken, least)):  # (inside its border)
+        for column, share in zip(free, _shared(width - 6 - taken, least)):  # (inside its border: 2 px a side, or more)
             self._tree.column(f"c{column}", width=share)
 
     @property
@@ -1407,6 +1437,9 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             return
         kind = self._kinds[column]
         current = self._data[row][column] if row < len(self._data) else kind.blank()
+        if kind.kind == "date" and typed is None:
+            self._drop_month(row, column, current)
+            return
         if kind.kind == "check":
             refused = self._refusal(row, column, not current)
             if refused:
@@ -1444,12 +1477,57 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             editor.bind(sequence, lambda e: (self._finish(0, -1), "break")[1])
         for sequence, step in (("<Up>", -1), ("<Down>", 1)):
             if kind.kind != "choice":  # (in a choice's list, the arrows choose)
-                editor.bind(sequence, lambda e, s=step: (self._finish(s, 0), "break")[1])
+                editor.bind(sequence, lambda e, s=step: (self._arrow_in_editor(e, s), "break")[1])
+        if kind.kind == "date":
+            editor.bind("<F4>", lambda e: (self._typed_to_month(), "break")[1])
         editor.bind("<FocusOut>", lambda e: self.widget.after_idle(self._focus_left), add="+")
         self._follow()
         editor.focus_set()
         if kind.kind == "choice" and typed is None:
             editor.after_idle(lambda: self._post(editor))
+
+    def _arrow_in_editor(self, e, step):
+        """Up or Down in a text editor: done, and up or down a row; Alt+Down in a date's: its month."""
+        if self._editing and self._kinds[self._editing[1]].kind == "date" and \
+                keys.name(e.char, e.keysym, e.state) == "Alt+Down":
+            self._typed_to_month()
+        else:
+            self._finish(step, 0)
+
+    def _typed_to_month(self):
+        """F4 or Alt+Down while typing a date: the month drops down, at what's typed (if it's a date)."""
+        row, column = self._editing
+        kind = self._kinds[column]
+        try:
+            day = kind.convert(self._editor.get())
+        except ValueError:
+            day = None
+        self._cancel()
+        self._drop_month(row, column, day if day is not None else self._cell_or_blank(row, column))
+
+    def _cell_or_blank(self, row, column):
+        return self._data[row][column] if row < len(self._data) else self._kinds[column].blank()
+
+    def _drop_month(self, row, column, day):
+        """A date cell's editor: its month, dropped down under it. A click chooses (and stays),
+        Enter chooses and moves on (as enter_moves says); Esc, or a click elsewhere, leaves it."""
+        box = self._tree.bbox(self._iid(row), f"c{column}")
+        if not box:
+            return
+        DropMonth(self._tree, day, lambda chosen, how: self._month_chosen(row, column, chosen, how),
+                  below=(self._tree, *box), font=self._font if isinstance(self._font, str) else "")
+
+    def _month_chosen(self, row, column, day, how):
+        refused = self._refusal(row, column, day)
+        if refused:
+            self._tell(self._kinds[column].name, refused)
+            return
+        self._store(row, column, day)
+        down, across = _ENTER_STEPS[self._enter_moves] if how == "key" else (0, 0)
+        if across:
+            self._tab(across)
+        elif down:
+            self._move(self._cur[0] + down, self._cur[1])
 
     def _text_editor(self, kind):
         """A text cell's editor: a classic Entry in a thin frame of the cursor's color, the cell

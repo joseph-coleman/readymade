@@ -148,6 +148,28 @@ def datatable(p):
     p.rect(6, 8, 10.5, 11, fill=None, line="accent", width=1.4)  # the cell cursor
 
 
+def calendar(p):
+    p.rect(1.5, 2.5, 14.5, 14, fill="field")
+    p.rect(1.5, 2.5, 14.5, 5.5, fill="accent")  # the month's band
+    for x in (4.5, 11.5):
+        p.lines((x, 1), (x, 4), width=1.3)  # the rings
+    for row, y in enumerate((7.6, 10, 12.4)):
+        for column, x in enumerate((4, 6.7, 9.4, 12)):
+            if (row, column) == (1, 2):
+                p.oval(x - 1.1, y - 1.1, x + 1.1, y + 1.1, fill="accent", line=None)  # the chosen day
+            else:
+                p.rect(x - 0.6, y - 0.5, x + 0.6, y + 0.5, fill="soft", line=None)
+
+
+def datepicker(p):
+    p.rect(1, 4.5, 15, 11.5, fill="field")
+    p.lines((2.6, 8), (6.8, 8), color="soft", width=1.4)
+    p.rect(8.6, 4.5, 15, 11.5, fill="face")  # the drop-down button, as a ComboBox's...
+    p.rect(9.8, 5.7, 13.8, 10.5, fill="field", width=0.8)  # ...with a calendar on it
+    p.rect(9.8, 5.7, 13.8, 7.4, fill="accent", line=None)
+    p.rect(9.8, 5.7, 13.8, 10.5, fill=None, width=0.8)
+
+
 def scrollbar(p):
     p.rect(1, 4.5, 15, 11.5, fill="face")
     p.shape((4.6, 5.8), (4.6, 10.2), (1.9, 8))
@@ -210,7 +232,7 @@ def unknown(p):
 
 
 ICONS = {"Pointer": pointer, "Label": label, "TextBox": textbox, "Frame": frame, "TabStrip": tabstrip, "Button": button,
-         "CheckBox": checkbox, "OptionButton": optionbutton, "ComboBox": combobox, "ListBox": listbox, "TreeView": treeview, "ListView": listview, "DataTable": datatable,
+         "CheckBox": checkbox, "OptionButton": optionbutton, "ComboBox": combobox, "ListBox": listbox, "TreeView": treeview, "ListView": listview, "DataTable": datatable, "Calendar": calendar, "DatePicker": datepicker,
          "ScrollBar": scrollbar, "Slider": slider, "UpDown": updown, "ProgressBar": progressbar, "Image": image,
          "Canvas": canvas, "Grid": grid, "Timer": timer, "Unknown": unknown}
 
