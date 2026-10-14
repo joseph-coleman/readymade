@@ -547,6 +547,8 @@ class Debugger(bdb.Bdb):
             return {"name": watch.expression, "value": f"<{type(error).__name__}: {error}>", "type": "",
                     "path": path, "expandable": False}
         info = value_info(watch.expression, value, path)
+        if watch.kind == "true" and _untestable(value):
+            note = "; ".join(filter(None, [note, f"neither true nor false: {_untestable(value)}"]))
         if note:
             info["note"] = note
         return info
@@ -670,6 +672,7 @@ class Watch:
         self.last = None  # "changes": the value's repr when last checked (None: not yet)
         self.undefined_in = None  # the frame where it last couldn't be worked out (a variable not set yet)
         self.was_true = False
+        self.untestable = ""  # "true": why its value is neither true nor false, when last checked
         self.seen = None  # (value,): a function's watch, as the function last had it
 
     def in_context(self, frame, debugger):
@@ -712,6 +715,11 @@ class Watch:
         if self.function:
             self.seen = (value,)
         if self.kind == "true":
+            untestable = _untestable(value)
+            if untestable:  # a mistake in the watch: said once (until it can be tested again)
+                fired, self.untestable, self.was_true = not self.untestable, untestable, False
+                return f"can't tell whether {self.expression} is true ({untestable})" if fired else ""
+            self.untestable = ""
             true = bool(value)
             fired, self.was_true = true and not self.was_true, true
             return f"{self.expression} became true" if fired else ""
@@ -730,6 +738,16 @@ class Watch:
         """frame is returning (no frame is kept)."""
         if self.undefined_in is frame:
             self.undefined_in = None
+
+
+def _untestable(value):
+    """Why value can't be tested for true or false (as numpy's arrays and a DataTable's Columns
+    can't: their own message says what to ask instead), or "" if it can."""
+    try:
+        bool(value)
+    except Exception as error:  # noqa: BLE001 - whatever its __bool__ raises
+        return f"{type(error).__name__}: {error}"
+    return ""
 
 
 def _short(text, most=60):

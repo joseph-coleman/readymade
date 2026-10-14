@@ -20,7 +20,7 @@ class _TreeLook:
     widget: ttk.Treeview
 
     def _look_tree(self):
-        """The Treeview to style (a Table's is inside its frame)."""
+        """The Treeview to style (a DataTable's is inside its frame)."""
         return self.widget
 
     def _style_name(self):

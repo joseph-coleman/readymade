@@ -1,10 +1,22 @@
+import ctypes
 import os
+import signal
 import shutil
 import subprocess
 import tkinter as tk
+import traceback
 from tkinter import messagebox
 
 import pytest
+
+
+def _ends_with_us():
+    """In the Xvfb process, before it starts: Linux ends it when the test run's process does,
+    even a run that's killed (pytest_unconfigure, which stops it otherwise, never runs then)."""
+    try:
+        ctypes.CDLL(None).prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
+    except (OSError, AttributeError):
+        pass
 
 
 def _start_private_display():
@@ -20,7 +32,7 @@ def _start_private_display():
         ready_r, ready_w = os.pipe()
         server = subprocess.Popen(
             ["Xvfb", f":{number}", "-displayfd", str(ready_w), "-screen", "0", "1280x800x24", "-nolisten", "tcp"],
-            pass_fds=(ready_w,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            pass_fds=(ready_w,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=_ends_with_us,
         )
         os.close(ready_w)
         with os.fdopen(ready_r) as ready:
@@ -110,3 +122,15 @@ def collect_garbage_here():
     import gc
 
     gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def no_callback_errors(monkeypatch):
+    """An error in a Tk callback (a binding, an after(), a button's command) is only printed by
+    Tk, so the test would carry on and pass. Fail it instead, with the error's traceback."""
+    errors = []
+    monkeypatch.setattr(tk.Tk, "report_callback_exception",
+                        lambda root, kind, value, tb: errors.append("".join(traceback.format_exception(kind, value, tb))))
+    yield
+    if errors:
+        pytest.fail(f"{len(errors)} error(s) in Tk callbacks:\n\n" + "\n".join(errors), pytrace=False)

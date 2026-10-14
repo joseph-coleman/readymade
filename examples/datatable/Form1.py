@@ -1,4 +1,4 @@
-"""An order sheet: a Table edited like a spreadsheet, its totals worked out in code.
+"""An order sheet: a DataTable edited like a spreadsheet, its totals worked out in code.
 README.md walks through it."""
 
 from readymade import Form, app_path, msgbox, open_file_dialog, save_file_dialog
@@ -10,6 +10,7 @@ CSV_FILES = {"CSV files": "*.csv", "All files": "*.*"}
 class Form1(Form):
     def Form_load(self):
         self.Items.load_csv("order.csv")  # (a path from the program's folder)
+        self.Items.autosize_columns("Item")  # wide enough for the longest; the rest share what's left
         self.work_out_totals()
 
     def work_out_totals(self):
@@ -18,7 +19,7 @@ class Form1(Form):
         items = self.Items
         items["Total"] = items["Price"] * items["Qty"]
         subtotal = items["Total"].sum()
-        tax = (items["Total"] * items["Taxable"]).sum() * TAX_RATE  # (a tick counts 1, none 0)
+        tax = items["Total"][items["Taxable"]].sum() * TAX_RATE  # (the Totals where Taxable is ticked)
         self.Totals.text = (f"{len(items.rows)} rows     Subtotal {subtotal:,.2f}     "
                             f"Tax {tax:,.2f}     Total {subtotal + tax:,.2f}  ")
 
@@ -26,6 +27,11 @@ class Form1(Form):
 
     def Items_cellchange(self, row, column):
         self.work_out_totals()  # (column is a number: self.Items.headers[column] names it)
+
+    def Items_cellvalidate(self, row, column, value):  # before a change is kept: refuse it here
+        if self.Items.headers[column] == "Qty" and value < 0:  # (value is already a number)
+            return "Qty can't be less than 0"
+        return None
 
     def Items_rowadd(self, row):
         self.Items[row, "Qty"] = 1  # a new row's defaults
@@ -46,6 +52,7 @@ class Form1(Form):
         if path:
             try:
                 self.Items.load_csv(path)
+                self.Items.autosize_columns("Item")
             except (OSError, ValueError) as e:  # (a value that doesn't suit its column, say)
                 msgbox(e, icon="error")
                 return
@@ -69,7 +76,12 @@ class Form1(Form):
         self.Items.rows = [row for row in self.Items.rows if row["Qty"] > 0]  # rows is a list
         self.work_out_totals()
 
-    # ----- the switches: a control array of CheckBoxes, each named after a Table property -----
+    def SaleButton_click(self):
+        garden = self.Items["Category"].eq("Garden")  # a condition: True on the Garden rows
+        self.Items[garden, "Price"] = self.Items[garden, "Price"] * 0.9  # (those rows' prices)
+        self.work_out_totals()
+
+    # ----- the switches: a control array of CheckBoxes, each named after a DataTable property -----
 
     def Switch_click(self, index):
         switch = self.Switch[index]

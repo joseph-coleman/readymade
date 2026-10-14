@@ -1,4 +1,4 @@
-"""examples/table, the order sheet: it does what its README.md says (run on a copy)."""
+"""examples/datatable, the order sheet: it does what its README.md says (run on a copy)."""
 
 import importlib.util
 import shutil
@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.usefixtures("display")
-EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "table"
+EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "datatable"
 AS_PUBLISHED = shutil.ignore_patterns(".readymade", "__pycache__")  # (not this machine's settings for it)
 
 
 @pytest.fixture
 def program(tmp_path, monkeypatch):
-    folder = shutil.copytree(EXAMPLE, tmp_path / "table", ignore=AS_PUBLISHED)
+    folder = shutil.copytree(EXAMPLE, tmp_path / "datatable", ignore=AS_PUBLISHED)
     monkeypatch.chdir(folder)
     spec = importlib.util.spec_from_file_location("order_sheet", folder / "Form1.py")
     module = importlib.util.module_from_spec(spec)
@@ -78,7 +78,25 @@ def test_the_buttons(form, program, monkeypatch, tmp_path):
     assert program.said == ["saved.csv, line 2: Price: 'cheap' isn't a number"] and len(form.Items.rows) == 7
 
 
+def test_a_condition_chooses_the_garden_rows(form):
+    form.SaleButton.widget.invoke()
+    assert form.Items[form.Items["Category"].eq("Garden"), "Price"] == [4.05, 8.78, 10.8]
+    assert form.Items[0, "Price"] == 3.49  # (Food: no sale)
+    assert form.Totals.text.split()[3] == f"{form.Items['Total'].sum():,.2f}"
+
+
 def test_the_switches_are_a_control_array(form):
     form.Switch[0].widget.invoke()  # Editable
     form.Switch[3].widget.invoke()  # Sortable
     assert form.Items.editable is False and form.Items.sortable is False and form.Items.addable is True
+
+
+def test_qty_cant_go_below_zero(form, program, monkeypatch):
+    said = []
+    from readymade.controls import datatable
+    monkeypatch.setattr(datatable.messagebox, "showwarning", lambda title, message, **kw: said.append(message))
+    items = form.Items
+    items.current = (0, "Qty")
+    items._edit(typed="-2")
+    assert items._finish(down=1) is False and said == ["Qty can't be less than 0"] and items[0, "Qty"] == 2
+    items._cancel()

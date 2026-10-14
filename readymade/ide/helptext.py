@@ -42,6 +42,8 @@ EVENTS = {
     "columnclick": "a column's header is clicked; column is its number, counting from 0",
     "cellchange": "the user changes a cell (code changing one doesn't run it); row and column are its numbers, "
                   "counting from 0",
+    "cellvalidate": "before the user's change to a cell is kept (typed, ticked, chosen, pasted); value is the new "
+                    "one, already its column's kind. Return False, or a message saying why, to refuse it",
     "rowadd": "the user makes a new row (in the blank row at the bottom); row is its number: a place for defaults",
     "rowdelete": "the user deletes a row (with Delete); row was its number, and values are what it held",
     "rowclick": "the cell cursor moves to another row; row is its number",
@@ -287,6 +289,8 @@ def dialog(name, platform=sys.platform):
             *_table([("Watch the expression", "shows its value when the program is paused (and while"),
                      ("", "it runs, for watches not tied to a function)"),
                      ("Break when true", "pauses the program as soon as it becomes true"),
+                     ("", "(once, saying why, if it's neither true nor false, as a"),
+                     ("", "numpy array or a DataTable's column is: ask .any() or .all())"),
                      ("Break when it changes", "pauses on the line after its value changes; the message"),
                      ("", "names the line that changed it, marked green (a variable first"),
                      ("", "getting a value counts as a change)")]),

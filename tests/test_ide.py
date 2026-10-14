@@ -682,7 +682,8 @@ def test_asking_for_a_name(app, theme):
         asker = next(w for w in app.root.winfo_children() if isinstance(w, AskString) and w.winfo_exists())
         try:
             entry = asker.entry
-            seen["selected"] = entry.get()[entry.index("sel.first"):entry.index("sel.last")]
+            if entry.selection_present():  # (with no suggestion, nothing's there to select)
+                seen["selected"] = entry.get()[entry.index("sel.first"):entry.index("sel.last")]
             seen["colors"] = {str(asker.cget("background")), str(ttk.Style(asker).lookup("TFrame", "background"))}
             if typed is not None:
                 entry.delete(0, tk.END)

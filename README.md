@@ -10,8 +10,8 @@ leave almost no time between having an idea and running the program.
 ## What it does
 
 - **A form designer.** Draw controls from the Toolbox (Label, TextBox, Button,
-  CheckBox, OptionButton, ComboBox, ListBox, TreeView, ListView, ScrollBar, Slider,
-  UpDown, ProgressBar, Frame, TabStrip, Grid, Image, Canvas, Timer), then set
+  CheckBox, OptionButton, ComboBox, ListBox, TreeView, ListView, DataTable, ScrollBar,
+  Slider, UpDown, ProgressBar, Frame, TabStrip, Grid, Image, Canvas, Timer), then set
   their properties in the Properties panel. Align and size them with the Format menu,
   design menus in the Menu Editor, and set the tab order by clicking. Control arrays work
   as in VB: `Digit[0]`, `Digit[1]`... share one `Digit_click(self, index)`. Anchors, docking
@@ -79,13 +79,16 @@ The repository's `examples` folder has projects to open in the IDE (`readymade e
   Slider, ScrollBar, ProgressBar and a Timer. Its README walks through each.
 - **arrays**: controls made while the program runs: adding to a control array, `add_control()`,
   and handlers attached with `on()`.
+- **datatable**: an order sheet in a DataTable: typed columns, as a database table has,
+  edited like a spreadsheet; totals worked out with Column arithmetic, numpy-style slicing
+  and conditions, CSV files, sorting.
 - **debugging**: a shopping basket with mistakes in it, and a walkthrough of the debugger.
 - **anchors**: a form whose controls follow its size.
 - **hello**: a small first program: type a name and click a button, laid out in a Grid.
 
 ## Disclosure
 
-I used Claude. 
+I used Claude.  Development is done on Linux, but I also test on Windows and Mac.
 
 ## License
 

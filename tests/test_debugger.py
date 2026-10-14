@@ -227,6 +227,21 @@ def test_break_when_true(tmp_path, shop):
     assert where(stop) == ("total", LINE["for price in prices:"]) and names(stop)["count"] == "6"
 
 
+def test_break_when_true_of_something_neither_true_nor_false(tmp_path, shop):
+    module, _ = shop
+    ide = PretendIDE("continue")
+    dbg = make(tmp_path, ide)
+    ambiguous = "Ambiguous() if count > 0 else False"  # (as numpy's arrays and a DataTable's Columns are)
+    module.Ambiguous = type("Ambiguous", (), {"__bool__": lambda self: 1 / 0, "__repr__": lambda self: "Ambiguous()"})
+    dbg.set_watches([watch(ambiguous, kind="true", function="total", file="shop.py")])
+    assert module.checkout([1, 2, 3]) == 8  # the program carries on after the one pause
+    stop, = ide.paused()  # once: not again while it stays that way
+    assert stop["reason"] == "watch" and stop["message"] == (
+        f"can't tell whether {ambiguous} is true (ZeroDivisionError: division by zero) on line {LINE['count += price']}")
+    shown, = stop["watches"]
+    assert shown["value"] == "Ambiguous()" and shown["note"] == "neither true nor false: ZeroDivisionError: division by zero"
+
+
 def test_break_when_it_changes(tmp_path, shop):
     module, _ = shop
     ide = PretendIDE("continue", "continue", "continue")

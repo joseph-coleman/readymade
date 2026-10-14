@@ -138,7 +138,7 @@ def listview(p):
         p.lines((9, y), (13.4, y), color="soft", width=1)
 
 
-def table(p):
+def datatable(p):
     p.rect(1, 2, 15, 14, fill="field")
     p.rect(1, 2, 15, 5, fill="face")
     for x in (6, 10.5):
@@ -210,7 +210,7 @@ def unknown(p):
 
 
 ICONS = {"Pointer": pointer, "Label": label, "TextBox": textbox, "Frame": frame, "TabStrip": tabstrip, "Button": button,
-         "CheckBox": checkbox, "OptionButton": optionbutton, "ComboBox": combobox, "ListBox": listbox, "TreeView": treeview, "ListView": listview, "Table": table,
+         "CheckBox": checkbox, "OptionButton": optionbutton, "ComboBox": combobox, "ListBox": listbox, "TreeView": treeview, "ListView": listview, "DataTable": datatable,
          "ScrollBar": scrollbar, "Slider": slider, "UpDown": updown, "ProgressBar": progressbar, "Image": image,
          "Canvas": canvas, "Grid": grid, "Timer": timer, "Unknown": unknown}
 
