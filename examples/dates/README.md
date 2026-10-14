@@ -14,7 +14,9 @@ what you compare them with.
 
 **Try:** click a day, or use the arrow keys (Page Up and Down for a month, Home and End for
 the month's first and last day). The small arrows beside the month show the months either
-side. The day's events show underneath.
+side. To go further, click the month's name to pick another month, or the year to pick
+another year from a decade's (its arrows step a decade): picking a year shows its months,
+and picking a month its days. Esc goes back to the days. The day's events show underneath.
 
 **How:** `self.Month.value` is the chosen day, and `Month_change` runs as it changes:
 
