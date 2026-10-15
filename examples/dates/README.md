@@ -1,14 +1,15 @@
-# A planner: dates three ways
+# A planner: dates and times
 
-A Calendar, two DatePickers, and a DataTable with a date column. Open it in the IDE:
+A Calendar, DatePickers (one with a time), a TimePicker, and a DataTable with date and time
+columns. Open it in the IDE:
 
     readymade examples/dates
 
 and press **F5**. The code is in **Form1** (F7 on the form). The events are made around
 today, so they're in the month the Calendar opens on.
 
-Dates are Python's own `datetime.date` everywhere: a control's `value`, a date cell, and
-what you compare them with.
+Dates and times are Python's own everywhere: `datetime.date`, `datetime.time` and
+`datetime.datetime`, as a control's `value`, a cell, and what you compare them with.
 
 ## The Calendar
 
@@ -35,8 +36,11 @@ or "monday", the day weeks start on. Set them from code as dates or as text:
 
 **Try:** click the button at the right of a date (or press F4, or Alt+Down) and choose a day
 in the month that drops down: a click, or the arrow keys and Enter. Esc, or a click
-elsewhere, closes it. Or type a date, in the field's own format or as year-month-day
-(2026-10-14), and Up and Down step it a day.
+elsewhere, closes it. Or type a date, in the field's own format, as year-month-day
+(2026-10-14), or as people write them: Oct 18, 2026; 18 Oct; 10/18/2026; 10/18; tomorrow.
+(Numbers are month first, unless the field's format puts the day first.) Typing while the
+month is down works too: it goes, and the field takes what's typed. Up and Down step the
+date a day.
 
 **How:** `format` is how the date shows, in strftime's codes: here `%d %b %Y` (14 Oct
 2026). The usual is `%Y-%m-%d` (2026-10-14); `%m/%d/%Y` is 10/14/2026, and `%x` the
@@ -59,9 +63,10 @@ def FromDate_change(self):
 
 ## A date column
 
-The events' first column is `Date : date %a %d %b %Y`: a date, shown as Wed 14 Oct 2026
-(after `date`, its format, as a DatePicker's; plain `date` is 2026-10-14). Press Enter, F2
-or double-click a date to drop its month down, or type one. CSV files hold dates as
+The events' first column is `Date : date %a %-d %b %Y`: a date, shown as Mon 5 Oct 2026
+(after `date`, its format, as a DatePicker's; plain `date` is 2026-10-05). Press Enter or
+double-click a date to drop its month down; F2 edits its text, as a text cell's; or just
+type one (typing while the month is down works too). CSV files hold dates as
 year-month-day, whatever's shown.
 
 A date column's cells can be empty: a date has no zero, so an empty one is `None`. In a
@@ -81,3 +86,47 @@ def Events_rowclick(self, row):
 ```
 
 Click the Date header to sort by date (empty dates last). Done events are grayed.
+
+## Times: a TimePicker
+
+**Try:** in the **New** row, the field after the date is a TimePicker. Its button (or F4,
+or Alt+Down) drops down the times, every half hour, the nearest one chosen: click one, or
+use the arrows and Enter. Or type a time as people write them: 9:30 PM, 9:30pm, 21:30, 2130,
+9 pm. Up and Down step it to the next half hour. Then type what's on and click **Add**.
+
+**How:** `self.NewTime.value` is a `datetime.time` (or None, with `allow_empty`). Its
+`step` is the minutes between the times dropped down (and that Up and Down step), and
+`min` and `max` limit them (8:00 to 18:00 for working hours, say). Its `format` is
+`%-I:%M %p`, 9:30 PM; `%H:%M` is 21:30. (`%-I` leaves out the hour's leading zero, on every
+system: readymade sees to that, though Python's own strftime doesn't on Windows.)
+
+The new event's day and time go into the table together:
+
+```python
+self.Events.rows.append([self.NewDay.value, self.NewTime.value, self.NewWhat.text, False])
+```
+
+and `datetime.datetime.combine(day, time)` makes them one date and time, when one's wanted.
+
+## A date with a time: Remind me
+
+**Try:** drop down **Remind me**'s month and choose a day, then change the time in the
+field: 2026-10-20 9:00 AM, or as its format shows it. It can be left empty: no reminder.
+
+**How:** a DatePicker whose `format` has a time in it (here `%a %-d %b %Y %-I:%M %p`) holds
+a `datetime.datetime`: the month chooses its day, the time staying as it was, and the time
+is typed. Arithmetic on it is Python's own: how long until the reminder is
+
+```python
+left = self.Remind.value - datetime.datetime.now()  # a timedelta
+```
+
+## A time column
+
+The table's second column is `Time : time`: a `datetime.time`, shown as 9:30 PM. Press
+Enter or double-click a time to drop down the times (every half hour), F2 to edit its text,
+or just type one. A time can be empty
+(None, as Call the plumber's): "all day". CSV files hold times as 21:30. A `datetime` column
+holds both (`Logged : datetime`): its month drops down for its day, keeping its time, and a
+CSV file holds 2026-10-14 21:30.
+

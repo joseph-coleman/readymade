@@ -170,6 +170,14 @@ def datepicker(p):
     p.rect(9.8, 5.7, 13.8, 10.5, fill=None, width=0.8)
 
 
+def timepicker(p):
+    p.rect(1, 4.5, 15, 11.5, fill="field")
+    p.lines((2.6, 8), (6.8, 8), color="soft", width=1.4)
+    p.rect(8.6, 4.5, 15, 11.5, fill="face")  # the drop-down button...
+    p.oval(9.7, 5.7, 13.9, 9.9 + 0.4, fill="field", width=0.8)  # ...with a clock on it
+    p.lines((11.8, 6.9), (11.8, 8.1), (12.9, 8.6), width=0.7)
+
+
 def scrollbar(p):
     p.rect(1, 4.5, 15, 11.5, fill="face")
     p.shape((4.6, 5.8), (4.6, 10.2), (1.9, 8))
@@ -232,7 +240,7 @@ def unknown(p):
 
 
 ICONS = {"Pointer": pointer, "Label": label, "TextBox": textbox, "Frame": frame, "TabStrip": tabstrip, "Button": button,
-         "CheckBox": checkbox, "OptionButton": optionbutton, "ComboBox": combobox, "ListBox": listbox, "TreeView": treeview, "ListView": listview, "DataTable": datatable, "Calendar": calendar, "DatePicker": datepicker,
+         "CheckBox": checkbox, "OptionButton": optionbutton, "ComboBox": combobox, "ListBox": listbox, "TreeView": treeview, "ListView": listview, "DataTable": datatable, "Calendar": calendar, "DatePicker": datepicker, "TimePicker": timepicker,
          "ScrollBar": scrollbar, "Slider": slider, "UpDown": updown, "ProgressBar": progressbar, "Image": image,
          "Canvas": canvas, "Grid": grid, "Timer": timer, "Unknown": unknown}
 

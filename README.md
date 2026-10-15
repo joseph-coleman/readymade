@@ -11,8 +11,8 @@ leave almost no time between having an idea and running the program.
 
 - **A form designer.** Draw controls from the Toolbox (Label, TextBox, Button,
   CheckBox, OptionButton, ComboBox, ListBox, TreeView, ListView, DataTable, Calendar,
-  DatePicker, ScrollBar, Slider, UpDown, ProgressBar, Frame, TabStrip, Grid, Image, Canvas,
-  Timer), then set their properties in the Properties panel. Align and size them with the Format menu,
+  DatePicker, TimePicker, ScrollBar, Slider, UpDown, ProgressBar, Frame, TabStrip, Grid,
+  Image, Canvas, Timer), then set their properties in the Properties panel. Align and size them with the Format menu,
   design menus in the Menu Editor, and set the tab order by clicking. Control arrays work
   as in VB: `Digit[0]`, `Digit[1]`... share one `Digit_click(self, index)`. Anchors, docking
   (WinForms-style: a control fills an edge, or what's left) and Grids (rows and columns sized
@@ -82,8 +82,8 @@ The repository's `examples` folder has projects to open in the IDE (`readymade e
 - **datatable**: an order sheet in a DataTable: typed columns, as a database table has,
   edited like a spreadsheet; totals worked out with Column arithmetic, numpy-style slicing
   and conditions, CSV files, sorting.
-- **dates**: a planner with a Calendar, DatePickers (one that can be empty) and a DataTable
-  with a date column.
+- **dates**: a planner with a Calendar, DatePickers (one with a time, one that can be empty),
+  a TimePicker, and a DataTable with date and time columns.
 - **debugging**: a shopping basket with mistakes in it, and a walkthrough of the debugger.
 - **anchors**: a form whose controls follow its size.
 - **hello**: a small first program: type a name and click a button, laid out in a Grid.

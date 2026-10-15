@@ -18,7 +18,7 @@ def test_dates_from_what_people_write():
     assert to_date("") is None and to_date(None) is None and to_date(D(2026, 5, 6)) == D(2026, 5, 6)
     assert read_date("10/14/2026", "%m/%d/%Y") == D(2026, 10, 14)
     assert read_date("2026-10-14", "%m/%d/%Y") == D(2026, 10, 14)  # (year-month-day always reads)
-    with pytest.raises(ValueError, match="'14.10.' isn't a date \\(as 10/14/2026\\)"):
+    with pytest.raises(ValueError, match="'14.10.' isn't a date \\(as 10/14/2026, or Oct 14, 2026\\)"):
         read_date("14.10.", "%m/%d/%Y")
     with pytest.raises(ValueError, match="isn't a date"):
         to_date("soon")
@@ -245,3 +245,181 @@ def test_esc_in_a_dropped_months_years_goes_back_before_closing(make_form):
     assert DropMonth.current is not None and month.view == "days"
     key(form, dropped(), "Escape")
     assert DropMonth.current is None
+
+
+# ----- times -----
+
+T = datetime.time
+
+
+def test_times_as_people_write_them():
+    from readymade.controls.dates import read_datetime, read_time, show, times_between, to_time
+
+    assert show(D(2026, 10, 5), "%-d %b %Y") == "5 Oct 2026" and show(T(9, 5), "%-I:%M %p") == "9:05 AM"
+    assert show(T(0, 30), "%#I:%M %p") == "12:30 AM" and show(T(21, 30), "%H:%M") == "21:30"
+    for typed, expected in (("9:30 PM", T(21, 30)), ("9:30pm", T(21, 30)), ("9.30 p.m.", T(21, 30)), ("9 pm", T(21)),
+                        ("21:30", T(21, 30)), ("2130", T(21, 30)), ("930", T(9, 30)), ("9", T(9)),
+                        ("12 am", T(0)), ("12:15 PM", T(12, 15)), ("7:05:30", T(7, 5, 30))):
+        assert read_time(typed) == expected, typed
+    for bad in ("25:00", "13 pm", "noon", "9:75"):
+        with pytest.raises(ValueError, match="isn't a time \\(as 9:30 PM\\)"):
+            read_time(bad)
+    assert read_datetime("2026-10-14 9:30 PM") == datetime.datetime(2026, 10, 14, 21, 30)
+    assert read_datetime("2026-10-14T21:30") == read_datetime("10/14/2026 21:30", "%m/%d/%Y %H:%M")
+    assert read_datetime("14 Oct 2026 9pm", "%-d %b %Y %-I:%M %p") == datetime.datetime(2026, 10, 14, 21)
+    with pytest.raises(ValueError, match="isn't a date and time"):
+        read_datetime("tomorrow")
+    assert len(times_between(30)) == 48 and times_between(60, T(8), T(10)) == [T(8), T(9), T(10)]
+    assert to_time("9:30 PM") == T(21, 30) and to_time(datetime.datetime(2026, 1, 1, 7)) == T(7) and to_time("") is None
+
+
+@pytest.fixture
+def time_form(tmp_path):
+    made = []
+
+    def make(cls=Form, **props):
+        design = formfile.FormDesign(name="Form1", width=480, height=320)
+        spec = REGISTRY["TimePicker"].new_spec("Starts", 8, 8, 120, 26)
+        spec.update(props)
+        design.controls.append(spec)
+        design.controls.append(REGISTRY["Calendar"].new_spec("Cal", 8, 120, 224, 184))
+        formfile.save(design, tmp_path / "Form1.form")
+        form = cls(tmp_path / "Form1.form")
+        form.show()
+        settle(form)
+        made.append(form)
+        return form
+
+    yield make
+    for form in made:
+        form.root.destroy()
+
+
+@pytest.mark.usefixtures("display")
+def test_a_time_picker(time_form):
+    changes = []
+
+    class Form1(Form):
+        def Starts_change(self):
+            changes.append(self.Starts.value)
+
+    form = time_form(Form1, value="9:30 PM")
+    starts = form.Starts
+    assert starts.value == T(21, 30) and starts.widget.get() == "9:30 PM"  # (12-hour, no leading zero)
+    starts.widget.focus_force()
+    settle(form)
+    key(form, starts.widget, "Down")  # the next step
+    assert starts.value == T(22) and starts.widget.get() == "10:00 PM"
+    key(form, starts.widget, "Up")
+    key(form, starts.widget, "Up")
+    assert starts.value == T(21)
+    starts.widget.delete(0, "end")
+    starts.widget.insert(0, "7.15am")
+    key(form, starts.widget, "Return")  # typed, as people write it
+    assert starts.value == T(7, 15) and starts.widget.get() == "7:15 AM"
+    key(form, starts.widget, "Up")  # (off the step's grid: Up goes to it)
+    assert starts.value == T(7)
+    starts.widget.delete(0, "end")
+    starts.widget.insert(0, "half seven")
+    key(form, starts.widget, "Return")  # not a time: put back
+    assert starts.value == T(7) and starts.widget.get() == "7:00 AM"
+    key(form, starts.widget, "F4")  # the times drop down, the nearest chosen and in sight
+    dropped_times = DropMonth.current
+    assert type(dropped_times).__name__ == "DropTimes" and dropped_times.list.get(dropped_times.list.curselection()) == "7:00 AM"
+    key(form, dropped_times.list, "Down")
+    key(form, dropped_times.list, "Return")  # Enter chooses
+    assert starts.value == T(7, 30) and DropMonth.current is None and form.root.focus_get() is starts.widget
+    assert changes == [T(22), T(21, 30), T(21), T(7, 15), T(7), T(7, 30)]
+    starts.min, starts.step = "8:00", 15  # (the earliest: 7:30 moves up to it)
+    assert starts.value == T(8)
+    starts.drop()
+    settle(form)
+    assert DropMonth.current.list.get(0) == "8:00 AM" and DropMonth.current.list.get(1) == "8:15 AM"
+    key(form, DropMonth.current.list, "Escape")
+    assert DropMonth.current is None and starts.value == T(8)
+    with pytest.raises(ValueError, match="outside Starts's min to max"):
+        starts.value = "6:00"
+    starts.format = "%H:%M"
+    assert starts.widget.get() == "08:00"
+    starts.allow_empty = True
+    starts.value = None
+    assert starts.widget.get() == ""
+
+
+@pytest.mark.usefixtures("display")
+def test_a_date_picker_with_a_time_part(make_form):
+    form = make_form(picker={"format": "%Y-%m-%d %-I:%M %p", "value": "2026-10-14 21:30", "min": "2026-10-01"})
+    pick = form.Pick
+    assert pick.value == datetime.datetime(2026, 10, 14, 21, 30) and pick.widget.get() == "2026-10-14 9:30 PM"
+    pick.widget.focus_force()
+    settle(form)
+    key(form, pick.widget, "F4")  # the month chooses the day...
+    key(form, dropped(), "Right")
+    key(form, dropped(), "Return")
+    assert pick.value == datetime.datetime(2026, 10, 15, 21, 30)  # ...the time stays
+    pick.widget.delete(0, "end")
+    pick.widget.insert(0, "2026-10-20 8am")
+    key(form, pick.widget, "Return")
+    assert pick.value == datetime.datetime(2026, 10, 20, 8)
+    key(form, pick.widget, "Up")  # a day back, the same time
+    assert pick.value == datetime.datetime(2026, 10, 19, 8)
+    with pytest.raises(ValueError, match="outside Pick's min to max"):
+        pick.value = "2026-09-30 10:00"
+    pick.format = "%-d %b %Y"  # no time now: a date
+    assert pick.value == D(2026, 10, 19) and pick.widget.get() == "19 Oct 2026"
+
+
+def test_the_designer_checks_times():
+    cls = REGISTRY["TimePicker"]
+    spec = cls.new_spec("X", 0, 0)
+    spec.update(min="8:00", max="17:30", value="9:00 AM")
+    cls.designer_changed(spec, "value")
+    for bad, message in (({"min": "soon"}, "isn't a time"), ({"max": "7:00"}, "can't be after max"),
+                         ({"value": "6 pm"}, "from min to max"), ({"step": 0}, "step")):
+        with pytest.raises(ValueError, match=message):
+            cls.designer_changed({**spec, **bad}, "value")
+    picker = REGISTRY["DatePicker"]
+    spec = picker.new_spec("Y", 0, 0)
+    spec.update(format="%Y-%m-%d %H:%M", value="2026-10-14 21:30")
+    picker.designer_changed(spec, "value")
+
+
+def test_dates_as_americans_and_others_write_them():
+    year = TODAY.year
+    for typed, day in (("Oct 18, 2026", D(2026, 10, 18)), ("October 18 2026", D(2026, 10, 18)),
+                       ("oct. 18th, 2026", D(2026, 10, 18)), ("18 Oct 2026", D(2026, 10, 18)),
+                       ("Sunday, October 18, 2026", D(2026, 10, 18)), ("Sept 5", D(year, 9, 5)),
+                       ("10/18/2026", D(2026, 10, 18)), ("10-18-26", D(2026, 10, 18)), ("10/18", D(year, 10, 18)),
+                       ("18/10/2026", D(2026, 10, 18)),  # (month first can't be: day first)
+                       ("2026/10/18", D(2026, 10, 18)), ("today", TODAY), ("tomorrow", TODAY + datetime.timedelta(1))):
+        assert read_date(typed) == day, typed
+    assert read_date("5/10/2026", "%d/%m/%Y") == D(2026, 10, 5)  # (a day-first format: day first)
+    assert read_date("5/10/2026") == D(2026, 5, 10)  # (else month first)
+    for bad in ("Octember 3", "13/45/2026", "Oct 32", "soon"):
+        with pytest.raises(ValueError, match="isn't a date"):
+            read_date(bad)
+
+
+@pytest.mark.usefixtures("display")
+def test_typing_while_the_month_or_times_are_down(make_form, time_form):
+    form = make_form(picker={"value": "2026-03-15"})
+    pick = form.Pick
+    pick.widget.focus_force()
+    settle(form)
+    key(form, pick.widget, "F4")
+    key(form, dropped(), "o", )  # a character: the month goes, and the field takes it
+    assert DropMonth.current is None and pick.widget.get() == "o" and form.root.focus_get() is pick.widget
+    pick.widget.insert("end", "ct 18, 2026")
+    key(form, pick.widget, "Return")
+    assert pick.value == D(2026, 10, 18)
+
+    form = time_form()
+    starts = form.Starts
+    starts.widget.focus_force()
+    settle(form)
+    key(form, starts.widget, "F4")
+    key(form, DropMonth.current.list, "7")
+    assert DropMonth.current is None and starts.widget.get() == "7"
+    starts.widget.insert("end", ":45pm")
+    key(form, starts.widget, "Return")
+    assert starts.value == T(19, 45)

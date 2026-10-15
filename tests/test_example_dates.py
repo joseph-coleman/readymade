@@ -38,7 +38,7 @@ def settle(form):
 
 
 def test_the_calendar_shows_the_days_events(form):
-    assert form.Month.value == TODAY and form.DayList.text == "Dentist\nCall the plumber"
+    assert form.Month.value == TODAY and form.DayList.text == "10:00 AM  Dentist\nCall the plumber"
     form.Month.value = TODAY + 2 * DAY
     assert form.DayList.text == "Pay the rent"
     form.Month.value = TODAY + DAY
@@ -59,13 +59,32 @@ def test_events_and_the_calendar_follow_each_other(form):
     events = form.Events
     events._move(4, 1)  # Lunch with Sam's row: the Calendar goes to its day
     assert form.Month.value == TODAY + 5 * DAY
-    events._move(len(events.rows), 1)  # a new event: on the Calendar's day
+    events._move(len(events.rows), 2)  # a new event: on the Calendar's day
     events._edit(typed="Gym")
     events._finish()
     settle(form)
-    assert events.rows[-1][:2] == [TODAY + 5 * DAY, "Gym"] and form.DayList.text == "Lunch with Sam\nGym"
+    assert events.rows[-1][:3] == [TODAY + 5 * DAY, None, "Gym"] and form.DayList.text == "12:30 PM  Lunch with Sam\nGym"
     events.current = (0, "Date")
     events._edit()  # its month drops down
     assert DropMonth.current is not None and DropMonth.current.month.value == TODAY - 3 * DAY
     DropMonth.current.close()
     assert events.rows[0].forecolor == "#909090" and events.rows[1].forecolor == ""  # (done: gray)
+
+
+def test_a_new_event_from_a_date_and_a_time(form):
+    form.Month.value = TODAY + 2 * DAY  # (the new event's day follows the Calendar)
+    assert form.NewDay.value == TODAY + 2 * DAY and form.NewTime.value == datetime.time(9)
+    form.NewTime.value = "7:30 AM"
+    form.NewWhat.text = "Run"
+    form.AddButton.widget.invoke()
+    settle(form)
+    assert [row["Event"] for row in form.Events.rows][3:5] == ["Pay the rent", "Run"]  # (no time first: all day)
+    assert form.DayList.text == "Pay the rent\n07:30 AM  Run" and form.NewWhat.text == ""
+
+
+def test_a_reminder_with_a_date_and_time(form):
+    assert form.Remind.value is None and form.RemindNote.text == "No reminder"
+    form.Remind.value = datetime.datetime.combine(TODAY + 2 * DAY, datetime.time(9))
+    assert form.Remind.widget.get().endswith("9:00 AM") and form.RemindNote.text.startswith("In ")
+    form.Remind.value = None
+    assert form.RemindNote.text == "No reminder"

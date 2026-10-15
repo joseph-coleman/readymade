@@ -30,7 +30,7 @@ def test_column_lines():
     assert [k.line() for k in kinds] == ["Item", "Price : number 2", "Qty : number", "In stock : check",
                                          "Size : S | M | L", "Total : number 2, readonly"]
     assert ColumnKind.parse("Notes : readonly").kind == "text"
-    for bad in (": number", "A : time", "A : number two", "A : check, number"):
+    for bad in (": number", "A : when", "A : number two", "A : check, number"):
         with pytest.raises(ValueError):
             ColumnKind.parse(bad)
 
@@ -980,3 +980,78 @@ def test_a_date_cells_month_drops_down(make_form):
     DropMonth.current.close()
     table.save_csv("dates.csv")
     assert (table.folder / "dates.csv").read_text(encoding="utf-8").splitlines()[1:] == ["Apples,2026-10-15", "Pears,2027-02-03"]
+
+
+def test_time_and_datetime_columns():
+    T, DT = datetime.time, datetime.datetime
+    starts, logged = ColumnKind.parse("Starts : time"), ColumnKind.parse("Logged : datetime %d/%m/%Y %H:%M")
+    assert (starts.line(), logged.line()) == ("Starts : time", "Logged : datetime %d/%m/%Y %H:%M")
+    assert starts.convert("9:30 pm") == T(21, 30) and starts.convert("") is None and starts.blank() is None
+    assert starts.show(T(9, 5)) == "9:05 AM" and starts.text(T(21, 30)) == "21:30" and starts.text(T(1, 2, 3)) == "01:02:03"
+    assert logged.convert("14/10/2026 21:30") == DT(2026, 10, 14, 21, 30) == logged.convert("2026-10-14 21:30")
+    assert logged.show(DT(2026, 10, 14, 9, 5)) == "14/10/2026 09:05" and logged.text(DT(2026, 10, 14, 9, 5)) == "2026-10-14 09:05"
+    assert logged.convert(datetime.date(2026, 1, 2)) == DT(2026, 1, 2)  # (a date: its midnight)
+    for kind, bad in ((starts, "soon"), (starts, True), (logged, "later"), (logged, 5)):
+        with pytest.raises(ValueError, match="isn't a"):
+            kind.convert(bad)
+    assert sorted([T(9), None, T(7)], key=starts.sort_key) == [T(7), T(9), None]
+
+
+@pytest.mark.usefixtures("display")
+def test_time_and_datetime_cells_drop_down(make_form):
+    from readymade.controls.dates import Dropped
+
+    form = make_form()
+    table = form.Stock
+    table.columns = ["Item", "Starts : time", "Logged : datetime"]
+    table.rows = [["Apples", "9:00 AM", "2026-10-14 21:30"]]
+    assert table._tree.item("0", "values")[1:] == ("9:00 AM", "2026-10-14 9:30 PM")
+    table._tree.focus_force()
+    table.current = (0, "Starts")
+    settle(form)
+    key(form, "Return")  # a time: the times drop down
+    times = Dropped.current
+    assert type(times).__name__ == "DropTimes" and times.list.get(times.list.curselection()) == "9:00 AM"
+    key_on = times.list
+    key_on.event_generate("<KeyPress>", keysym="Down")
+    key_on.event_generate("<KeyPress>", keysym="Return")
+    settle(form)
+    assert table[0, "Starts"] == datetime.time(9, 30) and Dropped.current is None
+    table.current = (0, "Logged")
+    key(form, "Return")  # a datetime: the month, for its day
+    month = Dropped.current.month
+    assert month.value == datetime.date(2026, 10, 14)
+    month.canvas.event_generate("<KeyPress>", keysym="Right")
+    month.canvas.event_generate("<KeyPress>", keysym="Return")
+    settle(form)
+    assert table[0, "Logged"] == datetime.datetime(2026, 10, 15, 21, 30)  # (its time kept)
+    table.save_csv("times.csv")
+    assert (table.folder / "times.csv").read_text(encoding="utf-8").splitlines()[1] == "Apples,09:30,2026-10-15 21:30"
+
+
+@pytest.mark.usefixtures("display")
+def test_typing_into_a_date_or_time_cell_however_it_was_opened(make_form):
+    from readymade.controls.dates import Dropped
+
+    form = make_form()
+    table = form.Stock
+    table.columns = ["Item", "Due : date", "Starts : time"]
+    table.rows = [["Apples", "2026-10-14", "9:00 AM"]]
+    table._tree.focus_force()
+    table.current = (0, "Starts")
+    settle(form)
+    table._edit()  # (a double-click: the times drop down)
+    settle(form)
+    Dropped.current.list.event_generate("<KeyPress>", keysym="7")  # typing: the cell's text instead
+    settle(form)
+    assert Dropped.current is None and table._editor is not None and table._editor.get() == "7"
+    table._editor.insert("end", " pm")
+    key(form, "Return")
+    assert table[0, "Starts"] == datetime.time(19)
+    table.current = (0, "Due")
+    key(form, "F2")  # F2: its text to edit, as a text cell's
+    assert Dropped.current is None and table._editor.get() == "2026-10-14"
+    table._editor.delete(0, "end")
+    table._editor.insert(0, "Oct 20, 2026")
+    key(form, "Tab")
+    assert table[0, "Due"] == datetime.date(2026, 10, 20)

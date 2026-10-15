@@ -35,7 +35,8 @@ from tkinter import messagebox, ttk
 from readymade import keys
 from readymade.appearance import CHECK_MARK, check_color
 from readymade.controls.base import _FOCUS_EVENTS, Control, Event, register
-from readymade.controls.dates import ISO, DropMonth, _check_format, read_date, to_date
+from readymade.controls.dates import (DATETIME_FORMAT, ISO, TIME_FORMAT, DropMonth, DropTimes, _check_format,
+                                     read_date, read_datetime, read_time, show, to_date, to_datetime, to_time)
 from readymade.controls.traits import Anchored, BackColor, Cursor, Font, ForeColor, TabStop, Tooltip
 from readymade.controls.trees import _TreeLook
 from readymade.menus import primary_mask
@@ -62,11 +63,11 @@ class ColumnKind:
     money, readonly"."""
 
     name: str
-    kind: str = "text"  # text, number, money, date, check or choice
+    kind: str = "text"  # text, number, money, date, time, datetime, check or choice
     decimals: int | None = None  # for a number: the places it keeps (None: as it comes); money's (2)
     choices: tuple = ()  # for a choice
     readonly: bool = False
-    format: str = ISO  # for a date: how it shows (strftime's codes)
+    format: str = ISO  # for a date, time or datetime: how it shows (strftime's codes)
 
     @classmethod
     def parse(cls, line):
@@ -92,20 +93,22 @@ class ColumnKind:
             if len(words) == 2 and not words[1].isdigit():
                 raise ValueError(f"{line!r}: after money, how many decimal places (money 0, for yen)")
             return cls(name, "money", decimals=int(words[1]) if len(words) == 2 else 2, readonly=readonly)
-        if words[0] == "date":
-            format = _check_format(spec[len("date"):].strip() or ISO)
-            return cls(name, "date", format=format, readonly=readonly)
+        if words[0] in _WHEN_FORMATS:
+            format = _check_format(spec[len(words[0]):].strip() or _WHEN_FORMATS[words[0]])
+            return cls(name, words[0], format=format, readonly=readonly)
         if words in (["text"], ["check"]):
             return cls(name, words[0], readonly=readonly)
         raise ValueError(f"{line!r}: a column's kind is text, number (number 2: with 2 decimal places), money, "
-                         "date (date %m/%d/%Y: shown so), check, or choices like S | M | L; and maybe readonly")
+                         "date (date %m/%d/%Y: shown so), time, datetime, check, or choices like S | M | L; "
+                         "and maybe readonly")
 
     def line(self):
         """How it's written in the DataTable's columns."""
         kind = {"text": "", "check": "check", "choice": " | ".join(self.choices),
                 "number": "number" + (f" {self.decimals}" if self.decimals is not None else ""),
                 "money": "money" + (f" {self.decimals}" if self.decimals != 2 else ""),
-                "date": "date" + (f" {self.format}" if self.format != ISO else "")}[self.kind]
+                **{when: when + (f" {self.format}" if self.format != usual else "")
+                   for when, usual in _WHEN_FORMATS.items()}}[self.kind]
         extras = ", ".join(p for p in (kind, "readonly" if self.readonly else "") if p)
         return f"{self.name} : {extras}" if extras else self.name
 
@@ -113,8 +116,8 @@ class ColumnKind:
         """An empty cell's value."""
         if self.kind == "money":
             return Decimal(0).quantize(self._cents())
-        if self.kind == "date":
-            return None  # (a date has no zero: an empty date is None, as a database's NULL)
+        if self.kind in _WHEN_FORMATS:
+            return None  # (a date or time has no zero: an empty one is None, as a database's NULL)
         return {"text": "", "number": 0, "check": False}.get(self.kind, self.choices[0] if self.choices else "")
 
     def convert(self, value):
@@ -137,13 +140,17 @@ class ColumnKind:
             return match
         if self.kind == "money":
             return self._money(value)
-        if self.kind == "date":
+        if self.kind in _WHEN_FORMATS:
+            reading, making = {"date": (read_date, to_date), "time": (read_time, to_time),
+                               "datetime": (read_datetime, to_datetime)}[self.kind]
             if isinstance(value, str) and value.strip():
-                return read_date(value, self.format, self.name)
+                return reading(value, self.format, self.name)
+            if isinstance(value, bool) or (self.kind == "date" and isinstance(value, datetime.time)):
+                raise ValueError(f"{self.name}: {value!r} isn't a {_WHAT[self.kind]}")
             try:
-                return to_date(value, self.name)
-            except ValueError:
-                raise ValueError(f"{self.name}: {value!r} isn't a date") from None
+                return making(value, self.name)
+            except (ValueError, TypeError):
+                raise ValueError(f"{self.name}: {value!r} isn't a {_WHAT[self.kind]}") from None
         return self._number(value)
 
     def _cents(self):
@@ -192,8 +199,8 @@ class ColumnKind:
             return f"{value:.{self.decimals}f}"
         if self.kind == "money":
             return f"{value:,.{self.decimals}f}"  # (1,234.50)
-        if self.kind == "date":
-            return value.strftime(self.format) if value else ""
+        if self.kind in _WHEN_FORMATS:
+            return show(value, self.format) if value is not None else ""
         return str(value)
 
     def text(self, value):
@@ -201,8 +208,13 @@ class ColumnKind:
         without its thousands' commas), a check as True or False (which convert() reads back)."""
         if self.kind == "money":
             return f"{value:.{self.decimals}f}"
-        if self.kind == "date":
-            return value.isoformat() if value else ""  # (year-month-day, whatever's shown)
+        if self.kind in _WHEN_FORMATS:  # (ISO's form, whatever's shown: 2026-10-14, 21:30, 2026-10-14 21:30)
+            if value is None:
+                return ""
+            if self.kind == "date":
+                return value.isoformat()
+            spec = "seconds" if value.second else "minutes"
+            return value.isoformat(timespec=spec) if self.kind == "time" else value.isoformat(" ", spec)
         if self.kind == "number":
             return self.show(value)
         return str(bool(value)) if self.kind == "check" else str(value)
@@ -212,9 +224,14 @@ class ColumnKind:
             return str(value).casefold()
         if self.kind == "choice":
             return self.choices.index(value) if value in self.choices else len(self.choices)
-        if self.kind == "date":
-            return (value is None, value or datetime.date.min)  # (empty ones last)
+        if self.kind in _WHEN_FORMATS:  # (empty ones last)
+            return (value is None, value if value is not None else _EARLIEST[self.kind])
         return value
+
+
+_WHEN_FORMATS = {"date": ISO, "time": TIME_FORMAT, "datetime": DATETIME_FORMAT}  # each kind's usual format
+_WHAT = {"date": "date", "time": "time", "datetime": "date and time"}
+_EARLIEST = {"date": datetime.date.min, "time": datetime.time.min, "datetime": datetime.datetime.min}
 
 
 def _known(op):
@@ -820,7 +837,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         ids = [f"c{i}" for i in range(len(kinds))]
         self._tree.configure(columns=ids, displaycolumns=ids)
         for i, kind in enumerate(kinds):
-            anchor = {"number": "e", "money": "e", "check": "center"}.get(kind.kind, "w")  # (dates: as text)
+            anchor = {"number": "e", "money": "e", "check": "center"}.get(kind.kind, "w")  # (dates, times: as text)
             self._tree.column(ids[i], anchor=anchor, stretch=False, minwidth=NARROWEST)
             self._tree.heading(ids[i], text=kind.name, anchor=anchor, command=lambda c=i: self._header_clicked(c))
         self._sorted = None
@@ -1382,7 +1399,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if key == "Tab" and held in ([], ["Shift"]):
             return self._tab(-1 if held or e.keysym == "ISO_Left_Tab" else 1)
         if name in ("Enter", "F2"):
-            self._edit()
+            self._edit(as_text=name == "F2")  # (F2: a date or time's text, as a text cell's; Enter: its list)
             return "break"
         if name in ("Del", "Backspace"):  # (Backspace: the Mac's delete key)
             self._keyed(self._delete_chosen, "Delete", "emptied")
@@ -1429,7 +1446,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     def _can_edit(self, column):
         return self._editable and self._enabled and not self._kinds[column].readonly
 
-    def _edit(self, typed=None):
+    def _edit(self, typed=None, as_text=False):
         """Edit the cell under the cursor: typed replaces it; otherwise what's there is kept."""
         row, column = self._cur
         if not self._kinds or not self._can_edit(column) or row > self._last_row():
@@ -1437,8 +1454,8 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             return
         kind = self._kinds[column]
         current = self._data[row][column] if row < len(self._data) else kind.blank()
-        if kind.kind == "date" and typed is None:
-            self._drop_month(row, column, current)
+        if kind.kind in ("date", "time", "datetime") and typed is None and not as_text:
+            self._drop_for(row, column, current)
             return
         if kind.kind == "check":
             refused = self._refusal(row, column, not current)
@@ -1478,7 +1495,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         for sequence, step in (("<Up>", -1), ("<Down>", 1)):
             if kind.kind != "choice":  # (in a choice's list, the arrows choose)
                 editor.bind(sequence, lambda e, s=step: (self._arrow_in_editor(e, s), "break")[1])
-        if kind.kind == "date":
+        if kind.kind in ("date", "time", "datetime"):
             editor.bind("<F4>", lambda e: (self._typed_to_month(), "break")[1])
         editor.bind("<FocusOut>", lambda e: self.widget.after_idle(self._focus_left), add="+")
         self._follow()
@@ -1488,14 +1505,15 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
 
     def _arrow_in_editor(self, e, step):
         """Up or Down in a text editor: done, and up or down a row; Alt+Down in a date's: its month."""
-        if self._editing and self._kinds[self._editing[1]].kind == "date" and \
+        if self._editing and self._kinds[self._editing[1]].kind in ("date", "time", "datetime") and \
                 keys.name(e.char, e.keysym, e.state) == "Alt+Down":
             self._typed_to_month()
         else:
             self._finish(step, 0)
 
     def _typed_to_month(self):
-        """F4 or Alt+Down while typing a date: the month drops down, at what's typed (if it's a date)."""
+        """F4 or Alt+Down while typing a date or time: its month (or times) drop down, at what's
+        typed (if it reads as one)."""
         row, column = self._editing
         kind = self._kinds[column]
         try:
@@ -1503,19 +1521,37 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         except ValueError:
             day = None
         self._cancel()
-        self._drop_month(row, column, day if day is not None else self._cell_or_blank(row, column))
+        self._drop_for(row, column, day if day is not None else self._cell_or_blank(row, column))
 
     def _cell_or_blank(self, row, column):
         return self._data[row][column] if row < len(self._data) else self._kinds[column].blank()
 
-    def _drop_month(self, row, column, day):
-        """A date cell's editor: its month, dropped down under it. A click chooses (and stays),
-        Enter chooses and moves on (as enter_moves says); Esc, or a click elsewhere, leaves it."""
+    def _drop_for(self, row, column, value):
+        """A date, time or datetime cell's editor: its month (a datetime's day) or a list of
+        times, dropped down under it. A click chooses (and stays), Enter chooses and moves on
+        (as enter_moves says); Esc, or a click elsewhere, leaves it."""
         box = self._tree.bbox(self._iid(row), f"c{column}")
         if not box:
             return
-        DropMonth(self._tree, day, lambda chosen, how: self._month_chosen(row, column, chosen, how),
-                  below=(self._tree, *box), font=self._font if isinstance(self._font, str) else "")
+        kind = self._kinds[column]
+        font = self._font if isinstance(self._font, str) else ""
+        below = (self._tree, *box)
+        typing = self._edit_typed  # (typed while it's down: the cell's text, starting with that)
+        if kind.kind == "time":
+            DropTimes(self._tree, value, lambda chosen, how: self._month_chosen(row, column, chosen, how),
+                      format=kind.format, below=below, font=font, on_type=typing)
+            return
+
+        def chosen(day, how):
+            if kind.kind == "datetime":  # (the day chosen, the time as it was: midnight, if none)
+                day = datetime.datetime.combine(day, value.time() if value is not None else datetime.time())
+            self._month_chosen(row, column, day, how)
+
+        DropMonth(self._tree, value.date() if isinstance(value, datetime.datetime) else value, chosen,
+                  below=below, font=font, on_type=typing)
+
+    def _edit_typed(self, character):
+        self._edit(typed=character)
 
     def _month_chosen(self, row, column, day, how):
         refused = self._refusal(row, column, day)

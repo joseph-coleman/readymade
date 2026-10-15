@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import calendar
 import datetime
+import re
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
@@ -42,21 +43,216 @@ def to_date(value, name="value"):
 
 
 def read_date(text, format=ISO, name="value"):
-    """A typed date: in format (strftime's codes), or as year-month-day. ValueError if neither."""
+    """A typed date: in format (strftime's codes), as year-month-day, or as people write them:
+    Oct 18, 2026; October 18 2026; 18 Oct 2026; Sun Oct 18 (this year); 10/18/2026, 10-18-26
+    and 10/18 (month first, unless format puts the day first: then 18/10/2026); today,
+    tomorrow, yesterday. ValueError if it isn't one."""
     text = text.strip()
     try:
-        return datetime.datetime.strptime(text, format).date()
+        return datetime.datetime.strptime(text, _for_reading(format)).date()
     except ValueError:
+        pass
+    try:
+        return datetime.date.fromisoformat(text)
+    except ValueError:
+        pass
+    day = _read_loosely(text, day_first=_day_first(format))
+    if day is None:
+        examples = dict.fromkeys([show(datetime.date(2026, 10, 14), format), "Oct 14, 2026", "10/14/2026"])
+        raise ValueError(f"{name}: {text!r} isn't a date (as {', or '.join(examples)})")
+    return day
+
+
+_WORDS = {"today": 0, "tomorrow": 1, "yesterday": -1}
+_ENGLISH_MONTHS = ("january february march april may june july august september october november "
+                   "december").split()
+
+
+def _month_named(word):
+    """The month a word names (October, Oct, Oct.: the locale's names, or English), or None."""
+    word = word.lower().rstrip(".")
+    if len(word) < 3:
+        return None
+    for number in range(1, 13):
+        names = (calendar.month_name[number].lower(), calendar.month_abbr[number].lower(), _ENGLISH_MONTHS[number - 1])
+        if any(name.startswith(word) for name in names if name):  # (Oct, Octo, October; not Octember)
+            return number
+    return None
+
+
+def _day_first(format):
+    """Whether format writes the day before the month (18/10/2026: as most of the world does)."""
+    day, month = re.search(r"%[-#]?[de]", format), re.search(r"%[-#]?[mbB]", format)
+    return bool(day and month and day.start() < month.start())
+
+
+def _year(text):
+    year = int(text)
+    if len(text) <= 2:  # (26: 2026; 99: 1999, as strftime's %y reads them)
+        year += 2000 if year < 69 else 1900
+    return year
+
+
+def _read_loosely(text, day_first=False):
+    """A date as people write them (see read_date), or None."""
+    words = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text.lower().replace(",", " ")).split()
+    if len(words) == 1 and words[0] in _WORDS:
+        return datetime.date.today() + datetime.timedelta(days=_WORDS[words[0]])
+    weekdays = {name.lower() for name in (*calendar.day_name, *calendar.day_abbr)} | {
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun"}
+    if words and words[0].rstrip(".") in weekdays:  # ("Sun Oct 18": the day's name is left out)
+        words = words[1:]
+    year, month, day = datetime.date.today().year, None, None
+    try:
+        if len(words) in (2, 3) and _month_named(words[0]) and words[1].isdigit():  # Oct 18 (2026)
+            month, day = _month_named(words[0]), int(words[1])
+            year = _year(words[2]) if len(words) == 3 else year
+        elif len(words) in (2, 3) and words[0].isdigit() and _month_named(words[1]):  # 18 Oct (2026)
+            month, day = _month_named(words[1]), int(words[0])
+            year = _year(words[2]) if len(words) == 3 else year
+        elif len(words) == 1:
+            parts = re.split(r"[/.-]", words[0])
+            if 2 <= len(parts) <= 3 and all(part.isdigit() for part in parts):
+                if len(parts[0]) == 4:  # 2026/10/18
+                    year, month, day = int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) == 3 else 1
+                else:  # 10/18/2026 (or 18/10/2026, day first; or month first, if that can't be)
+                    first, second = int(parts[0]), int(parts[1])
+                    month, day = (second, first) if day_first else (first, second)
+                    if month > 12 >= day:
+                        month, day = day, month
+                    year = _year(parts[2]) if len(parts) == 3 else year
+        if month is None:
+            return None
+        return datetime.date(year, month, day)
+    except ValueError:  # (October 32nd, and the like)
+        return None
+
+
+TIME_FORMAT = "%-I:%M %p"  # 9:30 PM (%-I: the hour without a leading zero, as on every system here)
+DATETIME_FORMAT = "%Y-%m-%d %-I:%M %p"  # 2026-10-14 9:30 PM
+_NO_PAD = re.compile(r"%[-#]([dmHIMSjUW])")  # %-d (Linux's and macOS's way) or %#d (Windows'): no leading zero
+_TIME_CODES = re.compile(r"%[-#]?[HIMSpXcTR]")
+_TIME = re.compile(r"^(\d{1,2})(?:[:.h]?(\d{2}))?(?:[:.](\d{2}))?\s*([ap])\.?\s*(?:m\.?)?$", re.IGNORECASE)
+_TIME_24 = re.compile(r"^(\d{1,2})(?:[:.h]?(\d{2}))?(?:[:.](\d{2}))?$")
+
+
+def show(value, format):
+    """value (a date, time or datetime) in format, strftime's codes; %-d, %-I and the like
+    leave out the leading zero (5, not 05) on every system, not only where strftime does."""
+    def unpadded(match):
+        return value.strftime("%" + match.group(1)).lstrip("0") or "0"
+    return value.strftime(_NO_PAD.sub(unpadded, format))
+
+
+def _for_reading(format):
+    """format as strptime takes it (it reads 5 or 05 for %d anyway)."""
+    return _NO_PAD.sub(r"%\1", format)
+
+
+def has_time(format):
+    """Whether format shows a time (%H, %I, %M, %p...)."""
+    return bool(_TIME_CODES.search(format))
+
+
+def _now():
+    now = datetime.datetime.now()
+    return datetime.time(now.hour, now.minute)
+
+
+def read_time(text, format=TIME_FORMAT, name="value"):
+    """A typed time: in format, or as people write them: 9:30 PM, 9:30pm, 9.30 p.m., 9 pm,
+    21:30, 2130, 9 (9:00). ValueError if it isn't one."""
+    text = text.strip()
+    try:
+        return datetime.datetime.strptime(text, _for_reading(format)).time()
+    except ValueError:
+        pass
+    for pattern in (_TIME, _TIME_24):
+        match = pattern.match(text)
+        if not match:
+            continue
+        hour, minute, second = int(match.group(1)), int(match.group(2) or 0), int(match.group(3) or 0)
+        if pattern is _TIME:
+            if not 1 <= hour <= 12:
+                break
+            hour = hour % 12 + (12 if match.group(4).lower() == "p" else 0)
         try:
-            return datetime.date.fromisoformat(text)
+            return datetime.time(hour, minute, second)
         except ValueError:
-            example = datetime.date(2026, 10, 14).strftime(format)
-            raise ValueError(f"{name}: {text!r} isn't a date (as {example})") from None
+            break
+    example = show(datetime.time(21, 30), format)
+    raise ValueError(f"{name}: {text!r} isn't a time (as {example})") from None
+
+
+def read_datetime(text, format=DATETIME_FORMAT, name="value"):
+    """A typed date and time: in format, or year-month-day and a time (2026-10-14 21:30, or
+    2026-10-14 9:30 PM). ValueError if it isn't one."""
+    text = text.strip()
+    try:
+        return datetime.datetime.strptime(text, _for_reading(format))
+    except ValueError:
+        pass
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    date_format = format[:_TIME_CODES.search(format).start()].strip() if has_time(format) else format
+    words = text.split()
+    for cut in range(len(words) - 1, 0, -1):  # (the date first, then the time: "14 Oct 2026" "9pm")
+        try:
+            return datetime.datetime.combine(read_date(" ".join(words[:cut]), date_format or ISO),
+                                             read_time(" ".join(words[cut:])))
+        except ValueError:
+            continue
+    example = show(datetime.datetime(2026, 10, 14, 21, 30), format)
+    raise ValueError(f"{name}: {text!r} isn't a date and time (as {example})")
+
+
+def to_time(value, name="value"):
+    """value as a datetime.time (None for None or ""): a time, a datetime's, or text like
+    "21:30" or "9:30 PM". ValueError if it isn't one."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, datetime.datetime):
+        return value.time()
+    if isinstance(value, datetime.time):
+        return value
+    if isinstance(value, str):
+        return read_time(value, name=name)
+    raise ValueError(f"{name}: {value!r} isn't a time (21:30, or 9:30 PM)")
+
+
+def to_datetime(value, name="value"):
+    """value as a datetime.datetime (None for None or ""): a datetime, a date (its midnight), or
+    text like "2026-10-14 21:30". ValueError if it isn't one."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, datetime.datetime):
+        return value
+    if isinstance(value, datetime.date):
+        return datetime.datetime.combine(value, datetime.time())
+    if isinstance(value, str):
+        return read_datetime(value, name=name)
+    raise ValueError(f"{name}: {value!r} isn't a date and time (2026-10-14 21:30)")
+
+
+def times_between(step, first=None, last=None):
+    """The times every step minutes through the day (from midnight), from first to last."""
+    times = [datetime.time(minutes // 60, minutes % 60) for minutes in range(0, 24 * 60, max(1, step))]
+    return [t for t in times if (first is None or t >= first) and (last is None or t <= last)]
+
+
+def _nearest(times, time):
+    if not times:
+        return None
+    minutes = time.hour * 60 + time.minute
+    return min(range(len(times)), key=lambda i: abs(times[i].hour * 60 + times[i].minute - minutes))
 
 
 def _check_format(format):
     try:
-        shown = datetime.date(2026, 10, 14).strftime(format)
+        shown = show(datetime.datetime(2026, 10, 14, 21, 30), format)
     except (ValueError, TypeError):
         raise ValueError(f"format: {format!r} isn't a date format (strftime's codes: %Y-%m-%d)") from None
     if not shown.strip():
@@ -418,45 +614,49 @@ class MonthGrid:
 
 # ----- the month, dropped down -----
 
-class DropMonth:
-    """A month dropped down under a field (a DatePicker's, a DataTable's date cell), placed
-    in the field's own window, over what's there: a click, Enter or Space chooses a day,
-    on_choose(day, how); Esc, a click elsewhere or the keyboard leaving closes it, on_close()."""
+class Dropped:
+    """Something dropped down under a field (a picker's, a DataTable cell's), placed in the
+    field's own window, over what's there: a month, or a list of times. Choosing calls
+    on_choose(value, how), how being "click" or "key"; Esc, a click elsewhere or the keyboard
+    leaving closes it, on_close(). Typing closes it too, and on_type(character) is given what
+    was typed, for the field to take: a date or time can be typed while it's down."""
 
-    current = None  # the one dropped down now
+    current = None  # the one dropped down now (of either kind)
 
-    def __init__(self, field, value, on_choose, on_close=None, minimum=None, maximum=None, firstday="sunday",
-                 font="", below=None):
-        if DropMonth.current is not None:
-            DropMonth.current.close()
-        DropMonth.current = self
-        self.field, self.on_choose, self.on_close = field, on_choose, on_close
+    def __init__(self, field, on_choose, on_close=None, on_type=None):
+        if Dropped.current is not None:
+            Dropped.current.close()
+        Dropped.current = self
+        self.field, self.on_choose, self.on_close, self.on_type = field, on_choose, on_close, on_type
         self.window = field.winfo_toplevel()
-        month = self.month = MonthGrid(self.window, on_choose=self._chose)
-        month.min, month.max, month.firstday = minimum, maximum, firstday
-        month.set_font(font)
-        month.value = value
-        month.shown = ((value or datetime.date.today()).year, (value or datetime.date.today()).month)
-        month.canvas.configure(highlightthickness=1, highlightbackground=_DIM, highlightcolor=_DIM)
-        width, height = month.size()
-        month.canvas.configure(width=width, height=height)
-        x, y, field_h = self._where(below or field)
+
+    def _show(self, widget, keyboard, width, height, below):
+        """Place widget (keyboard: what in it takes the keys) under below, or above if there's
+        no room under it; below is a widget, or (widget, x, y, width, height) for part of one."""
+        self.widget, self.keyboard = widget, keyboard
+        x, y, field_h = self._where(below)
         window_w, window_h = self.window.winfo_width(), self.window.winfo_height()
         if y + field_h + height > window_h and y - height >= 0:  # (no room below: above)
             y -= height
         else:
             y += field_h
         x = max(0, min(x, window_w - width))
-        month.canvas.place(x=x, y=y, width=width, height=height)
-        tk.Misc.lift(month.canvas)  # (the widget over the others: a Canvas's own lift() raises its items)
-        month.draw()
-        month.canvas.focus_set()
-        month.canvas.bind("<Escape>", lambda e: (month.zoom_in() or self.close(refocus=True), "break")[1])
-        month.canvas.bind("<FocusOut>", lambda e: self.window.after_idle(self._focus_left), add="+")
+        widget.place(x=x, y=y, width=width, height=height)
+        tk.Misc.lift(widget)  # (over the others; a Canvas's own lift() raises its items)
+        keyboard.focus_set()
+        keyboard.bind("<FocusOut>", lambda e: self.window.after_idle(self._focus_left), add="+")
+        keyboard.bind("<KeyPress>", self._typed, add="+")
         _watch_clicks(self.window)
 
+    def _typed(self, e):
+        """A character typed while it's down: closed, and the field given it to start typing with."""
+        if self.on_type is None or not e.char or e.char == " " or keys.name(e.char, e.keysym, e.state) != e.char:
+            return None  # (not a character: an arrow, Enter, a shortcut; Space chooses)
+        self.close(chosen=True)  # (the field takes the keyboard as it takes the character)
+        self.on_type(e.char)
+        return "break"
+
     def _where(self, field):
-        """field's place in the window: (x, y, height); field is a widget, or (widget, x, y, w, h)."""
         if isinstance(field, tuple):
             widget, x, y, _, height = field
         else:
@@ -467,27 +667,27 @@ class DropMonth:
     def _focus_left(self):
         try:
             focus = self.window.focus_get()
-        except KeyError:  # (a widget tkinter doesn't know: not the month's)
+        except KeyError:  # (a widget tkinter doesn't know: not this one's)
             focus = None
-        if DropMonth.current is self and focus is not self.month.canvas:
+        if Dropped.current is self and focus is not self.keyboard:
             self.close()
 
     def contains(self, x_root, y_root):
-        canvas = self.month.canvas
-        return (canvas.winfo_rootx() <= x_root < canvas.winfo_rootx() + canvas.winfo_width()
-                and canvas.winfo_rooty() <= y_root < canvas.winfo_rooty() + canvas.winfo_height())
+        widget = self.widget
+        return (widget.winfo_rootx() <= x_root < widget.winfo_rootx() + widget.winfo_width()
+                and widget.winfo_rooty() <= y_root < widget.winfo_rooty() + widget.winfo_height())
 
-    def _chose(self, day, how):
+    def _chose(self, value, how):
         self.close(chosen=True, refocus=True)
-        self.on_choose(day, how)
+        self.on_choose(value, how)
 
     def close(self, chosen=False, refocus=False):
-        """Close it; refocus: the keyboard back to the field (a day chosen, or Esc), not left
-        where the user went (a click elsewhere)."""
-        if DropMonth.current is not self:
+        """Close it; refocus: the keyboard back to the field (chosen, or Esc), not left where
+        the user went (a click elsewhere)."""
+        if Dropped.current is not self:
             return
-        DropMonth.current = None
-        self.month.canvas.destroy()
+        Dropped.current = None
+        self.widget.destroy()
         if refocus:
             try:
                 self.field.focus_set()
@@ -495,6 +695,73 @@ class DropMonth:
                 pass
         if not chosen and self.on_close:
             self.on_close()
+
+
+class DropMonth(Dropped):
+    """A month dropped down under a field (a DatePicker's, a DataTable's date cell): a click,
+    Enter or Space chooses a day."""
+
+    def __init__(self, field, value, on_choose, on_close=None, minimum=None, maximum=None, firstday="sunday",
+                 font="", below=None, on_type=None):
+        super().__init__(field, on_choose, on_close, on_type)
+        month = self.month = MonthGrid(self.window, on_choose=self._chose)
+        month.min, month.max, month.firstday = minimum, maximum, firstday
+        month.set_font(font)
+        month.value = value
+        month.shown = ((value or datetime.date.today()).year, (value or datetime.date.today()).month)
+        month.canvas.configure(highlightthickness=1, highlightbackground=_DIM, highlightcolor=_DIM)
+        width, height = month.size()
+        month.canvas.configure(width=width, height=height)
+        self._show(month.canvas, month.canvas, width, height, below or field)
+        month.draw()
+        month.canvas.bind("<Escape>", lambda e: (month.zoom_in() or self.close(refocus=True), "break")[1])
+
+
+class DropTimes(Dropped):
+    """A list of times dropped down under a field (a TimePicker's, a DataTable's time cell):
+    every step minutes from minimum to maximum, the one nearest value chosen and in sight. A
+    click, or Enter, chooses one."""
+
+    ROWS = 8  # times in sight at once
+
+    def __init__(self, field, value, on_choose, on_close=None, step=30, minimum=None, maximum=None,
+                 format=TIME_FORMAT, font="", below=None, on_type=None):
+        super().__init__(field, on_choose, on_close, on_type)
+        self.times = times_between(step, minimum, maximum)
+        frame = tk.Frame(self.window, highlightthickness=1, highlightbackground=_DIM, bd=0)
+        usual = tkfont.nametofont("TkDefaultFont", root=frame).actual()
+        shown_font = tkfont.Font(root=frame, font=appearance.tk_font(font, usual) if font else
+                                 (usual["family"], usual["size"]))
+        accent, accent_text = _theme_colors(frame)
+        box = self.list = tk.Listbox(frame, selectmode="browse", activestyle="none", exportselection=False,
+                                     bd=0, highlightthickness=0, font=shown_font, height=self.ROWS,
+                                     selectbackground=accent, selectforeground=accent_text)
+        bar = ttk.Scrollbar(frame, command=box.yview)
+        box.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        box.pack(side="left", fill="both", expand=True)
+        for time in self.times:
+            box.insert("end", show(time, format))
+        nearest = _nearest(self.times, value or _now())
+        if nearest is not None:
+            box.selection_set(nearest)
+            box.activate(nearest)
+            box.see(nearest)
+        widest = max((shown_font.measure(box.get(i)) for i in range(box.size())), default=40)
+        width = widest + 16 + bar.winfo_reqwidth()
+        frame.update_idletasks()
+        height = frame.winfo_reqheight()  # (as tall as its rows, whatever the font)
+        self._show(frame, box, width, height, below or field)
+        box.yview(max(0, (nearest or 0) - 2))  # (the time nearest in sight, two earlier ones above it)
+        box.bind("<ButtonRelease-1>", lambda e: self._pick("click"))
+        for key in ("<Return>", "<KP_Enter>", "<space>"):
+            box.bind(key, lambda e: (self._pick("key"), "break")[1])
+        box.bind("<Escape>", lambda e: (self.close(refocus=True), "break")[1])
+
+    def _pick(self, how):
+        chosen = self.list.curselection()
+        if chosen:
+            self._chose(self.times[chosen[0]], how)
 
 
 _watched = set()
@@ -507,7 +774,7 @@ def _watch_clicks(window):
     _watched.add(str(window))
 
     def pressed(e):
-        dropped = DropMonth.current
+        dropped = Dropped.current
         if dropped is not None and dropped.window is window and not dropped.contains(e.x_root, e.y_root):
             dropped.close()
 
@@ -515,12 +782,36 @@ def _watch_clicks(window):
     window.bind("<Destroy>", lambda e: e.widget is window and _watched.discard(str(window)), add="+")
 
 
-# ----- shared by both controls -----
+# ----- shared by the controls -----
 
-class _Dated:
-    """min, max and firstday, and the value they bound."""
+class _Changes:
+    """A value, and change, run as it changes (by the user or by code)."""
 
     _value = None
+
+    def _set_value(self, value):
+        changed = value != self._value
+        self._value = value
+        self._show()
+        if changed and self._ready:
+            for handler in self._on_change:
+                handler()
+
+    def bind_event(self, event, handler):
+        if event == "change":
+            self._on_change.append(handler)
+        else:
+            super().bind_event(event, handler)
+
+
+def _day_of(value):
+    return value.date() if isinstance(value, datetime.datetime) else value
+
+
+class _Dated(_Changes):
+    """min, max and firstday, and the value they bound: a date (or a date and time, whose
+    day is what they bound)."""
+
     _min = _max = None
 
     @classmethod
@@ -529,13 +820,14 @@ class _Dated:
         low, high = (to_date(spec.get(p, ""), p) for p in ("min", "max"))
         if low and high and low > high:
             raise ValueError(f"min ({low}) can't be after max ({high})")
-        day = to_date(spec.get("value", ""), "value")
+        if "format" in spec:
+            _check_format(spec["format"])
+        timed = has_time(spec.get("format", ISO))
+        day = _day_of((to_datetime if timed else to_date)(spec.get("value", ""), "value"))
         if day and ((low and day < low) or (high and day > high)):
             raise ValueError(f"value ({day}) must be from min to max")
         if spec.get("firstday", "sunday") not in FIRST_DAYS:
             raise ValueError(f"firstday must be one of: {', '.join(FIRST_DAYS)}")
-        if "format" in spec:
-            _check_format(spec["format"])
 
     @property
     def min(self):
@@ -576,36 +868,153 @@ class _Dated:
         self._firstday = value
         self._show()
 
-    def _within(self, day):
-        """day, within min and max."""
-        if self._min and day < self._min:
-            return self._min
-        if self._max and day > self._max:
-            return self._max
-        return day
+    def _within(self, value):
+        """value, its day moved within min and max (a date and time keeping its time)."""
+        day = _day_of(value)
+        limit = self._min if self._min and day < self._min else self._max if self._max and day > self._max else None
+        if limit is None:
+            return value
+        return datetime.datetime.combine(limit, value.time()) if isinstance(value, datetime.datetime) else limit
 
-    def _check(self, day):
+    def _check(self, value):
+        day = _day_of(value)
         if day is not None and ((self._min and day < self._min) or (self._max and day > self._max)):
             raise ValueError(f"{day} is outside {self.name}'s min to max ({self._min or '...'} to {self._max or '...'})")
 
     def _bounds_changed(self):
         if self._value is not None:
-            self._set_day(self._within(self._value))
+            self._set_value(self._within(self._value))
         self._show()
 
-    def _set_day(self, day):
-        changed = day != self._value
-        self._value = day
-        self._show()
-        if changed and self._ready:
-            for handler in self._on_change:
-                handler()
 
-    def bind_event(self, event, handler):
-        if event == "change":
-            self._on_change.append(handler)
+class _Field:
+    """A picker's field: a ttk Combobox to type in, whose button (or F4, or Alt+Down) drops
+    something down instead of a list. Up and Down step the value; what's typed counts once
+    Enter is pressed or the keyboard leaves. format is how the value shows; allow_empty lets
+    it be None, the field empty."""
+
+    _allow_empty = False
+
+    def _make_field(self, parent):
+        self._on_change, self._enabled = [], True
+        self._text = tk.StringVar(parent)
+        field = ttk.Combobox(parent, textvariable=self._text, values=())
+        if not self.design:
+            field.bind("<ButtonPress-1>", self._pressed)  # (before the Combobox's own: its button drops ours)
+            field.bind("<KeyPress>", self._key)
+            field.bind("<FocusOut>", lambda e: self._typed(), add="+")
+        return field
+
+    @property
+    def format(self):
+        return self._format
+
+    @format.setter
+    def format(self, value):
+        self._format = _check_format(value)
+        self._format_changed()
+        self._show()
+
+    def _format_changed(self):
+        pass
+
+    @property
+    def allow_empty(self):
+        """Whether it can be left empty: the field blank, value None (a database's NULL)."""
+        return self._allow_empty
+
+    @allow_empty.setter
+    def allow_empty(self, value):
+        self._allow_empty = bool(value)
+        if not self._allow_empty and self._value is None:
+            self._set_value(self._within(self._usual()))
+
+    def _show(self):
+        self._text.set(show(self._value, self._format) if self._value is not None else "")
+
+    def _typed(self):
+        """What's typed becomes the value, if it reads as one within min and max; else the
+        value's put back."""
+        text = self._text.get().strip()
+        if text == (show(self._value, self._format) if self._value is not None else ""):
+            return
+        if not text and self._allow_empty:
+            self._set_value(None)
+            return
+        try:
+            value = self._read(text) if text else None
+        except ValueError:
+            value = None
+        if value is None or value != self._within(value):
+            self.widget.bell()
+            self._show()
+            return
+        self._set_value(value)
+
+    def _pressed(self, e):
+        element = str(self.widget.identify(e.x, e.y))
+        on_button = "arrow" in element or "button" in element or e.x >= self.widget.winfo_width() - self.widget.winfo_height()
+        if on_button and self._enabled:
+            self.widget.focus_set()
+            self.drop()
+            return "break"
+        return None
+
+    def _key(self, e):
+        if not self._enabled:
+            return None
+        name = keys.name(e.char, e.keysym, e.state)
+        if name in ("F4", "Alt+Down"):
+            self.drop()
+            return "break"
+        if name in ("Up", "Down"):
+            self._typed()
+            self._set_value(self._within(self._stepped(self._value, 1 if name == "Down" else -1)))
+            self.widget.icursor("end")
+            return "break"
+        if name == "Enter":
+            self._typed()
+        return None  # (Enter goes on to the form: a default button, say)
+
+    def drop(self):
+        """Drop down what chooses its value, under the field."""
+        if self.design or not self._enabled:
+            return
+        self._typed()
+        self._dropped(self._font if isinstance(self._font, str) else "")
+
+    def _chosen(self, value, how):
+        self._set_value(value)
+        self.widget.icursor("end")
+
+    def _type_in(self, character):
+        """Typed while the month (or times) was down: the field, starting with it."""
+        self._text.set(character)
+        self.widget.focus_set()
+        self.widget.icursor("end")
+
+    @property
+    def enabled(self):
+        """Whether the user can change it."""
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value):
+        self._enabled = bool(value)
+        self.widget.state(["!disabled"] if self._enabled else ["disabled"])
+
+    def _paint(self):
+        # A ttk field takes its colors from a style, so a colored one gets its own.
+        if not self._ready:
+            return
+        bg, fg = self._background(), self._foreground()
+        if bg or fg:
+            name = f"readymade{id(self)}.TCombobox"
+            ttk.Style(self.widget).configure(name, **{k: v for k, v in (("fieldbackground", bg), ("foreground", fg))
+                                                     if v})
+            self.widget["style"] = name
         else:
-            super().bind_event(event, handler)
+            self.widget["style"] = "Preview.TCombobox" if self.design else "TCombobox"
 
 
 # ----- the controls -----
@@ -613,9 +1022,10 @@ class _Dated:
 @register
 class Calendar(_Dated, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anchored, Control):
     """A month to choose a day in, as VB's MonthView. value is the chosen day, a datetime.date
-    (today, at first). The arrows beside the month show the months either side; the arrow
-    keys move the day, Page Up and Down a month. min and max limit the days that can be
-    chosen; firstday is the day weeks start on. change runs as the day changes."""
+    (today, at first). The arrows beside the month show the months either side, and a click
+    on the month or year chooses another; the arrow keys move the day, Page Up and Down a
+    month. min and max limit the days that can be chosen; firstday is the day weeks start on.
+    change runs as the day changes."""
 
     type_name = "Calendar"
     default_size = (224, 184)
@@ -627,7 +1037,8 @@ class Calendar(_Dated, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anc
     def create_widget(self, parent):
         self._on_change, self._enabled, self._firstday = [], True, "sunday"
         self._value = datetime.date.today()
-        self._month = MonthGrid(parent, design=self.design, on_move=self._set_day, on_choose=lambda day, how: self._set_day(day))
+        self._month = MonthGrid(parent, design=self.design, on_move=self._set_value,
+                                on_choose=lambda day, how: self._set_value(day))
         return self._month.canvas
 
     @property
@@ -642,7 +1053,7 @@ class Calendar(_Dated, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anc
         if day is None:
             day = self._within(datetime.date.today())
         self._check(day)
-        self._set_day(day)
+        self._set_value(day)
         self._month.show(day)
 
     def _show(self):
@@ -670,12 +1081,14 @@ class Calendar(_Dated, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anc
 
 
 @register
-class DatePicker(_Dated, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anchored, Control):
+class DatePicker(_Field, _Dated, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anchored, Control):
     """A date field whose month drops down, as VB's DTPicker: its button (or F4, or Alt+Down)
     shows the month to choose a day in; a date can be typed too, as format shows it (or
     year-month-day), and Up and Down step it a day. value is a datetime.date (today, at
     first); with allow_empty it can be None, the field empty. format is in strftime's codes:
-    "%Y-%m-%d" (2026-10-14), "%m/%d/%Y", "%d %b %Y". change runs as the date changes."""
+    "%Y-%m-%d" (2026-10-14), "%m/%d/%Y", "%-d %b %Y" (5 Oct 2026). A format with a time in it
+    ("%Y-%m-%d %-I:%M %p") makes value a datetime.datetime: the month chooses its day, and its
+    time is typed. change runs as the value changes."""
 
     type_name = "DatePicker"
     default_size = (128, 24)
@@ -685,135 +1098,177 @@ class DatePicker(_Dated, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, A
     prop_choices = {"firstday": FIRST_DAYS}
 
     def create_widget(self, parent):
-        self._on_change, self._enabled, self._firstday = [], True, "sunday"
-        self._value, self._format, self._allow_empty = datetime.date.today(), ISO, False
-        self._text = tk.StringVar(parent)
-        field = ttk.Combobox(parent, textvariable=self._text, values=())
-        if not self.design:
-            field.bind("<ButtonPress-1>", self._pressed)  # (before the Combobox's own: its button drops the month)
-            field.bind("<KeyPress>", self._key)
-            field.bind("<FocusOut>", lambda e: self._typed(), add="+")
-        return field
+        self._firstday, self._format, self._timed = "sunday", ISO, False
+        self._value = datetime.date.today()
+        return self._make_field(parent)
 
     @property
     def value(self):
-        """The date, a datetime.date; None if the field's empty (with allow_empty). Set a date,
-        or "2026-10-14" ("": today, or empty with allow_empty)."""
+        """The date, a datetime.date (a datetime.datetime, if format has a time); None if the
+        field's empty (with allow_empty). Set a date, or "2026-10-14" (with a time: "2026-10-14
+        21:30"); "" is today (now), or empty with allow_empty."""
         return self._value
 
     @value.setter
     def value(self, value):
-        day = to_date(value)
-        if day is None and not self._allow_empty:
-            day = self._within(datetime.date.today())
-        self._check(day)
-        self._set_day(day)
+        value = (to_datetime if self._timed else to_date)(value)
+        if isinstance(value, datetime.datetime) and not self._timed:
+            value = value.date()
+        if value is None and not self._allow_empty:
+            value = self._within(self._usual())
+        self._check(value)
+        self._set_value(value)
+
+    format = property(_Field.format.fget, _Field.format.fset, doc="""How the date shows (and is
+        typed), in strftime's codes: "%Y-%m-%d" (2026-10-14, the usual), "%m/%d/%Y"
+        (10/14/2026), "%-d %b %Y" (5 Oct 2026: %-d, no leading zero), "%x" (the locale's own).
+        With a time in it, value is a date and time: "%Y-%m-%d %-I:%M %p" (2026-10-14 9:30 PM).""")
+
+    def _format_changed(self):
+        timed, self._timed = self._timed, has_time(self._format)
+        if self._value is not None and timed != self._timed:  # (a time part, or none now)
+            self._value = to_datetime(self._value) if self._timed else self._value.date()
+
+    def _usual(self):
+        if self._timed:
+            return datetime.datetime.combine(datetime.date.today(), _now())
+        return datetime.date.today()
+
+    def _read(self, text):
+        return read_datetime(text, self._format) if self._timed else read_date(text, self._format)
+
+    def _stepped(self, value, step):
+        return (value or self._usual()) + datetime.timedelta(days=step)
+
+    def _dropped(self, font):
+        value = self._value or self._within(self._usual())
+        DropMonth(self.widget, _day_of(value), self._day_chosen, minimum=self._min, maximum=self._max,
+                  firstday=self._firstday, font=font, on_type=self._type_in)
+
+    def _day_chosen(self, day, how):
+        if self._timed:  # (the day chosen, the time as it was)
+            day = datetime.datetime.combine(day, (self._value or self._usual()).time())
+        self._chosen(day, how)
+
+
+@register
+class TimePicker(_Field, _Changes, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anchored, Control):
+    """A time field whose times drop down: its button (or F4, or Alt+Down) shows the times
+    every step minutes (30: 9:00, 9:30, 10:00...) to choose one; any time can be typed too
+    (9:30 PM, 9:30pm, 21:30, 2130, 9 pm), and Up and Down step it to the next step. value is
+    a datetime.time (now, at first); with allow_empty it can be None, the field empty. format
+    is in strftime's codes: "%-I:%M %p" (9:30 PM, the usual), "%H:%M" (21:30). min and max
+    limit the times. change runs as the time changes."""
+
+    type_name = "TimePicker"
+    default_size = (104, 24)
+    default_event = "change"
+    events = (Event("change"), Event("keypress", ("key",)), *_FOCUS_EVENTS)
+    extra_props = {"format": TIME_FORMAT, "step": 30, "allow_empty": False, "min": "", "max": "", "value": ""}
+
+    _min = _max = None
+
+    def create_widget(self, parent):
+        self._format, self._step = TIME_FORMAT, 30
+        self._value = _now()
+        return self._make_field(parent)
+
+    @classmethod
+    def designer_changed(cls, spec, prop):
+        super().designer_changed(spec, prop)
+        _check_format(spec.get("format", TIME_FORMAT))
+        low, high, value = (to_time(spec.get(p, ""), p) for p in ("min", "max", "value"))
+        if low and high and low > high:
+            raise ValueError(f"min ({show(low, TIME_FORMAT)}) can't be after max ({show(high, TIME_FORMAT)})")
+        if value and ((low and value < low) or (high and value > high)):
+            raise ValueError("value must be from min to max")
+        if not 1 <= int(spec.get("step", 30)) <= 720:
+            raise ValueError("step must be from 1 to 720 minutes")
 
     @property
-    def format(self):
-        """How the date shows (and is typed), in strftime's codes: "%Y-%m-%d" (2026-10-14, the
-        usual), "%m/%d/%Y" (10/14/2026), "%d %b %Y" (14 Oct 2026), "%x" (the locale's own)."""
-        return self._format
+    def value(self):
+        """The time, a datetime.time; None if the field's empty (with allow_empty). Set a time,
+        or "21:30" or "9:30 PM" ("": now, or empty with allow_empty)."""
+        return self._value
 
-    @format.setter
-    def format(self, value):
-        self._format = _check_format(value)
-        self._show()
+    @value.setter
+    def value(self, value):
+        value = to_time(value)
+        if value is None and not self._allow_empty:
+            value = self._within(_now())
+        if value is not None and value != self._within(value):
+            raise ValueError(f"{show(value, self._format)} is outside {self.name}'s min to max")
+        self._set_value(value)
+
+    format = property(_Field.format.fget, _Field.format.fset, doc="""How the time shows (and is
+        typed), in strftime's codes: "%-I:%M %p" (9:30 PM, the usual: %-I, no leading zero),
+        "%H:%M" (21:30), "%-I:%M:%S %p" (with seconds).""")
 
     @property
-    def allow_empty(self):
-        """Whether the date can be left out: the field empty, value None (a database's NULL)."""
-        return self._allow_empty
+    def step(self):
+        """The minutes between the times dropped down (and that Up and Down step): 30, say, or 15."""
+        return self._step
 
-    @allow_empty.setter
-    def allow_empty(self, value):
-        self._allow_empty = bool(value)
-        if not self._allow_empty and self._value is None:
-            self._set_day(self._within(datetime.date.today()))
+    @step.setter
+    def step(self, value):
+        value = int(value)
+        if not 1 <= value <= 720:
+            raise ValueError("step must be from 1 to 720 minutes")
+        self._step = value
 
-    def _show(self):
-        self._text.set(self._value.strftime(self._format) if self._value else "")
+    @property
+    def min(self):
+        """The earliest time that can be chosen (a datetime.time), or None. Set a time or "8:00"."""
+        return self._min
 
-    def _typed(self):
-        """What's typed becomes the value, if it's a date within min and max; else it's put back."""
-        text = self._text.get().strip()
-        if text == (self._value.strftime(self._format) if self._value else ""):
-            return
-        if not text:
-            if self._allow_empty:
-                self._set_day(None)
-                return
-            day = None
+    @min.setter
+    def min(self, value):
+        time = to_time(value, "min")
+        if time and self._max and time > self._max:
+            raise ValueError("min can't be after max")
+        self._min = time
+        if self._value is not None:
+            self._set_value(self._within(self._value))
+
+    @property
+    def max(self):
+        """The latest time that can be chosen, or None."""
+        return self._max
+
+    @max.setter
+    def max(self, value):
+        time = to_time(value, "max")
+        if time and self._min and time < self._min:
+            raise ValueError("max can't be before min")
+        self._max = time
+        if self._value is not None:
+            self._set_value(self._within(self._value))
+
+    def _within(self, time):
+        if self._min and time < self._min:
+            return self._min
+        if self._max and time > self._max:
+            return self._max
+        return time
+
+    def _usual(self):
+        return _now()
+
+    def _read(self, text):
+        return read_time(text, self._format)
+
+    def _stepped(self, value, step):
+        """The time step minutes on (or back) from value, on the step's grid: 9:47, Up a 30
+        step, is 9:30; Down, 10:00."""
+        minutes = (value or _now()).hour * 60 + (value or _now()).minute
+        on_grid = minutes % self._step == 0
+        if step > 0:
+            minutes = (minutes // self._step + 1) * self._step
         else:
-            try:
-                day = read_date(text, self._format)
-            except ValueError:
-                day = None
-        if day is None or day != self._within(day):
-            self.widget.bell()
-            self._show()
-            return
-        self._set_day(day)
+            minutes = (minutes // self._step - (1 if on_grid else 0)) * self._step
+        minutes = max(0, min(minutes, 24 * 60 - 1))
+        return datetime.time(minutes // 60, minutes % 60)
 
-    def _pressed(self, e):
-        element = str(self.widget.identify(e.x, e.y))
-        on_button = "arrow" in element or "button" in element or e.x >= self.widget.winfo_width() - self.widget.winfo_height()
-        if on_button and self._enabled:
-            self.widget.focus_set()
-            self.drop()
-            return "break"
-        return None
-
-    def _key(self, e):
-        if not self._enabled:
-            return None
-        name = keys.name(e.char, e.keysym, e.state)
-        if name in ("F4", "Alt+Down"):
-            self.drop()
-            return "break"
-        if name in ("Up", "Down"):  # a day, either way
-            self._typed()
-            day = self._value or datetime.date.today()
-            self._set_day(self._within(day + datetime.timedelta(days=1 if name == "Down" else -1)))
-            self.widget.icursor("end")
-            return "break"
-        if name == "Enter":
-            self._typed()
-            return None  # (and on to the form: a default button, say)
-        return None
-
-    def drop(self):
-        """Show the month, dropped down under the field, to choose a day in."""
-        if self.design or not self._enabled:
-            return
-        self._typed()
-        font = self._font if isinstance(self._font, str) else ""
-        DropMonth(self.widget, self._value or self._within(datetime.date.today()), self._chosen,
-                  minimum=self._min, maximum=self._max, firstday=self._firstday, font=font)
-
-    def _chosen(self, day, how):
-        self._set_day(day)
-        self.widget.icursor("end")
-
-    @property
-    def enabled(self):
-        """Whether the user can change it."""
-        return self._enabled
-
-    @enabled.setter
-    def enabled(self, value):
-        self._enabled = bool(value)
-        self.widget.state(["!disabled"] if self._enabled else ["disabled"])
-
-    def _paint(self):
-        # A ttk field takes its colors from a style, so a colored DatePicker gets its own.
-        if not self._ready:
-            return
-        bg, fg = self._background(), self._foreground()
-        if bg or fg:
-            name = f"readymade{id(self)}.TCombobox"
-            ttk.Style(self.widget).configure(name, **{k: v for k, v in (("fieldbackground", bg), ("foreground", fg))
-                                                     if v})
-            self.widget["style"] = name
-        else:
-            self.widget["style"] = "Preview.TCombobox" if self.design else "TCombobox"
+    def _dropped(self, font):
+        DropTimes(self.widget, self._value, self._chosen, step=self._step, minimum=self._min, maximum=self._max,
+                  format=self._format, font=font, on_type=self._type_in)
