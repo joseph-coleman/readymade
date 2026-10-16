@@ -59,7 +59,7 @@ def test_editing_works_out_the_totals(form):
     items._edit(typed="Rake")
     items._finish(down=1)
     settle(form)
-    assert items.rows[-1] == ["Rake", "Food", D("0.00"), 1, True, D("0.00")] and "10 rows" in form.Totals.text
+    assert items.rows[-1] == ["Rake", None, None, 1, True, None] and "10 rows" in form.Totals.text  # (Qty, Taxable: defaults)
 
 
 def test_the_buttons(form, program, monkeypatch, tmp_path):
@@ -92,15 +92,24 @@ def test_the_switches_are_a_control_array(form):
     assert form.Items.editable is False and form.Items.sortable is False and form.Items.addable is True
 
 
-def test_qty_cant_go_below_zero(form, program, monkeypatch):
-    said = []
-    from readymade.controls import datatable
-    monkeypatch.setattr(datatable.messagebox, "showwarning", lambda title, message, **kw: said.append(message))
+def test_rules_mark_rows_and_say_why(form, program, monkeypatch):
     items = form.Items
     items.current = (0, "Qty")
     items._edit(typed="-2")
-    assert items._finish(down=1) is False and said == ["Qty can't be less than 0"] and items[0, "Qty"] == 2
+    assert items._finish() is True and items[0, "Qty"] == -2  # (the user's, against min: kept...)
+    items._move(1, 2)  # ...and when the cursor leaves the row, said and marked
+    assert form.Status.text == "Qty: -2 is less than 0" and items.rows[0].backcolor == "#ffe0e0"
+    items.current = (1, "Price")
+    items._edit(typed="lots")
+    assert items._finish() is False and form.Status.text == "Price: 'lots' isn't a number"  # (refused: can't be money)
     items._cancel()
+    asked = []
+    monkeypatch.setattr(program, "msgbox", lambda message, **kw: asked.append(message) or "no")
+    monkeypatch.setattr(program, "save_file_dialog", lambda *a, **kw: pytest.fail("saved anyway"))
+    form.SaveButton.widget.invoke()  # problems: the program asks first (its own choice), and here, no
+    assert asked and asked[0].startswith("1 problem, the first: row 0: Qty: -2 is less than 0")
+    items[0, "Qty"] = 2  # (fixed by code: Qty's rules hold)
+    assert items.problems() == []
 
 
 def test_unordered_rows_are_gray_and_ctrl_z_takes_an_edit_back(form):

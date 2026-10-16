@@ -19,7 +19,11 @@ A ttk Treeview shows it, with an editor placed over the cell being edited.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import datetime
+import functools
+import inspect
+import json
 import io
 from contextlib import contextmanager
 import operator
@@ -30,12 +34,12 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from tkinter import font as tkfont
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 from readymade import keys
 from readymade.appearance import CHECK_MARK, check_color
 from readymade.controls.base import _FOCUS_EVENTS, Control, Event, register
-from readymade.controls.dates import (DATETIME_FORMAT, ISO, TIME_FORMAT, DropMonth, DropTimes, _check_format,
+from readymade.controls.dates import (DATETIME_FORMAT, ISO, TIME_FORMAT, DropMonth, Dropped, DropTimes, _check_format,
                                      read_date, read_datetime, read_time, show, to_date, to_datetime, to_time)
 from readymade.controls.traits import Anchored, BackColor, Cursor, Font, ForeColor, TabStop, Tooltip
 from readymade.controls.trees import _TreeLook
@@ -56,18 +60,113 @@ _CURRENCY = "$\u20ac\u00a3\u00a5 "  # (what a pasted amount may have around it: 
 
 # ----- columns: what each holds -----
 
+_KINDS = ("text", "number", "money", "date", "time", "datetime", "check", "choice")
+SETTINGS = ("name", "header", "kind", "decimals", "format", "choices", "step", "readonly", "required", "default",
+            "min", "max", "max_length", "unique", "key", "validator", "hidden", "formula")  # what a definition can say
+
+
 @dataclass(frozen=True)
 class ColumnKind:
-    """One column: its header, its kind of value, and whether the user can edit it. Written
-    as a line of the DataTable's columns: "Price : number 2", "Size : S | M | L", "Total :
-    money, readonly"."""
+    """One column's definition: its name, kind of value, how it shows, and the rules its values
+    keep. Given as a dict (the settings in SETTINGS), or as a line, for the simple ones: "Price
+    : number 2", "Size : S | M | L", "Total : money, readonly". An empty cell is None (a
+    database's NULL), unless default says otherwise for new rows."""
 
-    name: str
+    name: str  # what code, a CSV file and a database call it
     kind: str = "text"  # text, number, money, date, time, datetime, check or choice
     decimals: int | None = None  # for a number: the places it keeps (None: as it comes); money's (2)
     choices: tuple = ()  # for a choice
-    readonly: bool = False
+    readonly: bool = False  # the user can't edit it (code can)
     format: str = ISO  # for a date, time or datetime: how it shows (strftime's codes)
+    header: str = ""  # what the table shows over it, if not its name
+    step: int = 30  # for a time: the minutes between the times dropped down
+    required: bool = False  # it can't be empty (a database's NOT NULL)
+    default: object = None  # a new row's value (None: empty)
+    min: object = None  # the least value (a number, money, date or time)
+    max: object = None  # the most
+    max_length: int | None = None  # for text: the most characters
+    unique: bool = False  # no two rows the same (empty ones aside)
+    key: bool = False  # what tells rows apart (required and unique), for a database
+    validator: object = None  # a rule of the program's own: validator(value), or (value, row) (code only)
+    hidden: bool = False  # kept, but not shown (a database's key, say)
+    formula: object = None  # worked out: formula(row), or formula(table) for the whole column (code only)
+
+    @property
+    def label(self):
+        """What's shown over the column: its header, or its name."""
+        return self.header or self.name
+
+    @property
+    def locked(self):
+        """Whether the user can't edit it: readonly, or worked out by a formula."""
+        return self.readonly or self.formula is not None
+
+    @classmethod
+    def of(cls, definition):
+        """A column's definition from what columns was given: a dict, a line, or a line holding
+        a dict as JSON (as the designer's list of lines does)."""
+        if isinstance(definition, ColumnKind):
+            return definition
+        if isinstance(definition, ColumnView):
+            return definition._kind()
+        if isinstance(definition, dict):
+            return cls.from_dict(definition)
+        text = str(definition).strip()
+        if text.startswith("{"):
+            try:
+                return cls.from_dict(json.loads(text))
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{text!r}: not a column's definition ({e.msg})") from None
+        return cls.parse(text)
+
+    @classmethod
+    def from_dict(cls, definition):
+        name = str(definition.get("name", "")).strip()
+        if not name:
+            raise ValueError(f"{definition!r}: a column needs a name")
+        unknown = sorted(set(definition) - set(SETTINGS))
+        if unknown:
+            raise ValueError(f"{name}: no setting {', '.join(map(repr, unknown))}; a column's are: {', '.join(SETTINGS)}")
+        kind = definition.get("kind", "choice" if "choices" in definition else "text")
+        if kind not in _KINDS:
+            raise ValueError(f"{name}: kind {kind!r} isn't one of {', '.join(_KINDS)}")
+
+        def only(setting, kinds):
+            if setting in definition and kind not in kinds:
+                raise ValueError(f"{name}: {setting} is for a {' or '.join(kinds)} column, not {kind}")
+            return definition.get(setting)
+
+        choices = only("choices", ("choice",))
+        if kind == "choice" and (not choices or isinstance(choices, str)):
+            raise ValueError(f"{name}: a choice column needs choices: a list, like [\"S\", \"M\", \"L\"]")
+        decimals = only("decimals", ("number", "money"))
+        if decimals is None and kind == "money":
+            decimals = 2
+        format = only("format", tuple(_WHEN_FORMATS)) or _WHEN_FORMATS.get(kind, ISO)
+        step = only("step", ("time",)) or 30
+        if not 1 <= int(step) <= 720:
+            raise ValueError(f"{name}: step must be from 1 to 720 minutes")
+        max_length = only("max_length", ("text",))
+        for setting in ("min", "max"):
+            only(setting, ("number", "money", "date", "time", "datetime"))
+        key = bool(definition.get("key", False))
+        validator, formula = definition.get("validator"), definition.get("formula")
+        for setting, function in (("validator", validator), ("formula", formula)):
+            if function is not None and not callable(function):
+                raise ValueError(f"{name}: {setting} must be a function (or a lambda), not {function!r}")
+        column = cls(name, kind, validator=validator, hidden=bool(definition.get("hidden", False)), formula=formula, decimals=None if decimals is None else int(decimals),
+                     choices=tuple(str(c) for c in choices or ()), readonly=bool(definition.get("readonly", False)),
+                     format=_check_format(format), header=str(definition.get("header", "") or ""), step=int(step),
+                     required=bool(definition.get("required", False)) or key,
+                     max_length=None if max_length is None else int(max_length),
+                     unique=bool(definition.get("unique", False)) or key, key=key)
+        values = {}
+        for setting in ("default", "min", "max"):
+            if definition.get(setting) is not None:
+                values[setting] = column.convert(definition[setting])
+        if values.get("min") is not None and values.get("max") is not None and values["min"] > values["max"]:
+            raise ValueError(f"{name}: min can't be more than max")
+        return dataclasses.replace(column, **values)
 
     @classmethod
     def parse(cls, line):
@@ -103,7 +202,12 @@ class ColumnKind:
                          "and maybe readonly")
 
     def line(self):
-        """How it's written in the DataTable's columns."""
+        """How it's written as a line of columns; None if a line can't say it all (rules,
+        defaults, a header, a step: then it's a dict)."""
+        if (self.header or self.step != 30 or self.required or self.default is not None or self.min is not None
+                or self.max is not None or self.max_length is not None or self.unique or self.key
+                or self.validator is not None or self.hidden or self.formula is not None):
+            return None
         kind = {"text": "", "check": "check", "choice": " | ".join(self.choices),
                 "number": "number" + (f" {self.decimals}" if self.decimals is not None else ""),
                 "money": "money" + (f" {self.decimals}" if self.decimals != 2 else ""),
@@ -112,28 +216,46 @@ class ColumnKind:
         extras = ", ".join(p for p in (kind, "readonly" if self.readonly else "") if p)
         return f"{self.name} : {extras}" if extras else self.name
 
+    def definition(self):
+        """Its definition as a dict: the settings that aren't the usual ones (a validator too:
+        a function, so not one for a .form file)."""
+        usual = ColumnKind(self.name)  # (a text column's settings: what isn't said)
+        found = {"name": self.name}
+        for setting in SETTINGS[1:]:
+            value = getattr(self, setting)
+            if setting == "decimals" and self.kind == "money" and value == 2:
+                continue
+            if setting == "format" and value == _WHEN_FORMATS.get(self.kind, ISO):
+                continue
+            if (setting in ("required", "unique") and self.key) or value == getattr(usual, setting):
+                continue
+            if setting == "kind" and value == "choice":
+                continue  # (choices say it)
+            if setting in ("validator", "formula"):
+                found[setting] = value
+                continue
+            found[setting] = list(value) if setting == "choices" else self.text(value) if setting in (
+                "default", "min", "max") and not isinstance(value, (int, float, bool)) else value
+        return found
+
     def blank(self):
-        """An empty cell's value."""
-        if self.kind == "money":
-            return Decimal(0).quantize(self._cents())
-        if self.kind in _WHEN_FORMATS:
-            return None  # (a date or time has no zero: an empty one is None, as a database's NULL)
-        return {"text": "", "number": 0, "check": False}.get(self.kind, self.choices[0] if self.choices else "")
+        """A new cell's value: default, or None (empty)."""
+        return self.default
 
     def convert(self, value):
-        """value as this column holds it; ValueError if it can't be."""
+        """value as this column holds it (None, or "": empty); ValueError if it can't be."""
+        if value is None or (isinstance(value, str) and not value.strip() and self.kind != "text") or value == "":
+            return None
         if self.kind == "text":
-            return "" if value is None else str(value)
+            return str(value)
         if self.kind == "check":
             if isinstance(value, bool) or isinstance(value, (int, float)):
                 return bool(value)
-            word = "" if value is None else str(value).strip().lower()
+            word = str(value).strip().lower()
             if word in _TRUE or word in _FALSE:
                 return word in _TRUE
             raise ValueError(f"{self.name}: {value!r} isn't a tick (True or False)")
         if self.kind == "choice":
-            if value is None or value == "":
-                return self.blank()
             match = next((c for c in self.choices if c.lower() == str(value).strip().lower()), None)
             if match is None:
                 raise ValueError(f"{self.name}: {value!r} isn't one of {', '.join(self.choices)}")
@@ -143,7 +265,7 @@ class ColumnKind:
         if self.kind in _WHEN_FORMATS:
             reading, making = {"date": (read_date, to_date), "time": (read_time, to_time),
                                "datetime": (read_datetime, to_datetime)}[self.kind]
-            if isinstance(value, str) and value.strip():
+            if isinstance(value, str):
                 return reading(value, self.format, self.name)
             if isinstance(value, bool) or (self.kind == "date" and isinstance(value, datetime.time)):
                 raise ValueError(f"{self.name}: {value!r} isn't a {_WHAT[self.kind]}")
@@ -159,8 +281,6 @@ class ColumnKind:
     def _money(self, value):
         """An amount as a Decimal, rounded to its places (a half up, as on a receipt): a float's
         own digits (1.1 is 1.10, not 1.100000000000000088817841970012523233890533447265625)."""
-        if value is None or (isinstance(value, str) and not value.strip()):
-            return self.blank()
         if isinstance(value, bool):
             raise ValueError(f"{self.name}: {value!r} isn't a number")
         if isinstance(value, float):
@@ -174,8 +294,6 @@ class ColumnKind:
         return amount.quantize(self._cents(), rounding=ROUND_HALF_UP)
 
     def _number(self, value):
-        if value is None or (isinstance(value, str) and not value.strip()):
-            return self.blank()
         if isinstance(value, bool):
             raise ValueError(f"{self.name}: {value!r} isn't a number")
         if isinstance(value, str):
@@ -192,7 +310,9 @@ class ColumnKind:
         return round(float(value), self.decimals) if self.decimals is not None else value
 
     def show(self, value):
-        """How a cell's value is shown."""
+        """How a cell's value is shown ("" when it's empty)."""
+        if value is None:
+            return ""
         if self.kind == "check":
             return CHECK_MARK if value else ""
         if self.kind == "number" and self.decimals is not None:
@@ -200,17 +320,18 @@ class ColumnKind:
         if self.kind == "money":
             return f"{value:,.{self.decimals}f}"  # (1,234.50)
         if self.kind in _WHEN_FORMATS:
-            return show(value, self.format) if value is not None else ""
+            return show(value, self.format)
         return str(value)
 
     def text(self, value):
-        """A value as text for a CSV file or the clipboard: numbers with their decimals (money
-        without its thousands' commas), a check as True or False (which convert() reads back)."""
+        """A value as text for a CSV file or the clipboard ("" when it's empty): numbers with
+        their decimals (money without its thousands' commas), a check as True or False, dates
+        and times as ISO has them (which convert() reads back)."""
+        if value is None:
+            return ""
         if self.kind == "money":
             return f"{value:.{self.decimals}f}"
-        if self.kind in _WHEN_FORMATS:  # (ISO's form, whatever's shown: 2026-10-14, 21:30, 2026-10-14 21:30)
-            if value is None:
-                return ""
+        if self.kind in _WHEN_FORMATS:  # (2026-10-14, 21:30, 2026-10-14 21:30: whatever's shown)
             if self.kind == "date":
                 return value.isoformat()
             spec = "seconds" if value.second else "minutes"
@@ -220,13 +341,223 @@ class ColumnKind:
         return str(bool(value)) if self.kind == "check" else str(value)
 
     def sort_key(self, value):
+        """What value sorts by: empty ones last."""
+        if value is None:
+            return (True, 0)
         if self.kind == "text":
-            return str(value).casefold()
+            return (False, str(value).casefold())
         if self.kind == "choice":
-            return self.choices.index(value) if value in self.choices else len(self.choices)
-        if self.kind in _WHEN_FORMATS:  # (empty ones last)
-            return (value is None, value if value is not None else _EARLIEST[self.kind])
+            return (False, self.choices.index(value) if value in self.choices else len(self.choices))
+        return (False, value)
+
+    def rules(self, value, row=None):
+        """The rules value breaks, of those about a value alone (unique is about the column):
+        [(rule, limit, what's wrong)]. row: its row's values (a _RowValues), for a validator
+        that wants them."""
+        broken = []
+        if value is None:
+            if self.required:
+                broken.append(("required", None, f"{self.label} can't be empty"))
+            return broken
+        if self.min is not None and value < self.min:
+            broken.append(("min", self.min, f"{self.label}: {self.show(value)} is less than {self.show(self.min)}"))
+        if self.max is not None and value > self.max:
+            broken.append(("max", self.max, f"{self.label}: {self.show(value)} is more than {self.show(self.max)}"))
+        if self.max_length is not None and len(str(value)) > self.max_length:
+            broken.append(("max_length", self.max_length,
+                           f"{self.label}: {len(str(value))} characters, more than {self.max_length}"))
+        if self.validator is not None:
+            try:
+                answer = self.validator(value, row) if _takes_row(self.validator) else self.validator(value)
+            except ValueError as e:  # (a validator may say why by raising, too)
+                answer = str(e) or False
+            if answer is False or (isinstance(answer, str) and answer):
+                message = answer if isinstance(answer, str) else f"{self.label}: {self.show(value)} isn't allowed"
+                broken.append(("validator", None, message))
+        return broken
+
+
+@functools.lru_cache(maxsize=256)
+def _takes_row(function):
+    """Whether a validator wants its row too: validator(value, row)."""
+    try:
+        parameters = list(inspect.signature(function).parameters.values())
+    except (TypeError, ValueError):  # (a built-in, say)
+        return False
+    if any(p.kind == p.VAR_POSITIONAL for p in parameters):
+        return True
+    return len([p for p in parameters if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]) >= 2
+
+
+def _takes_table(function):
+    """Whether a formula is given the whole table (its parameter's called table), not a row."""
+    try:
+        names = list(inspect.signature(function).parameters)
+    except (TypeError, ValueError):
+        return False
+    return bool(names) and names[0] == "table"
+
+
+class _Money(Decimal):
+    """A money value as a row formula sees it: one that goes with a float (price * 1.1), as a
+    Column's do; Python's own Decimal won't."""
+
+
+def _money_op(name):
+    op = getattr(Decimal, name)
+
+    def run(self, other):
+        if isinstance(other, float):
+            other = Decimal(repr(other))
+        found = op(self, other)
+        return _Money(found) if isinstance(found, Decimal) else found
+    return run
+
+
+for _op in ("__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__", "__truediv__", "__rtruediv__",
+            "__floordiv__", "__rfloordiv__", "__mod__", "__rmod__", "__pow__", "__rpow__", "__neg__", "__abs__"):
+    setattr(_Money, _op, _money_op(_op) if _op not in ("__neg__", "__abs__") else
+            (lambda name: lambda self: _Money(getattr(Decimal, name)(self)))(_op))
+del _op
+
+
+class _FormulaRow(Sequence):
+    """A row, for a row formula: row["Price"] (by name or header) or row[2]. A formula column's
+    value is worked out first, if it isn't yet. Notes whether an empty value was read."""
+
+    def __init__(self, table, kinds, row, column_values):
+        self._table, self._kinds, self._row, self._column_values = table, kinds, row, column_values
+        self.read_empty = False
+
+    def __len__(self):
+        return len(self._kinds)
+
+    def __getitem__(self, column):
+        index = self._table._column_in(self._kinds, column)
+        value = self._column_values(index)[self._row]
+        if value is None:
+            self.read_empty = True
+        elif self._kinds[index].kind == "money":
+            value = _Money(value)  # (it goes with floats: row["Price"] * 1.1)
         return value
+
+    def asdict(self):
+        return {kind.name: self[i] for i, kind in enumerate(self._kinds)}
+
+
+class _FormulaTable:
+    """The table, for a table formula, read as the DataTable is: table["Amount"] is a column's
+    values (a Column), table[2, "Qty"] a cell, table[1:, "Qty"] part of a column, table[2, :]
+    part of a row (a list), table[1:3, "Price":"Total"] a Block; rows as numbers, slices, lists
+    or conditions. A formula column's values are worked out first, if they aren't yet.
+    len(table) is how many rows."""
+
+    def __init__(self, table, kinds, count, column_values):
+        self._table, self._kinds, self._count, self._column_values = table, kinds, count, column_values
+
+    def __len__(self):
+        return self._count
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            key = (slice(None), key)
+        if not (isinstance(key, tuple) and len(key) == 2):
+            raise TypeError(f"a formula's table[...] takes a column's name, or a row and a column: "
+                            f"table[2, \"Qty\"], table[1:, \"Qty\"]; not {key!r}")
+        rows, one_row = _pick(key[0], self._count, self._table.name)
+        columns, one_column = self._columns(key[1])
+        values = {c: self._column_values(c) for c in columns}
+        if one_row and one_column:
+            return values[columns[0]][rows[0]]
+        if one_column:
+            return Column([values[columns[0]][r] for r in rows], self._kinds[columns[0]].name)
+        if one_row:
+            return [values[c][rows[0]] for c in columns]
+        return Block([[values[c][r] for c in columns] for r in rows], [self._kinds[c].name for c in columns])
+
+    def _columns(self, key):
+        """Column numbers, as DataTable._columns_at gives them, among this formula's columns."""
+        count, find = len(self._kinds), lambda column: self._table._column_in(self._kinds, column)
+        if isinstance(key, slice):
+            start, stop, step = key.start, key.stop, key.step
+            if not isinstance(start, str) and not isinstance(stop, str):
+                return list(range(*key.indices(count))), False
+            step = 1 if step is None else step
+            back = step < 0
+            first = (count - 1 if back else 0) if start is None else find(start)
+            if stop is None:
+                last = -1 if back else count
+            elif isinstance(stop, str):
+                last = find(stop) + (-1 if back else 1)
+            else:
+                last = stop + count if stop < 0 else min(stop, count)
+            return list(range(first, last, step)), False
+        if isinstance(key, (list, tuple)):
+            return [find(k) for k in key], False
+        return [find(key)], True
+
+
+class _RowValues(Sequence):
+    """A row's values, for a validator: row["Starts"] (by name or header) or row[1]."""
+
+    def __init__(self, kinds, values):
+        self._kinds, self._values = kinds, values
+
+    def __len__(self):
+        return len(self._values)
+
+    def __getitem__(self, column):
+        if isinstance(column, str):
+            names = [k.name for k in self._kinds]
+            labels = [k.label for k in self._kinds]
+            lower = [n.lower() for n in names]
+            for found in (names, labels, lower):
+                key = column.lower() if found is lower else column
+                if key in found:
+                    return self._values[found.index(key)]
+            raise KeyError(f"no column {column!r}; the columns: {', '.join(names)}")
+        return self._values[column]
+
+    def asdict(self):
+        return {kind.name: value for kind, value in zip(self._kinds, self._values)}
+
+
+@dataclass(frozen=True)
+class Problem:
+    """A rule a cell breaks: its row and column (numbers), its value, the rule ("required",
+    "min", "max", "max_length", "unique" or "validator"), the rule's limit (min's least value, say: None
+    for required and unique), and what's wrong, for a person (str(problem) says it too)."""
+
+    row: int
+    column: int
+    value: object
+    rule: str
+    limit: object
+    message: str
+
+    def __str__(self):
+        return self.message
+
+
+class _Refused(ValueError):
+    """The user's change (a paste, say) refused: a value that can't be its column's kind, or
+    one cellvalidate turned down. Nothing changed."""
+
+    def __init__(self, row, column, value, reason):
+        self.row, self.column, self.value, self.reason = row, column, value, reason
+        super().__init__(f"row {row}: {reason}")
+
+
+class DataError(ValueError):
+    """Code's change to a DataTable breaks its columns' rules: nothing was changed. problems
+    lists each cell at fault (a Problem: row, column, value, rule, limit, message), to fix
+    and try again."""
+
+    def __init__(self, table, problems):
+        self.problems = list(problems)
+        first = self.problems[0]
+        more = f" (and {len(self.problems) - 1} more)" if len(self.problems) > 1 else ""
+        super().__init__(f"{table}: row {first.row}: {first.message}{more}")
 
 
 _WHEN_FORMATS = {"date": ISO, "time": TIME_FORMAT, "datetime": DATETIME_FORMAT}  # each kind's usual format
@@ -243,9 +574,13 @@ def _known(op):
 
 
 def _mixed(op):
-    """op, able to take a float with money: Python won't mix a Decimal with a float, so the
-    float becomes a Decimal of its own digits (price * 1.1 is price * Decimal("1.1"))."""
+    """op, able to take an empty value and a float with money: with None (empty), None, as a
+    database's NULL (a price not given, times 2, isn't given either); and Python won't mix a
+    Decimal with a float, so the float becomes a Decimal of its own digits (price * 1.1 is
+    price * Decimal("1.1"))."""
     def run(a, b):
+        if a is None or b is None:
+            return None
         if isinstance(a, Decimal) and isinstance(b, float):
             b = Decimal(repr(b))
         elif isinstance(b, Decimal) and isinstance(a, float):
@@ -284,7 +619,7 @@ def _pick(key, count, name, what="rows"):
         return list(range(*key.indices(count))), False
     if isinstance(key, _SEQUENCES):
         keys = list(key)
-        if keys and all(isinstance(k, bool) for k in keys):
+        if keys and all(isinstance(k, bool) or k is None for k in keys):  # (empty: not chosen, as False)
             if len(keys) != count:
                 raise ValueError(f"a condition of {len(keys)} True/False for {name}'s {count} {what}")
             return [i for i, chosen in enumerate(keys) if chosen], False
@@ -313,6 +648,27 @@ class Column(Sequence):
     def __init__(self, values, name=""):
         self._values = list(values)
         self.name = name
+
+    _HINTS = {"apply": "map(function) does that: column.map(int)", "astype": "map(int), map(str)... does that",
+              "fillna": "map(lambda v: v) leaves out empty ones; [v if v is not None else 0 for v in column] fills them"}
+
+    def __getattr__(self, attribute):
+        if attribute in Column._HINTS:  # (pandas' names, where a Column's differ)
+            raise AttributeError(f"a Column has no {attribute}(): {Column._HINTS[attribute]}")
+        raise AttributeError(f"a Column has no {attribute!r}")
+
+    def __int__(self):
+        raise TypeError("a Column is many values, not one: column.map(int) makes each an int")
+
+    def __float__(self):
+        raise TypeError("a Column is many values, not one: column.map(float) makes each a float")
+
+    def __setattr__(self, attribute, value):
+        if attribute not in ("_values", "name"):  # (formula, kind, max...: the definition's, not the values')
+            where = f"table.columns[{self.name!r}]" if self.name else "table.columns[...]"
+            raise AttributeError(f"a Column is a copy of a column's values: it has no {attribute!r} to set. "
+                                 f"The column's definition ({attribute} and its other settings) is {where}")
+        super().__setattr__(attribute, value)
 
     def __len__(self):
         return len(self._values)
@@ -351,14 +707,17 @@ class Column(Sequence):
         """Its values, as a list."""
         return list(self._values)
 
-    def _each(self, other, op, reverse=False):
+    def _each(self, other, op, reverse=False, arithmetic=True):
+        """op on each value (and other's, row by row, or other itself): arithmetic is _mixed (an
+        empty value giving an empty one); a comparison sees the values as they are."""
         if isinstance(other, (Column, list, tuple)):
             if len(other) != len(self):
                 raise ValueError(f"columns of different lengths: {len(self)} and {len(other)}")
             pairs = zip(self._values, other)
         else:
             pairs = ((value, other) for value in self._values)
-        op = _mixed(op)
+        if arithmetic:
+            op = _mixed(op)
         return Column([op(b, a) if reverse else op(a, b) for a, b in pairs], self.name)
 
     def __add__(self, other):
@@ -395,25 +754,51 @@ class Column(Sequence):
         return self._each(other, operator.pow)
 
     def __lt__(self, other):
-        return self._each(other, _known(operator.lt))
+        return self._each(other, _known(operator.lt), arithmetic=False)
 
     def __le__(self, other):
-        return self._each(other, _known(operator.le))
+        return self._each(other, _known(operator.le), arithmetic=False)
 
     def __gt__(self, other):
-        return self._each(other, _known(operator.gt))
+        return self._each(other, _known(operator.gt), arithmetic=False)
 
     def __ge__(self, other):
-        return self._each(other, _known(operator.ge))
+        return self._each(other, _known(operator.ge), arithmetic=False)
 
     def eq(self, other):
         """Whether each value equals other (a value, or a column's values, row by row): a
         Column of True/False. (== compares the whole column.)"""
-        return self._each(other, operator.eq)
+        return self._each(other, operator.eq, arithmetic=False)
 
     def ne(self, other):
         """Whether each value differs from other: a Column of True/False."""
-        return self._each(other, operator.ne)
+        return self._each(other, operator.ne, arithmetic=False)
+
+    def contains(self, text):
+        """Whether each value has text in it (as text, case aside): a Column of True/False, a
+        condition. table[table["Tool"].contains("shov"), :] (empty values: False)."""
+        text = str(text).casefold()
+        return Column([value is not None and text in str(value).casefold() for value in self._values], self.name)
+
+    def cumsum(self):
+        """The running total, row by row: a Column (an empty value stays empty, the total going
+        on past it). For a formula: lambda table: table["Amount"].cumsum()."""
+        add, total, running = _mixed(operator.add), 0, []
+        for value in self._values:
+            if value is not None:
+                total = add(total, value)
+            running.append(None if value is None else total)
+        return Column(running, self.name)
+
+    def shift(self, rows=1):
+        """The values moved down rows rows (up, if negative), the gap left empty: shift(1) gives
+        each row the one above's. For a formula: lambda table: table["Total"] - table["Total"].shift()."""
+        values, count = self._values, len(self._values)
+        if rows >= 0:
+            moved = [None] * min(rows, count) + values[:max(count - rows, 0)]
+        else:
+            moved = values[-rows:] + [None] * min(-rows, count)
+        return Column(moved, self.name)
 
     def isin(self, values):
         """Whether each value is one of values: a Column of True/False, a condition.
@@ -422,12 +807,12 @@ class Column(Sequence):
         return Column([value in values for value in self._values], self.name)
 
     def __and__(self, other):
-        return self._each(other, lambda a, b: bool(a and b))
+        return self._each(other, lambda a, b: bool(a and b), arithmetic=False)
 
     __rand__ = __and__
 
     def __or__(self, other):
-        return self._each(other, lambda a, b: bool(a or b))
+        return self._each(other, lambda a, b: bool(a or b), arithmetic=False)
 
     __ror__ = __or__
 
@@ -435,31 +820,45 @@ class Column(Sequence):
         return Column([not v for v in self._values], self.name)
 
     def __neg__(self):
-        return Column([-v for v in self._values], self.name)
+        return self.map(lambda v: -v)
 
     def __abs__(self):
-        return Column([abs(v) for v in self._values], self.name)
+        return self.map(abs)
 
     def __round__(self, places=None):
-        return Column([round(v, places) for v in self._values], self.name)
+        return self.map(lambda v: round(v, places))
+
+    def map(self, function):
+        """function(value) for each value, empty ones (None) left as they are: a Column.
+        notes.map(lambda s: s[:40]) keeps the first 40 characters of each."""
+        return Column([None if v is None else function(v) for v in self._values], self.name)
+
+    def clip(self, low=None, high=None):
+        """Each value kept from low to high (either None: no limit), empty ones left as they
+        are: a Column. totals.clip(0, 9999) brings those outside the range to its ends."""
+        return self.map(lambda v: low if low is not None and v < low else high if high is not None and v > high else v)
+
+    def _known_values(self):
+        return [v for v in self._values if v is not None]
 
     def sum(self):
-        """The values added up."""
-        return sum(self._values)
+        """The values added up (empty ones left out, as a database's SUM: 0 if there are none)."""
+        return sum(self._known_values())
 
     def mean(self):
-        """The average (ValueError for no values)."""
-        if not self._values:
+        """The average of the values, empty ones left out (ValueError if there are none)."""
+        known = self._known_values()
+        if not known:
             raise ValueError(f"no values to average in {self.name or 'the column'}")
-        return sum(self._values) / len(self._values)
+        return sum(known) / len(known)
 
     def min(self):
-        """The smallest value."""
-        return min(self._values)
+        """The smallest value, empty ones left out (None if there are none)."""
+        return min(self._known_values(), default=None)
 
     def max(self):
-        """The largest value."""
-        return max(self._values)
+        """The largest value, empty ones left out (None if there are none)."""
+        return max(self._known_values(), default=None)
 
 
 # ----- a block: several rows of several columns -----
@@ -530,7 +929,7 @@ class Block(Sequence):
                       for row, more in zip(self._rows, others)], self.headers)
 
     def _cells(self, change):
-        return Block([[change(v) for v in row] for row in self._rows], self.headers)
+        return Block([[None if v is None else change(v) for v in row] for row in self._rows], self.headers)
 
     def __add__(self, other):
         return self._each(other, operator.add)
@@ -655,10 +1054,15 @@ class Rows(MutableSequence):
 
     def __setitem__(self, index, values):
         table = self._table
+        after = list(table._data)
         if isinstance(index, slice):
-            table._data[index] = [table._convert_row(v) for v in values]
+            new = [table._convert_row(v) for v in values]
+            after[index] = new
         else:
-            table._data[table._row_at(index)] = table._convert_row(values)
+            new = [table._convert_row(values)]
+            after[table._row_at(index)] = new[0]
+        table._enforce(after, new)
+        table._data[:] = after
         table._refresh()
 
     def __delitem__(self, index):
@@ -671,7 +1075,11 @@ class Rows(MutableSequence):
 
     def insert(self, index, values):
         table = self._table
-        table._data.insert(index, table._convert_row(values))
+        new = table._convert_row(values)
+        after = list(table._data)
+        after.insert(index, new)
+        table._enforce(after, [new])
+        table._data[:] = after
         table._refresh()
 
     def sort(self, key=None, reverse=False):
@@ -700,19 +1108,148 @@ class Rows(MutableSequence):
 _SEQUENCES = (list, tuple, Column, Row)  # (what holds several values, for _pick and setting cells)
 
 
+# ----- columns: the definitions, live -----
+
+class ColumnView:
+    """One column's definition, live (table.columns["Qty"]): its settings (name, header, kind,
+    required, default, min, max, max_length, unique, key, validator... see SETTINGS) to read or
+    set. Setting one applies it at once, checked as a dict's is (ValueError, nothing changed, if
+    it can't be): columns["Qty"].max = 50; columns["Price"].kind = "number" converts the values
+    (empty, those that can't be). values is the column's values: table["Qty"], to read or set.
+
+    A rule set now holds for what's written from now on; values already there that break it
+    are problems() to see to, as the user's are."""
+
+    def __init__(self, table, name):
+        self._table, self._name = table, name
+
+    def _index(self):
+        names = [kind.name for kind in self._table._kinds]
+        if self._name not in names:
+            raise KeyError(f"{self._table.name} has no column {self._name!r} now")
+        return names.index(self._name)
+
+    def _kind(self):
+        return self._table._kinds[self._index()]
+
+    @property
+    def values(self):
+        """The column's values: a Column (as table["Qty"] is). Set them as table["Qty"] = ... does."""
+        return self._table[self._name]
+
+    @values.setter
+    def values(self, values):
+        self._table[self._name] = values
+
+    def definition(self):
+        """Its settings as a dict (those that aren't the usual ones)."""
+        return self._kind().definition()
+
+    def line(self):
+        """It as a line of columns, if a line can say it all (else None)."""
+        return self._kind().line()
+
+    def __eq__(self, other):
+        try:
+            return self._kind() == ColumnKind.of(other)
+        except (ValueError, TypeError):
+            return False
+
+    __hash__ = None
+
+    def __repr__(self):
+        kind = self._kind()
+        return f"ColumnView({kind.line() or kind.definition()!r})"
+
+
+def _setting(setting):
+    def get(self):
+        value = getattr(self._kind(), setting)
+        return list(value) if setting == "choices" else value
+
+    def set(self, value):
+        self._table._change_setting(self._index(), setting, value)
+        if setting == "name":
+            self._name = str(value).strip()
+
+    return property(get, set, doc=f"The column's {setting} (see SETTINGS); set it to change it.")
+
+
+for _name in SETTINGS:
+    setattr(ColumnView, _name, _setting(_name))
+del _name
+
+
+class Columns(MutableSequence):
+    """A DataTable's columns' definitions, as a live list: columns["Qty"] or columns[3] is one
+    (a ColumnView, its settings to read or set); append and insert add a column (a dict, or a
+    line: each row gets its default, or empty), del takes one away (and its values); len, in
+    ("Qty" in columns) and a loop work as on a list. It compares equal to a list of definitions
+    (lines or dicts), and tolist() gives one."""
+
+    def __init__(self, table):
+        self._table = table
+
+    def __len__(self):
+        return len(self._table._kinds)
+
+    def __getitem__(self, key):
+        kinds = self._table._kinds
+        if isinstance(key, slice):
+            return [ColumnView(self._table, kind.name) for kind in kinds[key]]
+        return ColumnView(self._table, kinds[self._table._column_at(key)].name)
+
+    def __setitem__(self, key, definition):
+        self._table._replace_column(self._table._column_at(key), ColumnKind.of(definition))
+
+    def __delitem__(self, key):
+        self._table._remove_column(self._table._column_at(key))
+
+    def insert(self, index, definition):
+        self._table._insert_column(index, definition)
+
+    def __contains__(self, key):
+        try:
+            self._table._column_at(key)
+        except (KeyError, IndexError, TypeError):
+            return False
+        return True
+
+    def __eq__(self, other):
+        if not isinstance(other, (Columns, list, tuple)):
+            return False
+        try:
+            return list(self._table._kinds) == [ColumnKind.of(item) for item in other]
+        except (ValueError, TypeError):
+            return False
+
+    __hash__ = None
+
+    def tolist(self):
+        """The definitions as a list: a line where one says it all, else a dict."""
+        return [kind.line() or kind.definition() for kind in self._table._kinds]
+
+    def __repr__(self):
+        return repr(self.tolist())
+
+
 # ----- the control -----
 
 @register
 class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip, Anchored, Control):
     """A table of data, as a database has: each column holds one kind of value (text, a
-    number, money, a tick or a choice) for every row, and a new row starts with each
-    column's blank value. The user edits it like a spreadsheet.
+    number, money, a date or time, a tick or a choice) for every row, or nothing (None, as a
+    database's NULL). The user edits it like a spreadsheet.
 
-    columns says what each column holds, one per line: "Item", "Price : number 2", "In stock :
-    check", "Size : S | M | L", "Total : money, readonly". Money is a decimal.Decimal, exact to
-    the cent. The blank values: empty text, 0, no tick, the first choice; rowadd can set others
-    for a new row. enter_moves says where Enter goes after an edit (down; right, for typing
-    along rows). Code reaches the data Pythonically:
+    columns defines them: a dict for each ({"name": "Qty", "kind": "number", "min": 0,
+    "default": 1}: see SETTINGS), or a line for a simple one ("Price : money", "Size : S | M |
+    L", "Total : money, readonly"). A new row's cells are empty, but for a column's default.
+    The rules (required, min, max, max_length, unique, key) hold for code: a change breaking
+    one raises DataError, nothing changed (but inside unchecked()). The user's changes are
+    kept, broken rules and all, and rowinvalid says what's wrong as the cursor leaves the row:
+    the program decides. Money is a decimal.Decimal, exact to the cent. enter_moves says where
+    Enter goes after an edit (down; right, for typing along rows). Code reaches the data
+    Pythonically:
 
         self.Stock.rows = [["Apples", 1.2, True, "M"], ["Pears", 0.95, False, "L"]]
         self.Stock[0, "Price"] = 1.25
@@ -729,9 +1266,16 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     Ctrl+X and Ctrl+V copy, cut and paste as spreadsheets do (tab-separated text: to and from
     Excel too): the chosen rows, or else the cell. copy(), cut(), paste() and select_all() do
     the same from code, for an Edit menu. cellvalidate runs before the user's change is kept
-    (return False, or a message why, to refuse it); cellchange after; rowadd when a new row is
+    (return False, or a message why, to refuse it); cellrefused when one isn't kept (it can't
+    be the column's kind, or cellvalidate refused it): the table shows nothing itself, the
+    program says it as it likes; cellchange after a change; rowinvalid as above; rowadd when a new row is
     made (for defaults); rowdelete as one is deleted; columnclick when a header is clicked
     (after sorting, if sortable: off, it can sort its own way, with sort()'s key).
+
+    A column can be worked out by a formula (columns["Total"].formula = lambda row: row["Price"]
+    * row["Qty"]; or lambda table: ... for the whole column), kept up to date as the rest
+    change. filter shows only the rows it's True for; find() goes through the cells matching
+    some text; a column can be hidden (columns["Id"].hidden = True).
 
     Ctrl+Z takes back the user's last change, and Ctrl+Y (or Ctrl+Shift+Z) makes it again: undo()
     and redo() from code, can_undo and can_redo for an Edit menu. A row's backcolor and
@@ -745,6 +1289,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     default_size = (320, 200)
     default_event = "cellchange"
     events = (Event("cellchange", ("row", "column")), Event("cellvalidate", ("row", "column", "value")),
+              Event("cellrefused", ("row", "column", "value", "reason")), Event("rowinvalid", ("row", "problems")),
               Event("rowadd", ("row",)), Event("rowdelete", ("row", "values")),
               Event("rowclick", ("row",), policy="latest"), Event("columnclick", ("column",)),
               Event("dblclick"), *_FOCUS_EVENTS)
@@ -760,13 +1305,17 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         self._editor_box = None  # what's placed over the cell: a text editor's frame (a choice's list is itself)
         self._editing = None  # (row, column) being edited
         self._sorted = None  # (column, descending, key)
-        self._telling = False  # a message is up (the editor losing the keyboard to it isn't leaving)
         self._raisers = {}  # event -> what on() (or a Name_event method) attached
         self._editable = self._addable = self._deletable = self._sortable = True
         self._enter_moves = "down"
         self._undone, self._redone = [], []  # steps: lists of ("cell", row, column, old, new), ("add"/"delete", row, index)
         self._recording = None  # the step being recorded (a user's change under way)
         self._row_colors = {}  # id(row) -> (row, backcolor, forecolor)
+        self._unchecked = 0  # inside unchecked(): code's changes not checked against the rules
+        self._touched = {}  # id(row) -> row: rows the user changed, their rules not yet checked (rowinvalid)
+        self._filter = None  # filter(row): the rows shown (None: all)
+        self._in_view = []  # the rows shown, in order (their numbers)
+        self._pinned = None  # a row the user's editing, shown though the filter wouldn't (till the cursor leaves)
         self._enabled = True
         self._sized = set()  # the columns whose widths are someone's (dragged, set, autosized); the rest share
         self._choice_keyed = False  # a choice's list was answered with Enter (so: down a row)
@@ -797,6 +1346,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             # The tree has the keyboard back while an editor is open (Esc in a choice's list):
             # the edit is over.
             tree.bind("<FocusIn>", lambda e: self.widget.after_idle(self._focus_left), add="+")
+            tree.bind("<FocusOut>", lambda e: self.widget.after_idle(self._keyboard_left), add="+")
         self._tree.bind("<Configure>", lambda e: (self._fit_columns(), self._follow()), add="+")
         self._tree.bind("<<TreeviewSelect>>", lambda e: self._follow(), add="+")  # (its color)
         return frame
@@ -817,37 +1367,198 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
 
     @property
     def columns(self):
-        """The columns, one per line: a header, then maybe ':' and a kind: text (the usual),
-        number (number 2: kept to 2 decimal places), check (a tick), or choices like
-        S | M | L; and maybe readonly, for one the user can't edit (code still can)."""
-        return [kind.line() for kind in self._kinds]
+        """The columns' definitions, as a live list (a Columns): columns["Qty"] (or columns[3]) is
+        one, its settings to read or set (columns["Qty"].max = 50); append, insert and del add
+        and take away columns. Set a list of definitions to replace them all: each a dict (see
+        SETTINGS: name, kind, required, default, min, max...), or a line for a simple one:
+        "Item", "Price : number 2", "In stock : check", "Size : S | M | L", "Total : money,
+        readonly". The rows stay, each value converted to its column's new kind (empty if it
+        can't be)."""
+        return Columns(self)
 
     @columns.setter
-    def columns(self, lines):
-        kinds = [ColumnKind.parse(line) for line in lines] or [ColumnKind("Column 1")]
-        names = [k.name.lower() for k in kinds]
-        repeated = sorted({n for n in names if names.count(n) > 1})
-        if repeated:
-            raise ValueError(f"two columns have the same header: {', '.join(repeated)}")
+    def columns(self, definitions):
+        kinds = [ColumnKind.of(definition) for definition in definitions] or [ColumnKind("Column 1")]
+        self._check_names(kinds)
         old = self._kinds
+        if any(kind.formula is not None for kind in kinds):  # (tried on a copy first)
+            trial, self._data = self._data, [[self._keep(kinds[i], row[i]) if i < len(old) else kinds[i].blank()
+                                              for i in range(len(kinds))] for row in self._data]
+            try:
+                self._recompute(kinds, dry=True)
+            finally:
+                self._data = trial
+        for row in self._data:  # (the same row lists, changed: their colors stay)
+            row[:] = [self._keep(kinds[i], row[i]) if i < len(old) else kinds[i].blank() for i in range(len(kinds))]
         self._kinds = kinds
         self._forget()
-        self._data = [[self._keep(kinds[i], row[i]) if i < len(old) else kinds[i].blank() for i in range(len(kinds))]
-                      for row in self._data]
-        ids = [f"c{i}" for i in range(len(kinds))]
-        self._tree.configure(columns=ids, displaycolumns=ids)
-        for i, kind in enumerate(kinds):
+        self._show_columns()
+
+    # ----- formulas: computed columns -----
+
+    def _column_in(self, kinds, column):
+        """A column's number among kinds (by name, header or number), for a formula's reading."""
+        if isinstance(column, int) and not isinstance(column, bool):
+            return column % len(kinds)
+        for names in ([k.name for k in kinds], [k.label for k in kinds]):
+            if column in names:
+                return names.index(column)
+        lowered = str(column).lower()
+        for names in ([k.name.lower() for k in kinds], [k.label.lower() for k in kinds]):
+            if lowered in names:
+                return names.index(lowered)
+        raise KeyError(f"{self.name} has no column {column!r}; its columns: {', '.join(k.name for k in kinds)}")
+
+    def _recompute(self, kinds=None, dry=False):
+        """Work out the formula columns, every row, and put the values in (not with dry: a try,
+        for a formula about to be set). ValueError (nothing changed) for a circular reference,
+        or a value a formula gives that can't be its column's kind."""
+        kinds = self._kinds if kinds is None else kinds
+        formulas = [c for c, kind in enumerate(kinds) if kind.formula is not None]
+        if not formulas:
+            return
+        data, done, working = self._data, {}, []
+
+        def column_values(c):
+            if c in done:
+                return done[c]
+            kind = kinds[c]
+            if kind.formula is None:
+                return [row[c] for row in data]
+            if c in working:  # (a formula reaching, by others, back to itself)
+                loop = working[working.index(c):] + [c]
+                raise ValueError("a circular reference: " + " \u2192 ".join(kinds[i].label for i in loop))
+            working.append(c)
+            try:
+                if _takes_table(kind.formula):
+                    found = kind.formula(_FormulaTable(self, kinds, len(data), column_values))
+                    values = list(found) if isinstance(found, (Column, list, tuple)) else [found] * len(data)
+                    if len(values) != len(data):
+                        raise ValueError(f"{kind.label}'s formula gave {len(values)} values for {len(data)} rows")
+                else:
+                    values = [self._by_row(kind, _FormulaRow(self, kinds, r, column_values)) for r in range(len(data))]
+                done[c] = [kind.convert(value) for value in values]
+            finally:
+                working.pop()
+            return done[c]
+
+        for c in formulas:
+            column_values(c)
+        if not dry:
+            for c in formulas:
+                for row, value in zip(data, done[c]):
+                    row[c] = value
+
+    @staticmethod
+    def _by_row(kind, row):
+        """A row formula's value for row: empty, if it can't be worked out from an empty value
+        (Price times an empty Qty), or for a division by 0."""
+        try:
+            return kind.formula(row)
+        except (ZeroDivisionError, InvalidOperation):
+            return None
+        except TypeError:
+            if row.read_empty:
+                return None
+            raise
+
+    def _check_names(self, kinds):
+        """New columns' definitions, checked together before any takes effect."""
+        names = [n for k in kinds for n in {k.name.lower(), k.label.lower()}]
+        repeated = sorted({n for n in names if names.count(n) > 1})
+        if repeated:
+            raise ValueError(f"two columns have the same name or header: {', '.join(repeated)}")
+        if all(kind.hidden for kind in kinds):
+            raise ValueError(f"{self.name} has to show at least one column")
+
+    def _show_columns(self, keep_widths=False):
+        """The Treeview's columns as the definitions say: headings, alignment, widths (shared
+        out again, or kept as they were, with keep_widths)."""
+        widths = self.widths if keep_widths else None
+        ids = [f"c{i}" for i in range(len(self._kinds))]
+        self._tree.configure(columns=ids, displaycolumns=[ids[i] for i in self._view_columns()])
+        for i, kind in enumerate(self._kinds):
             anchor = {"number": "e", "money": "e", "check": "center"}.get(kind.kind, "w")  # (dates, times: as text)
             self._tree.column(ids[i], anchor=anchor, stretch=False, minwidth=NARROWEST)
-            self._tree.heading(ids[i], text=kind.name, anchor=anchor, command=lambda c=i: self._header_clicked(c))
+            self._tree.heading(ids[i], text=kind.label, anchor=anchor, command=lambda c=i: self._header_clicked(c))
         self._sorted = None
-        self._sized = set()
-        self._fit_columns()
+        if widths and len(widths) == len(ids):
+            for i, width in enumerate(widths):
+                self._tree.column(ids[i], width=width)
+        else:
+            self._sized = set()
+            self._fit_columns()
         self._refresh()
+
+    def _insert_column(self, index, definition):
+        kind = ColumnKind.of(definition)
+        kinds = list(self._kinds)
+        kinds.insert(index, kind)
+        self._check_names(kinds)
+        if kind.formula is not None:  # (tried on a copy: the data has no cells for it yet)
+            trial, self._data = self._data, [row[:index] + [None] + row[index:] for row in self._data]
+            try:
+                self._recompute(kinds, dry=True)
+            finally:
+                self._data = trial
+        index = kinds.index(kind) if kinds.count(kind) == 1 else min(max(index, 0), len(kinds) - 1)
+        for row in self._data:
+            row.insert(index, kind.blank())  # (each row: its default, or empty)
+        self._kinds = kinds
+        self._forget_steps()
+        self._show_columns()
+
+    def _remove_column(self, index):
+        if len(self._kinds) == 1:
+            raise ValueError(f"{self.name} keeps at least one column")
+        kinds = list(self._kinds)
+        del kinds[index]
+        self._check_names(kinds)
+        for row in self._data:
+            del row[index]
+        self._kinds = kinds
+        self._forget_steps()
+        self._show_columns()
+
+    def _replace_column(self, index, kind):
+        """A column's new definition: its values converted to it (empty, those that can't be)."""
+        kinds = list(self._kinds)
+        old, kinds[index] = kinds[index], kind
+        self._check_names(kinds)
+        self._recompute(kinds, dry=True)
+        if kind.kind != old.kind or kind.decimals != old.decimals or kind.choices != old.choices:
+            for row in self._data:
+                row[index] = self._keep(kind, row[index])
+            self._forget_steps()  # (values changed under undo's steps)
+        self._kinds = kinds
+        self._show_columns(keep_widths=True)
+
+    def _change_setting(self, index, setting, value):
+        """One setting of a column changed (a ColumnView's): the definition made again, checked
+        as a dict is (ValueError, nothing changed, if it can't be)."""
+        settings = self._kinds[index].definition()
+        if setting == "kind":  # (a new kind keeps what still fits it: no choices for a number)
+            fits = {**{k: set() for k in _KINDS}, "choice": {"choices"}, "number": {"decimals", "min", "max"},
+                    "money": {"decimals", "min", "max"}, "date": {"format", "min", "max"},
+                    "time": {"format", "step", "min", "max"}, "datetime": {"format", "min", "max"},
+                    "text": {"max_length"}}
+            for only in ("choices", "decimals", "format", "step", "max_length", "min", "max"):
+                if only not in fits.get(value, set()):
+                    settings.pop(only, None)
+        if value is None or (setting == "choices" and not value):
+            settings.pop(setting, None)
+        else:
+            settings[setting] = value
+        self._replace_column(index, ColumnKind.from_dict(settings))
 
     @property
     def headers(self):
-        """The columns' headers, in order: what a column number names (table.headers[2])."""
+        """The columns' headers, as shown, in order: what a column number names (table.headers[2])."""
+        return [kind.label for kind in self._kinds]
+
+    @property
+    def names(self):
+        """The columns' names, in order (a header shown may differ: a definition's header)."""
         return [kind.name for kind in self._kinds]
 
     def _fit_columns(self):
@@ -855,11 +1566,12 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         whose widths someone set (widths, autosize_columns(), dragging a header's edge): the
         others share what those leave. Columns that don't fit scroll sideways."""
         width = self._tree.winfo_width()
-        free = [column for column in range(len(self._kinds)) if column not in self._sized]
+        free = [column for column in self._view_columns() if column not in self._sized]
         if width <= 1 or not free:
             return
         _, heading = self._fonts()
-        taken = sum(int(self._tree.column(f"c{column}", "width")) for column in self._sized)
+        taken = sum(int(self._tree.column(f"c{column}", "width")) for column in self._sized
+                    if column in self._view_columns())
         least = [self._header_width(heading, self._kinds[column]) for column in free]
         for column, share in zip(free, _shared(width - 6 - taken, least)):  # (inside its border: 2 px a side, or more)
             self._tree.column(f"c{column}", width=share)
@@ -910,7 +1622,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
 
     @staticmethod
     def _header_width(heading, kind):
-        return heading.measure(kind.name + " \u25b2") + PADDING  # (with room for a sort's arrow)
+        return heading.measure(kind.label + " \u25b2") + PADDING  # (with room for a sort's arrow)
 
     def _scrolled_across(self, bar, first, last):
         bar.set(first, last)
@@ -923,10 +1635,11 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     def _see_column(self, column):
         """Scroll sideways to show a column (a Treeview's see() only scrolls up and down)."""
         widths = self.widths
-        total, view = sum(widths), self._tree.winfo_width()
-        if total <= view or view <= 1:
+        shown = self._view_columns()
+        total, view = sum(widths[c] for c in shown), self._tree.winfo_width()
+        if total <= view or view <= 1 or column not in shown:
             return
-        left = sum(widths[:column])
+        left = sum(widths[c] for c in shown[:shown.index(column)])
         right = left + widths[column]
         shown = self._tree.xview()[0] * total
         if left < shown:
@@ -938,14 +1651,14 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         """New rows: no longer sorted (the headers lose their arrows)."""
         self._sorted = None
         for i, kind in enumerate(self._kinds):
-            self._tree.heading(f"c{i}", text=kind.name)
+            self._tree.heading(f"c{i}", text=kind.label)
 
     @staticmethod
     def _keep(kind, value):
         try:
             return kind.convert(value)
         except ValueError:
-            return kind.blank()  # (a column that changed kind: what doesn't fit is blank)
+            return None  # (a column that changed kind: what doesn't fit is empty)
 
     def _switch(name, doc):
         def get(self):
@@ -1002,7 +1715,9 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
 
     @rows.setter
     def rows(self, rows):
-        self._data = [self._convert_row(row) for row in rows]
+        new = [self._convert_row(row) for row in rows]
+        self._enforce(new)
+        self._data = new
         self._forget()
         self._unsort()
         self._refresh()
@@ -1040,12 +1755,21 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         else:
             grid = [[value] * len(columns) for _ in rows]  # one value for every cell
         kinds = self._kinds
+        for c in columns:
+            if kinds[c].formula is not None:
+                raise ValueError(f"{kinds[c].label} is worked out by its formula: it can't be set")
         converted = [[kinds[c].convert(v) for c, v in zip(columns, line)] for line in grid]  # (all, then change)
+        after = list(self._data)
+        for r, line in zip(rows, converted):
+            after[r] = list(after[r]) if after[r] is self._data[r] else after[r]
+            for c, v in zip(columns, line):
+                after[r][c] = v
+        self._enforce(after, rows, columns)
         for r, line in zip(rows, converted):
             for c, v in zip(columns, line):
                 self._data[r][c] = v
         if one_row and one_column:
-            self._show_row(rows[0])
+            self._shown_again(rows[0])
         else:
             self._refresh()
 
@@ -1098,13 +1822,13 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             if not -len(self._kinds) <= column < len(self._kinds):
                 raise IndexError(f"{self.name} has {len(self._kinds)} columns, so there's no column {column}")
             return column % len(self._kinds)
-        names = [k.name for k in self._kinds]
-        if column in names:
-            return names.index(column)
-        lower = [n.lower() for n in names]
-        if str(column).lower() in lower:
-            return lower.index(str(column).lower())
-        raise KeyError(f"{self.name} has no column {column!r}; its columns: {', '.join(names)}")
+        for names in ([k.name for k in self._kinds], [k.label for k in self._kinds]):  # (by name, or header shown)
+            if column in names:
+                return names.index(column)
+        for names in ([k.name.lower() for k in self._kinds], [k.label.lower() for k in self._kinds]):
+            if str(column).lower() in names:
+                return names.index(str(column).lower())
+        raise KeyError(f"{self.name} has no column {column!r}; its columns: {', '.join(k.name for k in self._kinds)}")
 
     def _convert_row(self, values):
         kinds = self._kinds
@@ -1129,8 +1853,12 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if not lines:
             self.rows = []
             return
-        names = [k.name.lower() for k in self._kinds]
-        places = {i: names.index(h.strip().lower()) for i, h in enumerate(lines[0]) if h.strip().lower() in names}
+        places = {}
+        for i, header in enumerate(lines[0]):  # (by name, or by the header shown)
+            try:
+                places[i] = self._column_at(header.strip())
+            except KeyError:
+                pass
         if not places:
             raise ValueError(f"{path.name}: its first line names none of {self.name}'s columns "
                              f"({', '.join(k.name for k in self._kinds)})")
@@ -1144,6 +1872,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
                     except ValueError as e:
                         raise ValueError(f"{path.name}, line {number}: {e}") from None
             rows.append(row)
+        self._enforce(rows)
         self._data = rows
         self._forget()
         self._unsort()
@@ -1156,6 +1885,127 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             writer.writerow([k.name for k in self._kinds])
             for row in self._data:
                 writer.writerow([k.text(v) for k, v in zip(self._kinds, row)])
+
+    # ----- the rules: required, min, max, max_length, unique -----
+
+    def _enforce(self, after, rows=None, columns=None):
+        """Code's change: after, the rows it would leave, broken rules in the cells written (in
+        rows: row lists or numbers, None: all; and columns: numbers, None: all) raising
+        DataError, nothing changed. Rules broken elsewhere (by the user, say) are the program's
+        to see to: they're not this change's fault. (Not inside unchecked().)"""
+        if self._unchecked:
+            return
+        if rows is None:
+            numbers = range(len(after))
+        elif rows and not isinstance(rows[0], int):
+            wanted = {id(row) for row in rows}
+            numbers = [i for i, row in enumerate(after) if id(row) in wanted]
+        else:
+            numbers = rows
+        problems = self._problems_in(after, numbers)
+        if columns is not None:
+            problems = [problem for problem in problems if problem.column in columns]
+        if problems:
+            raise DataError(self.name, problems)
+
+    def _problems_in(self, data, rows=None):
+        """The rules broken in data (rows of values), in rows (their numbers; None: all)."""
+        rows = range(len(data)) if rows is None else rows
+        found = []
+        for r in rows:
+            values = _RowValues(self._kinds, data[r])
+            for c, kind in enumerate(self._kinds):
+                found.extend(Problem(r, c, data[r][c], rule, limit, message)
+                             for rule, limit, message in kind.rules(data[r][c], values))
+        wanted = set(rows)
+        for c, kind in enumerate(self._kinds):
+            if not kind.unique:
+                continue
+            places = {}
+            for r, row in enumerate(data):
+                if row[c] is not None:
+                    places.setdefault(row[c], []).append(r)
+            for value, rows_with in places.items():
+                for r in rows_with if len(rows_with) > 1 else ():
+                    if r in wanted:
+                        other = next(o for o in rows_with if o != r)
+                        found.append(Problem(r, c, value, "unique", None,
+                                             f"{kind.label}: {kind.show(value)} is in row {other} too"))
+        found.sort(key=lambda problem: (problem.row, problem.column))
+        return found
+
+    def find(self, what, columns=None, after=None):
+        """The cells that match what, one by one: an iterator of (row, column), in the rows and
+        columns shown, left to right and down. what is text (found in what's shown, case aside:
+        "1,234" finds 1,234.50), a function given each value (empty ones left out) that's True
+        for a match, or another value (equal to it). columns: the column (or a list) to look in,
+        by name or number. after: a cell to start after, going round to it (after=table.current,
+        for a "find next"). Moving the cursor there is the program's choice: table.current = cell.
+
+            for row, column in self.Items.find("shovel"): ...
+            first = next(self.Items.find("shovel"), None)"""
+        if columns is None:
+            looking = self._view_columns()
+        else:
+            wanted = {self._column_at(c) for c in ([columns] if isinstance(columns, (str, int)) else columns)}
+            looking = [c for c in self._view_columns() if c in wanted]
+        cells = [(r, c) for r in list(self._in_view) for c in looking]
+        if after is not None and tuple(after) in cells:
+            at = cells.index(tuple(after)) + 1
+            cells = cells[at:] + cells[:at]
+        if callable(what):
+            def matches(value, kind):
+                return value is not None and bool(what(value))
+        elif isinstance(what, str):
+            text = what.casefold()
+
+            def matches(value, kind):
+                return value is not None and text in kind.show(value).casefold()
+        else:
+            def matches(value, kind):
+                return value is not None and value == what
+        for r, c in cells:
+            if r < len(self._data) and matches(self._data[r][c], self._kinds[c]):
+                yield r, c
+
+    def problems(self, rows=None):
+        """The rules broken in its rows now (or in rows: a row number, or several): a list of
+        Problem (row, column, value, rule, limit, message). Empty if all's well: for a Save
+        button to check first, or to color the rows at fault."""
+        if isinstance(rows, int):
+            rows = [rows]
+        return self._problems_in(self._data, None if rows is None else [self._row_at(r) for r in rows])
+
+    def check(self, column, value, row=None):
+        """The rules value would break in column (its name or number): a list of Problem, empty
+        if none. row: the row it would go in (left out when looking for duplicates); None: a
+        new row. ValueError if value can't be the column's kind at all. For cellvalidate, say,
+        to refuse a user's value that breaks the rules."""
+        column = self._column_at(column)
+        kind = self._kinds[column]
+        value = kind.convert(value)
+        after = list(self._data)
+        if row is None:
+            after.append([None] * len(self._kinds))
+            row = len(after) - 1
+        else:
+            row = self._row_at(row)
+        after[row] = list(after[row])
+        after[row][column] = value
+        return [problem for problem in self._problems_in(after, [row]) if problem.column == column]
+
+    @contextmanager
+    def unchecked(self):
+        """Inside it, code's changes aren't checked against the rules (their kinds still are):
+        to load data as it is, say, and fix it after. problems() says what's broken.
+
+            with self.Items.unchecked():
+                self.Items.load_csv("old orders.csv")"""
+        self._unchecked += 1
+        try:
+            yield
+        finally:
+            self._unchecked -= 1
 
     def _path(self, path):
         path = Path(path)
@@ -1183,13 +2033,16 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     def _refresh(self):
         tree = self._tree
         chosen, before = tree.selection(), len(tree.get_children())
+        self._recompute()
         tree.delete(*tree.get_children())
-        for i, row in enumerate(self._data):
-            tree.insert("", "end", iid=str(i), values=self._shown(row), tags=self._row_tags(i, row))
+        self._in_view = self._filtered()
+        for place, i in enumerate(self._in_view):
+            tree.insert("", "end", iid=str(i), values=self._shown(self._data[i]), tags=self._row_tags(place, self._data[i]))
         if self._new_row():
             tree.insert("", "end", iid="new", values=[""] * len(self._kinds), tags=("new",))
         last = len(self._data) if self._new_row() else len(self._data) - 1
-        self._cur = (min(self._cur[0], max(last, 0)), min(self._cur[1], max(len(self._kinds) - 1, 0)))
+        row = min(self._cur[0], max(last, 0))
+        self._cur = (self._nearest(self._view_rows(), row), self._nearest(self._view_columns(), self._cur[1]))
         # The chosen rows stay chosen when only values changed (with rows added or gone, none are).
         here = self._iid(self._cur[0])
         if chosen and len(tree.get_children()) == before:
@@ -1226,19 +2079,29 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         else:
             self._row_colors.pop(id(values), None)
         if self._tree.exists(str(index)):  # (just this row: a loop coloring many stays quick)
-            self._tree.item(str(index), tags=self._row_tags(index, values))
+            self._tree.item(str(index), tags=self._row_tags(self._tree.index(str(index)), values))
 
     def _check_sorted(self):
         """After a change: if the rows aren't in their sorted order now, the header's arrow goes."""
         if self._sorted is None:
             return
         column, descending, key = self._sorted
-        order = [key(row[column]) for row in self._data]
-        if order != sorted(order, reverse=descending):
+        values = [row[column] for row in self._data]
+        filled = [key(value) for value in values if value is not None]
+        empties_last = all(value is None for value in values[len(filled):])
+        if not empties_last or filled != sorted(filled, reverse=descending):
             self._unsort()
 
     def _shown(self, row):
         return [kind.show(value) for kind, value in zip(self._kinds, row)]
+
+    def _shown_again(self, row):
+        """After a change to a row: it shown again (all of them, with formulas to work out, or a
+        filter to apply)."""
+        if self._filter is not None or any(kind.formula is not None for kind in self._kinds):
+            self._refresh()
+        else:
+            self._show_row(row)
 
     def _show_row(self, row):
         if self._tree.exists(str(row)):
@@ -1312,14 +2175,84 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     def _last_row(self):
         return len(self._data) if self._new_row() else len(self._data) - 1
 
+    def _view_rows(self):
+        """The rows the cursor can be on, in order: those shown, and the blank row at the bottom."""
+        return self._in_view + ([len(self._data)] if self._new_row() else [])
+
+    def _view_columns(self):
+        """The columns shown, in order (the hidden left out)."""
+        return [i for i, kind in enumerate(self._kinds) if not kind.hidden]
+
+    @staticmethod
+    def _nearest(places, wanted):
+        """wanted, if it's in places (an ordered list); else the next one after it, or the last."""
+        if not places or wanted in places:
+            return wanted
+        return next((p for p in places if p > wanted), places[-1])
+
+    def _row_after(self, row, step):
+        """The row step rows on (or back) from row, among those in view (stopping at the ends)."""
+        rows = self._view_rows()
+        if not rows:
+            return row
+        at = rows.index(self._nearest(rows, row))
+        return rows[max(0, min(at + step, len(rows) - 1))]
+
+    def _column_after(self, column, step):
+        columns = self._view_columns()
+        at = columns.index(self._nearest(columns, column))
+        return columns[max(0, min(at + step, len(columns) - 1))]
+
+    def _filtered(self):
+        """The rows the filter shows (all of them, with none), the one pinned too."""
+        if self._filter is None:
+            return list(range(len(self._data)))
+        return [i for i, row in enumerate(self._data)
+                if row is self._pinned or self._filter(_RowValues(self._kinds, row))]
+
+    @property
+    def filter(self):
+        """A function given each row (by name or number: row["Category"]), True for those to show;
+        None (the usual) shows them all. The rows hidden are still there: rows, table[...],
+        problems() and save_csv() have them all, and row numbers are the same; only what's shown
+        and where the cursor goes are filtered. A row the user edits so it doesn't fit stays in
+        sight till the cursor leaves it.
+
+            self.Items.filter = lambda row: row["Category"] == "Garden"
+            self.Items.filter = None"""
+        return self._filter
+
+    @filter.setter
+    def filter(self, function):
+        if function is not None and not callable(function):
+            raise ValueError(f"filter must be a function given a row (or None), not {function!r}")
+        self._filter, self._pinned = function, None
+        self._refresh()
+
+    def refilter(self):
+        """Apply the filter again (a row the user just changed included)."""
+        self._pinned = None
+        self._refresh()
+
+    @property
+    def shown(self):
+        """The numbers of the rows shown (all of them, with no filter), in order."""
+        return list(self._in_view)
+
     def _move(self, row, column, by_user=True, extend=False, keep=False):
         """Move the cell cursor. As in a spreadsheet, a move un-chooses the chosen rows, except
         with extend (Shift: the rows from where it started to here) or keep (code moving it)."""
         if not self._kinds or self._last_row() < 0:
             return
-        row = max(0, min(row, self._last_row()))
-        column = max(0, min(column, len(self._kinds) - 1))
+        row = self._nearest(self._view_rows(), max(0, min(row, self._last_row())))
+        column = self._nearest(self._view_columns(), max(0, min(column, len(self._kinds) - 1)))
         moved_row = row != self._cur[0]
+        if moved_row and self._pinned is not None and self._filter is not None:
+            left = self._pinned  # (the row edited, kept in sight: not now, if it doesn't fit)
+            self._pinned = None
+            if not self._filter(_RowValues(self._kinds, left)):
+                self._cur = (row, column)
+                self._refresh()
         self._cur = (row, column)
         iid = self._iid(row)
         if self._tree.exists(iid):
@@ -1328,7 +2261,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         self._see_column(column)
         if extend:
             low, high = sorted((self._anchor, row))
-            self._tree.selection_set([str(i) for i in range(low, min(high, len(self._data) - 1) + 1)])
+            self._tree.selection_set([str(i) for i in self._in_view if low <= i <= high])
         elif not keep:
             self._anchor = row
             self._tree.selection_set(())
@@ -1336,6 +2269,33 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         self._follow()
         if by_user and moved_row and row < len(self._data):
             self._raise("rowclick", row)
+        if moved_row:
+            self._check_rows(keep=row)
+
+    def _check_rows(self, keep=None):
+        """The rows the user changed, checked against the rules (but not keep, the row number
+        still being edited): rowinvalid for each that breaks any, for the program to decide."""
+        keeping = self._data[keep] if keep is not None and 0 <= keep < len(self._data) else None
+        for key, row in list(self._touched.items()):
+            if row is keeping:
+                continue
+            del self._touched[key]
+            where = next((i for i, r in enumerate(self._data) if r is row), None)
+            if where is not None:
+                problems = self._problems_in(self._data, [where])
+                if problems:
+                    self._raise("rowinvalid", where, problems)
+
+    def _keyboard_left(self):
+        """The keyboard left the table (and its editors): the rows changed, checked."""
+        try:
+            focus = str(self._tree.tk.call("focus"))
+        except tk.TclError:
+            return
+        dropped = Dropped.current
+        if focus.startswith(str(self.widget)) or (dropped is not None and dropped.field is self._tree):
+            return
+        self._check_rows()
 
     def _choose_row(self, row, toggle=False):
         """Shift+Space (choose the cursor's row) and Ctrl+click (⌘ on a Mac: add or take away one)."""
@@ -1361,11 +2321,12 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if not iid or not column:
             return "break"
         row = len(self._data) if iid == "new" else int(iid)
+        column = self._view_columns()[int(column[1:]) - 1]  # (#2: the second shown)
         if e.state & _PRIMARY:  # Ctrl+click (⌘ on a Mac): this row chosen too, or not
-            self._move(row, int(column[1:]) - 1, keep=True)
+            self._move(row, column, keep=True)
             self._choose_row(row, toggle=True)
         else:  # (Shift+click: the rows from the last plain click's to this one)
-            self._move(row, int(column[1:]) - 1, extend=bool(e.state & 0x1))
+            self._move(row, column, extend=bool(e.state & 0x1))
         return "break"
 
     def _double(self, e):
@@ -1383,16 +2344,19 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if held in ([], ["Shift"]) or key in ("Home", "End") and held == ["Ctrl"]:
             ctrl = held == ["Ctrl"]
             page = max(1, self._tree.winfo_height() // max(1, self._row_height()) - 1)
-            moves = {"Up": (row - 1, column), "Down": (row + 1, column), "Left": (row, column - 1),
-                     "Right": (row, column + 1), "Home": (0 if ctrl else row, 0),
-                     "End": (self._last_row() if ctrl else row, len(self._kinds) - 1),
-                     "PgUp": (row - page, column), "PgDn": (row + page, column)}
+            rows, columns = self._view_rows(), self._view_columns()
+            moves = {"Up": (self._row_after(row, -1), column), "Down": (self._row_after(row, 1), column),
+                     "Left": (row, self._column_after(column, -1)), "Right": (row, self._column_after(column, 1)),
+                     "Home": (rows[0] if ctrl and rows else row, columns[0]),
+                     "End": (rows[-1] if ctrl and rows else row, columns[-1]),
+                     "PgUp": (self._row_after(row, -page), column), "PgDn": (self._row_after(row, page), column)}
             if key in moves:
                 self._move(*moves[key], extend=held == ["Shift"] and key in ("Up", "Down", "PgUp", "PgDn"))
                 return "break"
         if held == ["Ctrl"] and key in ("Up", "Down", "Left", "Right"):  # to the edge, as in a spreadsheet
-            self._move(*{"Up": (0, column), "Down": (self._last_row(), column), "Left": (row, 0),
-                         "Right": (row, len(self._kinds) - 1)}[key])
+            rows, columns = self._view_rows() or [row], self._view_columns()
+            self._move(*{"Up": (rows[0], column), "Down": (rows[-1], column), "Left": (row, columns[0]),
+                         "Right": (row, columns[-1])}[key])
             return "break"
         if key in ("Up", "Down", "Left", "Right", "Home", "End", "PgUp", "PgDn"):
             return "break"  # (with other keys held: nothing, rather than Tk's own moves)
@@ -1402,7 +2366,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             self._edit(as_text=name == "F2")  # (F2: a date or time's text, as a text cell's; Enter: its list)
             return "break"
         if name in ("Del", "Backspace"):  # (Backspace: the Mac's delete key)
-            self._keyed(self._delete_chosen, "Delete", "emptied")
+            self._keyed(self._delete_chosen)
             return "break"
         if e.keysym == "space" and held == [] and e.state & 0x1:  # Shift+Space: this row, as in a spreadsheet
             self._choose_row(row)
@@ -1411,8 +2375,8 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             self._tree.selection_set(())
             return "break"
         shortcuts = {"Ctrl+Z": self.undo, "Ctrl+Y": self.redo, "Ctrl+Shift+Z": self.redo,
-                     "Ctrl+C": self.copy, "Ctrl+X": lambda: self._keyed(self.cut, "Cut", "cut"),
-                     "Ctrl+V": lambda: self._keyed(self.paste, "Paste", "pasted"), "Ctrl+A": self.select_all}
+                     "Ctrl+C": self.copy, "Ctrl+X": lambda: self._keyed(self.cut),
+                     "Ctrl+V": lambda: self._keyed(self.paste), "Ctrl+A": self.select_all}
         if name in shortcuts:
             shortcuts[name]()
             return "break"
@@ -1431,20 +2395,21 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     def _tab(self, step):
         """Tab: the next cell, on to the next row; from the last cell, out of the table."""
         row, column = self._cur
-        column += step
-        if column >= len(self._kinds):
-            row, column = row + 1, 0
-        elif column < 0:
-            row, column = row - 1, len(self._kinds) - 1
-        if not 0 <= row <= self._last_row():
+        columns, rows = self._view_columns(), self._view_rows()
+        at = columns.index(self._nearest(columns, column)) + step
+        if 0 <= at < len(columns):
+            self._move(row, columns[at])
+            return "break"
+        place = rows.index(self._nearest(rows, row)) + (1 if at >= len(columns) else -1) if rows else -1
+        if not 0 <= place < len(rows):
             return None  # (the form's Tab: the next control)
-        self._move(row, column)
+        self._move(rows[place], columns[0] if at >= len(columns) else columns[-1])
         return "break"
 
     # ----- editing -----
 
     def _can_edit(self, column):
-        return self._editable and self._enabled and not self._kinds[column].readonly
+        return self._editable and self._enabled and not self._kinds[column].locked
 
     def _edit(self, typed=None, as_text=False):
         """Edit the cell under the cursor: typed replaces it; otherwise what's there is kept."""
@@ -1460,7 +2425,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if kind.kind == "check":
             refused = self._refusal(row, column, not current)
             if refused:
-                self._tell(kind.name, refused)
+                self._refused(row, column, not current, refused)
             else:
                 self._store(row, column, not current)
             return
@@ -1469,7 +2434,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             start = current
             if typed:
                 start = next((c for c in kind.choices if c.lower().startswith(typed.lower())), current)
-            editor.set(start)
+            editor.set("" if start is None else start)  # (an empty cell: nothing chosen yet)
             # (finished once Tk's own handling of the choice is done; chosen with Enter: on, as
             # enter_moves says, as Enter does elsewhere; with a click: here)
             self._choice_keyed = False
@@ -1556,14 +2521,14 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     def _month_chosen(self, row, column, day, how):
         refused = self._refusal(row, column, day)
         if refused:
-            self._tell(self._kinds[column].name, refused)
+            self._refused(row, column, day, refused)
             return
         self._store(row, column, day)
         down, across = _ENTER_STEPS[self._enter_moves] if how == "key" else (0, 0)
         if across:
             self._tab(across)
         elif down:
-            self._move(self._cur[0] + down, self._cur[1])
+            self._move(self._row_after(self._cur[0], down), self._cur[1])
 
     def _text_editor(self, kind):
         """A text cell's editor: a classic Entry in a thin frame of the cursor's color, the cell
@@ -1610,14 +2575,14 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if self._editor is None:
             return
         focus = str(self._tree.tk.call("focus"))  # (a path: focus_get() fails in a choice's list)
-        if focus == str(self._editor) or focus.startswith(str(self._editor) + ".") or self._telling:
-            return  # (the editor, or a choice's own list, or a message about it)
+        if focus == str(self._editor) or focus.startswith(str(self._editor) + "."):
+            return  # (the editor, or a choice's own list)
         if not self._finish(tell=False):
             self._cancel()
 
     def _finish(self, down=0, across=0, tell=True):
-        """Save the edit (True), then move the cursor; False if what's typed doesn't fit its
-        column or cellvalidate refuses it (said in a message, with tell)."""
+        """Save the edit (True), then move the cursor; False if what's typed can't be its
+        column's kind or cellvalidate refuses it (cellrefused says so)."""
         if self._editor is None:
             return True
         row, column = self._editing
@@ -1630,12 +2595,9 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
                 value = kind.convert(text)
                 refused = self._refusal(row, column, value)
             except ValueError as e:
-                refused = str(e)
+                value, refused = text, str(e)
             if refused:
-                if tell:
-                    self._tell(kind.name, refused)
-                else:
-                    self._tree.bell()
+                self._refused(row, column, value, refused)
                 return False
             self._close_editor()
             self._store(row, column, value)
@@ -1643,7 +2605,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             if across:
                 self._tab(across)
             else:
-                self._move(self._cur[0] + down, self._cur[1])
+                self._move(self._row_after(self._cur[0], down), self._cur[1])
         return True
 
     def _cancel(self):
@@ -1654,19 +2616,15 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         returns False, or a message saying why."""
         answer = self._raise("cellvalidate", row, column, value)
         if answer is False:
-            return f"{self._kinds[column].name}: {self._kinds[column].text(value)} isn't allowed"
+            return f"{self._kinds[column].label}: {self._kinds[column].text(value)} isn't allowed"
         if isinstance(answer, str) and answer:
             return answer
         return None
 
-    def _tell(self, title, message):
-        """A refusal, said in a message (the editor, if open, keeps the keyboard after it)."""
-        self._tree.bell()
-        self._telling = True
-        try:
-            messagebox.showwarning(title, message, parent=self._tree)
-        finally:
-            self._telling = False
+    def _refused(self, row, column, value, reason):
+        """The user's value couldn't be kept: cellrefused says so, for the program to tell the user
+        (or not) as it likes; an editor open keeps the keyboard, and what was typed."""
+        self._raise("cellrefused", row, column, value, reason)
         if self._editor is not None:
             self._editor.focus_set()
 
@@ -1693,7 +2651,9 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             if self._data[row][column] != value:
                 self._record("cell", self._data[row], column, self._data[row][column], value)
                 self._data[row][column] = value
-                self._show_row(row)
+                self._touched[id(self._data[row])] = self._data[row]
+                self._pinned = self._data[row]  # (in sight, filter or not, till the cursor leaves it)
+                self._shown_again(row)
                 self._raise("cellchange", row, column)
 
     # ----- undo -----
@@ -1721,9 +2681,13 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     def _forget(self):
         """Its rows are new (set from code, loaded, new columns): no taking back changes to the
         old ones, and their colors go with them."""
+        self._forget_steps()
+        self._row_colors.clear()
+
+    def _forget_steps(self):
+        """Undo's steps no longer fit (a column added, taken away, or its values converted)."""
         self._undone.clear()
         self._redone.clear()
-        self._row_colors.clear()
 
     @property
     def can_undo(self):
@@ -1784,6 +2748,8 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         for row, column in touched:
             if place(row) is not None:
                 self._raise("cellchange", place(row), column)
+                self._touched[id(row)] = row
+        self._check_rows(keep=self._cur[0])
 
     # ----- the clipboard -----
 
@@ -1805,8 +2771,8 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if not (self._editable and self._enabled):
             return
         cells = [(r, c) for r, columns in self._copied() if r < len(self._data) for c in columns
-                 if not self._kinds[c].readonly]
-        self._change({cell: self._kinds[cell[1]].blank() for cell in cells})
+                 if not self._kinds[c].locked]
+        self._change({cell: None for cell in cells})
 
     def paste(self, text=None):
         """Paste tab-separated text (the clipboard's, unless text is given), as a spreadsheet
@@ -1826,40 +2792,46 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if not lines:
             return
         top, left = self._cur
-        if all(len(line) == len(self._kinds) for line in lines):
-            left = 0  # whole rows (copied from here, say): from the first column, wherever the cursor is
+        columns = self._view_columns()
+        if all(len(line) == len(columns) for line in lines):
+            left = columns[0]  # whole rows (copied from here, say): from the first column, wherever the cursor is
         chosen = sorted(int(i) for i in self._tree.selection() if i != "new")
         if len(lines) == 1 and len(lines[0]) == 1 and chosen:
             cells = {(row, left): lines[0][0] for row in chosen}
         else:
-            cells = {(top + i, left + j): value for i, line in enumerate(lines) for j, value in enumerate(line)
-                     if left + j < len(self._kinds)}
+            rows = self._view_rows()  # (down the rows shown, then new ones; across the columns shown)
+            rows = rows[rows.index(self._nearest(rows, top)):]
+            rows += list(range(max(rows[-1] + 1, len(self._data)) if rows else len(self._data),
+                               len(self._data) + len(lines)))
+            across = columns[columns.index(self._nearest(columns, left)):]
+            cells = {(rows[i], across[j]): value for i, line in enumerate(lines) for j, value in enumerate(line)
+                     if i < len(rows) and j < len(across)}
         cells = {(r, c): v for (r, c), v in cells.items()  # (past the bottom: new rows, if addable)
-                 if not self._kinds[c].readonly and (r < len(self._data) or self._new_row())}
+                 if not self._kinds[c].locked and (r < len(self._data) or self._new_row())}
         converted = {}
         for (row, column), value in cells.items():  # (all of them, before anything changes)
             try:
                 converted[row, column] = self._kinds[column].convert(value)
             except ValueError as e:
-                raise ValueError(f"row {row}: {e}") from None
+                raise _Refused(row, column, value, str(e)) from None
         self._change(converted)
 
-    def _keyed(self, action, title, done):
-        """A key's action (paste, cut, delete): if refused, nothing changed, so say why."""
+    def _keyed(self, action):
+        """A key's action (paste, cut, delete): if refused, nothing changed: cellrefused says why."""
         try:
             action()
-        except ValueError as e:
-            self._tell(title, f"Nothing was {done}: {e}")
+        except _Refused as e:
+            self._refused(e.row, e.column, e.value, e.reason)
 
     def select_all(self):
         """Choose every row. Ctrl+A."""
-        self._tree.selection_set([str(i) for i in range(len(self._data))])
+        self._tree.selection_set([str(i) for i in self._in_view])
 
     def _copied(self):
         """What copy() takes: [(row, [columns])]."""
         chosen = sorted(int(i) for i in self._tree.selection() if i != "new")
         if chosen:
-            return [(row, list(range(len(self._kinds)))) for row in chosen]
+            return [(row, self._view_columns()) for row in chosen]  # (the columns shown)
         return [(self._cur[0], [self._cur[1]])]
 
     def _change(self, cells):
@@ -1871,7 +2843,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         for (row, column), value in sorted(cells.items()):  # (all of them, before anything changes)
             refused = self._refusal(row, column, value)
             if refused:
-                raise ValueError(f"row {row}: {refused}")
+                raise _Refused(row, column, value, refused)
         with self._step():
             added = range(len(self._data), max(row for row, _ in cells) + 1)
             for row in added:
@@ -1886,9 +2858,13 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             for row, column in changed:
                 self._record("cell", self._data[row], column, self._data[row][column], cells[row, column])
                 self._data[row][column] = cells[row, column]
+                self._touched[id(self._data[row])] = self._data[row]
+            if self._cur[0] < len(self._data):
+                self._pinned = self._data[self._cur[0]]  # (the cursor's row stays in sight)
             self._refresh()
             for row, column in changed:
                 self._raise("cellchange", row, column)
+        self._check_rows(keep=self._cur[0])  # (a paste's rows: now, but the one the cursor's on)
 
     # ----- deleting and sorting -----
 
@@ -1898,8 +2874,8 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         chosen = sorted((int(i) for i in self._tree.selection() if i != "new"), reverse=True)
         if not chosen:
             row, column = self._cur
-            if row < len(self._data) and self._editable and self._enabled and not self._kinds[column].readonly:
-                self._change({(row, column): self._kinds[column].blank()})
+            if row < len(self._data) and self._editable and self._enabled and not self._kinds[column].locked:
+                self._change({(row, column): None})
             else:
                 self._tree.bell()
             return
@@ -1924,18 +2900,21 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     def sort(self, column, descending=False, key=None):
         """Sort the rows by a column (its header or number); the header shows ▲ or ▼. key, as
         sorted()'s, gives what to sort each value by: natural order, say, with natsort's
-        natsort_keygen(). (The usual: text ignoring case, choices in their order.)"""
+        natsort_keygen(). (The usual: text ignoring case, choices in their order.) Empty values go
+        last, either way, as a database's NULLs do."""
         column = self._column_at(column)
         kind = self._kinds[column]
         key = key or kind.sort_key
+        filled = [row for row in self._data if row[column] is not None]
         try:
-            self._data.sort(key=lambda row: key(row[column]), reverse=bool(descending))
+            filled.sort(key=lambda row: key(row[column]), reverse=bool(descending))
         except TypeError as e:
             raise TypeError(f"{kind.name} can't be sorted that way: {e}") from None
+        self._data[:] = filled + [row for row in self._data if row[column] is None]
         self._sorted = (column, bool(descending), key)
         for i, k in enumerate(self._kinds):
             mark = (" \u25bc" if descending else " \u25b2") if i == column else ""
-            self._tree.heading(f"c{i}", text=k.name + mark)
+            self._tree.heading(f"c{i}", text=k.label + mark)
         self._refresh()
 
     @property
@@ -1951,7 +2930,8 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         return raiser(*args) if raiser is not None else None
 
     def bind_event(self, event, handler):
-        if event in ("cellchange", "cellvalidate", "rowadd", "rowdelete", "rowclick", "columnclick"):
+        if event in ("cellchange", "cellvalidate", "cellrefused", "rowinvalid", "rowadd", "rowdelete", "rowclick",
+                     "columnclick"):
             self._raisers[event] = handler
         elif event == "dblclick":
             self._tree.bind("<Double-Button-1>", lambda e: self._tree.identify_row(e.y) and handler(), add="+")

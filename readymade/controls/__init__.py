@@ -40,7 +40,7 @@ from readymade.controls.tabstrip import TabStrip
 from readymade.controls.buttons import Button, CheckBox, OptionButton
 from readymade.controls.lists import ComboBox, ListBox
 from readymade.controls.trees import ListItem, ListView, Node, TreeView
-from readymade.controls.datatable import Block, Column, DataTable
+from readymade.controls.datatable import Block, Column, DataError, DataTable, Problem
 from readymade.controls.dates import Calendar, DatePicker, TimePicker
 from readymade.controls.ranges import ProgressBar, ScrollBar, Slider, UpDown
 from readymade.controls.image import Image
@@ -57,5 +57,5 @@ __all__ = [
     "Picture", "Ranged", "TabIndex", "TabStop", "Tooltip", "VAligned", "WidgetText",
     "Label", "TextBox", "Frame", "TabStrip", "Button", "CheckBox", "OptionButton", "ComboBox", "ListBox", "TreeView",
     "ListView", "DataTable", "Calendar", "DatePicker", "TimePicker", "ScrollBar", "Slider", "UpDown", "ProgressBar", "Image", "Canvas", "Grid", "Timer",
-    "Node", "ListItem", "Column", "Block",
+    "Node", "ListItem", "Column", "Block", "DataError", "Problem",
 ]

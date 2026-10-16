@@ -7,25 +7,37 @@ from readymade import Form, app_path, msgbox, open_file_dialog, save_file_dialog
 
 TAX_RATE = Decimal("0.08")  # on the rows ticked Taxable (Price and Total are money: Decimals)
 CENT = Decimal("0.01")
+AT_FAULT = "#ffe0e0"  # rows that break the columns' rules (see Form1.form: Items' columns)
 CSV_FILES = {"CSV files": "*.csv", "All files": "*.*"}
 
 
 class Form1(Form):
     def Form_load(self):
+        # Total is worked out by a formula, from each row's Price and Qty: the table keeps it up
+        # to date as they change (by the user, by code, by undo), and the user can't edit it.
+        self.Items.columns["Total"].formula = lambda row: row["Price"] * row["Qty"]
         self.Items.load_csv("order.csv")  # (a path from the program's folder)
         self.Items.autosize_columns("Item")  # wide enough for the longest; the rest share what's left
         self.work_out_totals()
 
+        # Programatic example of adding a new column, defaulting to type string
+        # and then adding a formula for the column to show calculations 
+        # using various python techniques: list comprehensions and map
+        self.Items.columns.append("Running")
+        self.Items.columns["Running"].formula = lambda table: [round(x, 2) for x in (table["Qty"] * table["Price"] * (1 + TAX_RATE * table["Taxable"] ) ).cumsum() ]
+        #self.Items.columns["Running"].formula = lambda table: round( (table["Qty"] * table["Price"] * (1 + TAX_RATE * table["Taxable"] ) ).cumsum()  , 2)
+        #self.Items.columns["Running"].formula = lambda table: ((table["Qty"] * table["Price"] * (1 + TAX_RATE * table["Taxable"] ) ).cumsum()).map( lambda f: round(f,2) )
+
     def work_out_totals(self):
-        """Each row's Total, then the order's. A column is a Column: arithmetic on it works on
-        every value at once, as in a spreadsheet's column of formulas."""
+        """The order's totals (each row's, its formula sees to). A column is a Column: sum() and
+        the like work on every value at once, as a spreadsheet's do."""
         items = self.Items
-        items["Total"] = items["Price"] * items["Qty"]
         subtotal = items["Total"].sum()
         tax = items["Total"][items["Taxable"]].sum() * TAX_RATE  # (the Totals where Taxable is ticked)
         tax = tax.quantize(CENT, rounding=ROUND_HALF_UP)  # to the cent, a half up, as a receipt does
-        for row in items.rows:  # rows with nothing ordered, grayed (a row's color stays with it)
-            row.forecolor = "#909090" if row["Qty"] == 0 else ""
+        for number, row in enumerate(items.rows):
+            row.forecolor = "#909090" if row["Qty"] == 0 else ""  # nothing ordered: grayed
+            row.backcolor = AT_FAULT if items.problems(number) else ""  # breaking a rule: marked
         self.Totals.text = (f"{len(items.rows)} rows     Subtotal {subtotal:,.2f}     "
                             f"Tax {tax:,.2f}     Total {subtotal + tax:,.2f}  ")
 
@@ -34,14 +46,11 @@ class Form1(Form):
     def Items_cellchange(self, row, column):
         self.work_out_totals()  # (column is a number: self.Items.headers[column] names it)
 
-    def Items_cellvalidate(self, row, column, value):  # before a change is kept: refuse it here
-        if self.Items.headers[column] == "Qty" and value < 0:  # (value is already a number)
-            return "Qty can't be less than 0"
-        return None
+    def Items_rowinvalid(self, row, problems):  # the cursor left a row that breaks a rule: say so
+        self.Status.text = "; ".join(str(problem) for problem in problems)  # (Price can't be empty...)
 
-    def Items_rowadd(self, row):
-        self.Items[row, "Qty"] = 1  # a new row's defaults
-        self.Items[row, "Taxable"] = True
+    def Items_cellrefused(self, row, column, value, reason):  # typed what can't be its kind: say so
+        self.Status.text = reason  # (Qty: 'lots' isn't a number)
 
     def Items_rowdelete(self, row, values):
         self.Status.text = f"Removed {values[0]}"
@@ -49,7 +58,8 @@ class Form1(Form):
 
     def Items_rowclick(self, row):  # the cursor moved to another row (Enter after an edit too)
         r = self.Items.rows[row]  # (a row: by column number, or by header)
-        self.Status.text = f"{r['Item']}: {r['Qty']} at {r['Price']:.2f} = {r['Total']:.2f}"
+        if r["Price"] is not None and r["Qty"] is not None:  # (empty cells are None)
+            self.Status.text = f"{r['Item']}: {r['Qty']} at {r['Price']:.2f} = {r['Total']:.2f}"
 
     # ----- the buttons -----
 
@@ -66,6 +76,11 @@ class Form1(Form):
             self.Status.text = f"Opened {path.name}"
 
     def SaveButton_click(self):
+        problems = self.Items.problems()  # (the program decides what problems mean: here, it asks)
+        count = f"{len(problems)} problem" + ("s" if len(problems) > 1 else "")
+        if problems and msgbox(f"{count}, the first: row {problems[0].row}: {problems[0]}."
+                               "\n\nSave anyway?", buttons="yesno", icon="warning") != "yes":
+            return
         path = save_file_dialog("Save the order", CSV_FILES, folder=app_path(), filename="my order.csv")
         if path:
             self.Items.save_csv(path)
@@ -79,7 +94,7 @@ class Form1(Form):
         self.Items.sort("Total", descending=True)
 
     def DropButton_click(self):
-        self.Items.rows = [row for row in self.Items.rows if row["Qty"] > 0]  # rows is a list
+        self.Items.rows = [row for row in self.Items.rows if row["Qty"]]  # rows is a list (Qty: not 0 or empty)
         self.work_out_totals()
 
     def SaleButton_click(self):

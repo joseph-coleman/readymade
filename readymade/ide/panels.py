@@ -3,6 +3,7 @@ and while a program is paused, Locals, Watches, Call Stack and Breakpoints."""
 
 from __future__ import annotations
 
+import json
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
@@ -575,7 +576,7 @@ class PropertiesPanel(ttk.Frame):
         ttk.Label(dialog.body, text=hint).pack(anchor="w", pady=(0, 2))
         text = tk.Text(dialog.body, width=32, height=10, font=options.ensure_code_font(dialog), undo=True)
         text.pack(fill=tk.BOTH, expand=True)
-        text.insert("1.0", "\n".join(value) if isinstance(value, list) else value)
+        text.insert("1.0", "\n".join(map(_line, value)) if isinstance(value, list) else value)
 
         def ok():
             self.app.set_property(obj, prop, text.get("1.0", "end-1c"))
@@ -588,9 +589,14 @@ class PropertiesPanel(ttk.Frame):
         dialog.grab_set()
 
 
+def _line(item):
+    """A list item as a line: itself, or a dict (a DataTable column's definition) as JSON."""
+    return json.dumps(item) if isinstance(item, dict) else str(item)
+
+
 def _display(value):
     if isinstance(value, list):
-        return "; ".join(value)
+        return "; ".join(map(_line, value))
     return str(value).replace("\n", " \u23ce ")  # show line breaks in multi-line text as ⏎
 
 

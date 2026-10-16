@@ -38,10 +38,10 @@ def test_column_lines():
 def test_values_take_their_columns_kind():
     price, qty, stock, size = (ColumnKind.parse(line) for line in COLUMNS[1:5])
     assert price.convert("1.2") == 1.2 and price.convert(3) == 3.0 and price.convert("1,234.567") == 1234.57
-    assert price.show(1.2) == "1.20" and price.convert("") == 0
+    assert price.show(1.2) == "1.20" and price.convert("") is None and price.show(None) == ""  # (empty: None)
     assert qty.convert("3") == 3 and isinstance(qty.convert("3"), int) and qty.convert("2.5") == 2.5
-    assert stock.convert("yes") is True and stock.convert("") is False and stock.convert(1) is True
-    assert size.convert("m") == "M" and size.convert("") == "S"  # (blank: the first choice)
+    assert stock.convert("yes") is True and stock.convert("") is None and stock.convert(1) is True
+    assert size.convert("m") == "M" and size.convert("") is None  # (empty, as a database's NULL)
     for kind, bad in ((price, "abc"), (price, True), (stock, "maybe"), (size, "XL")):
         with pytest.raises(ValueError):
             kind.convert(bad)
@@ -57,7 +57,7 @@ def test_money_is_exact():
     money, yen = ColumnKind.parse("Price : money"), ColumnKind.parse("Yen : money 0, readonly")
     assert (money.kind, money.decimals, money.line(), yen.line()) == ("money", 2, "Price : money", "Yen : money 0, readonly")
     assert money.convert("2.675") == D("2.68")  # (a half up, as a receipt; a float rounds this to 2.67)
-    assert money.convert(1.1) == D("1.10") and money.convert(3) == D("3.00") and money.convert("") == D("0.00")
+    assert money.convert(1.1) == D("1.10") and money.convert(3) == D("3.00") and money.convert("") is None
     assert money.convert("$1,234.5") == D("1234.50") and money.convert(" \u20ac9.99 ") == D("9.99")
     assert yen.convert("1500.4") == D("1500")
     assert money.show(D("1234.5")) == "1,234.50" and money.text(D("1234.5")) == "1234.50"  # (CSV: no commas)
@@ -167,8 +167,8 @@ ROWS = [["Apples", 1.2, 3, True, "M"], {"Item": "Pears", "Price": "0.95", "Qty":
 def test_the_data_the_pythonic_way(make_form):
     table = make_form().Stock
     table.rows = ROWS
-    assert table.rows == [["Apples", 1.2, 3, True, "M", 0.0], ["Pears", 0.95, 2, False, "S", 0.0],
-                          ["Plums", 2.1, 0, True, "L", 0.0]]
+    assert table.rows == [["Apples", 1.2, 3, True, "M", None], ["Pears", 0.95, 2, None, None, None],
+                          ["Plums", 2.1, 0, True, "L", None]]  # (what wasn't given: empty, None)
     table["Total"] = table["Price"] * table["Qty"]
     assert table["Total"] == [3.6, 1.9, 0.0] and table["total"] == [3.6, 1.9, 0.0]  # (headers in any case)
     assert table[1, "Price"] == 0.95 and table[-1, 4] == "L" and table.rows[0].asdict()["Size"] == "M"
@@ -179,7 +179,7 @@ def test_the_data_the_pythonic_way(make_form):
     table.rows.insert(0, ["Figs", 3])
     del table.rows[1]
     assert [r[0] for r in table.rows] == ["Figs", "Pears", "Plums", "Kiwi"] and len(table.rows) == 4
-    assert table.rows[-1] == ["Kiwi", 0.5, 0, False, "S", 0.0]  # (missing cells: blank)
+    assert table.rows[-1] == ["Kiwi", 0.5, None, None, None, None]  # (missing cells: empty)
     table["In stock"] = True  # one value: every row
     assert all(table["In stock"])
     assert table._tree.item("1", "values")[1] == "0.95"  # (shown with its decimals)
@@ -196,11 +196,13 @@ def test_the_data_the_pythonic_way(make_form):
 
 
 @pytest.mark.usefixtures("display")
-def test_editing_like_a_spreadsheet(make_form, monkeypatch):
+def test_editing_like_a_spreadsheet(make_form):
     changes, said = [], []
-    monkeypatch.setattr(datatable_module.messagebox, "showwarning", lambda title, message, **kw: said.append(message))
 
     class Form1(Form):
+        def Stock_cellrefused(self, row, column, value, reason):
+            said.append(reason)
+
         def Stock_cellchange(self, row, column):
             changes.append((row, column, self.Stock[row, column]))
             self.Stock["Total"] = self.Stock["Price"] * self.Stock["Qty"]
@@ -288,7 +290,7 @@ def test_delete_sort_and_switches(make_form):
     key(form, "Delete")  # a chosen row: it goes
     assert deleted == [(1, "Pears")] and [r[0] for r in table.rows] == ["Apples", "Plums"]
     key(form, "Delete")  # none chosen: the cell is emptied
-    assert [r[0] for r in table.rows] == ["Apples", ""] and len(deleted) == 1
+    assert [r[0] for r in table.rows] == ["Apples", None] and len(deleted) == 1
     key(form, "Up")
     key(form, "Down", state=0x1)  # Shift+Down: from here to there
     assert table._tree.selection() == ("0", "1")
@@ -302,7 +304,7 @@ def test_delete_sort_and_switches(make_form):
     assert not table._tree.exists("new")
     table.sortable = False
     table._header_clicked(0)
-    assert [r[0] for r in table.rows] == ["Apples", ""]  # (not sorted)
+    assert [r[0] for r in table.rows] == ["Apples", None]  # (not sorted)
     table.editable = False
     key(form, "x")
     assert table._editor is None
@@ -314,17 +316,17 @@ def test_csv_and_changing_columns(make_form, tmp_path):
     table.rows = ROWS
     table.save_csv("stock.csv")  # (in the program's folder)
     text = (tmp_path / "stock.csv").read_text(encoding="utf-8")
-    assert text.splitlines()[0] == "Item,Price,Qty,In stock,Size,Total" and "Apples,1.20,3,True,M,0.00" in text
+    assert text.splitlines()[0] == "Item,Price,Qty,In stock,Size,Total" and "Apples,1.20,3,True,M," in text
     (tmp_path / "other.csv").write_text("size,ITEM,ignored\nL,Melon,x\n,Lime,y\n", encoding="utf-8")
-    table.load_csv(tmp_path / "other.csv")  # by header, in any order; missing columns blank
-    assert table.rows == [["Melon", 0, 0, False, "L", 0], ["Lime", 0, 0, False, "S", 0]]
+    table.load_csv(tmp_path / "other.csv")  # by header, in any order; missing columns empty
+    assert table.rows == [["Melon", None, None, None, "L", None], ["Lime", None, None, None, None, None]]
     (tmp_path / "bad.csv").write_text("Item,Price\nX,cheap\n", encoding="utf-8")
     with pytest.raises(ValueError, match="bad.csv, line 2: Price: 'cheap' isn't a number"):
         table.load_csv("bad.csv")
     table.columns = ["Item", "Size : number"]  # what fits stays; what doesn't is blank
-    assert table.rows == [["Melon", 0], ["Lime", 0]] and table.columns == ["Item", "Size : number"]
+    assert table.rows == [["Melon", None], ["Lime", None]] and table.columns == ["Item", "Size : number"]
     assert table.headers == ["Item", "Size"]
-    with pytest.raises(ValueError, match="same header: item"):
+    with pytest.raises(ValueError, match="same name or header: item"):
         table.columns = ["Item", "item"]
 
 
@@ -350,7 +352,7 @@ def test_a_choices_list_from_the_keyboard(make_form):
     key(form, "Return")
     in_list("Up")
     in_list("Escape")  # never mind: no change, nothing left open
-    assert table[1, "Size"] == "S" and table._editor is None and not call("grab", "current")
+    assert table[1, "Size"] is None and table._editor is None and not call("grab", "current")
     key(form, "Down")
     assert table.current == (2, 4)
     key(form, "Return")
@@ -400,7 +402,7 @@ def test_slicing_like_numpy(make_form):
     assert table[[3, 0], "Item"] == ["Figs", "Apples"] and table[2, :] == table.rows[2].tolist()
     big = table["Total"] > 2
     assert table[big, "Item"] == ["Apples", "Figs"] and table[~big, :].shape == (2, 6)
-    assert table[table["Size"].eq("S") & (table["Qty"] > 0), "Item"] == ["Pears", "Figs"]
+    assert table[table["Size"].eq(None) & (table["Qty"] > 0), "Item"] == ["Pears", "Figs"]  # (no size given)
 
     table[big, "Price"] = table[big, "Price"] * 0.5  # setting what a condition chose
     assert table["Price"] == [0.6, 0.95, 2.1, 1.5]
@@ -518,7 +520,7 @@ def test_copy_and_paste_like_a_spreadsheet(make_form):
     assert form.root.clipboard_get() == "1.20"
     table._tree.selection_set("0", "2")
     table.copy()  # several rows chosen: those rows, tab-separated, as spreadsheets copy
-    assert form.root.clipboard_get() == "Apples\t1.20\t3\tTrue\tM\t0.00\nPlums\t2.10\t0\tTrue\tL\t0.00"
+    assert form.root.clipboard_get() == "Apples\t1.20\t3\tTrue\tM\t\nPlums\t2.10\t0\tTrue\tL\t"
 
     table.current = (1, "Item")
     table.paste('Melon\t"4.5"\t2\r\nLime, "Persian"\t0.4\t9\r\n')  # (as Excel copies it)
@@ -527,7 +529,7 @@ def test_copy_and_paste_like_a_spreadsheet(make_form):
     events.clear()
     table.current = (2, "Size")
     table.paste("S\t99\textra\nM\t98\textra")  # Total is readonly and nothing's past it; a new row at the bottom
-    assert table[2, "Size"] == "S" and table[2, "Total"] == 0 and table.rows[3] == ["", 0, 1, False, "M", 0]
+    assert table[2, "Size"] == "S" and table[2, "Total"] is None and table.rows[3] == [None, None, 1, None, "M", None]
     assert events == [("add", 3), ("change", 2, 4), ("change", 3, 4)]
     table.current = (0, "Price")
     with pytest.raises(ValueError, match="row 1: Price: 'cheap' isn't a number"):
@@ -540,22 +542,28 @@ def test_copy_and_paste_like_a_spreadsheet(make_form):
     assert table["Qty"] == [7, 7, 7, 1]
     table._tree.selection_set(())
     table.cut()  # the cell: copied, then emptied
-    assert form.root.clipboard_get() == "7" and table[0, "Qty"] == 0
+    assert form.root.clipboard_get() == "7" and table[0, "Qty"] is None  # (cut: emptied)
     table._choose_row(0)
     table.copy()  # one chosen row: the row
-    assert form.root.clipboard_get() == "Apples\t1.20\t0\tTrue\tM\t0.00"
+    assert form.root.clipboard_get() == "Apples\t1.20\t\tTrue\tM\t"  # (empty cells: nothing)
     key(form, "a", state=0x4)  # Ctrl+A
     assert table._tree.selection() == ("0", "1", "2", "3")
     table.editable = False
     form.root.clipboard_clear()
     form.root.clipboard_append("5")
     key(form, "v", state=0x4)  # (not editable: nothing)
-    assert table[0, "Qty"] == 0
+    assert table[0, "Qty"] is None
 
 
 @pytest.mark.usefixtures("display")
-def test_whole_rows_paste_from_the_first_column_and_a_refused_paste_says_why(make_form, monkeypatch):
-    form = make_form()
+def test_whole_rows_paste_from_the_first_column_and_a_refused_paste_says_why(make_form):
+    said = []
+
+    class Form1(Form):
+        def Stock_cellrefused(self, row, column, value, reason):
+            said.append((row, column, value, reason))
+
+    form = make_form(Form1)
     table = form.Stock
     table.rows = ROWS
     table._tree.focus_force()
@@ -564,14 +572,12 @@ def test_whole_rows_paste_from_the_first_column_and_a_refused_paste_says_why(mak
     table._move(3, 2)  # the blank row, in Qty
     settle(form)
     key(form, "v", state=0x4)  # whole rows: from Item, not from Qty
-    assert table.rows[3:] == [["Apples", 1.2, 3, True, "M", 0], ["Pears", 0.95, 2, False, "S", 0]]
-    said = []
-    monkeypatch.setattr(datatable_module.messagebox, "showwarning", lambda title, message, **kw: said.append(message))
+    assert table.rows[3:] == [["Apples", 1.2, 3, True, "M", None], ["Pears", 0.95, 2, None, None, None]]
     form.root.clipboard_clear()
     form.root.clipboard_append("Apples")
     table.current = (0, "Price")
-    key(form, "v", state=0x4)
-    assert said == ["Nothing was pasted: row 0: Price: 'Apples' isn't a number"] and table[0, "Price"] == 1.2
+    key(form, "v", state=0x4)  # refused: cellrefused says why (no message of the table's own)
+    assert said == [(0, 1, "Apples", "Price: 'Apples' isn't a number")] and table[0, "Price"] == 1.2
 
 
 @pytest.mark.usefixtures("display")
@@ -648,11 +654,13 @@ def test_an_edit_scrolled_out_of_sight_ends_and_current_reaches_the_blank_row(ma
 
 
 @pytest.mark.usefixtures("display")
-def test_cellvalidate_refuses_what_the_program_wont_have(make_form, monkeypatch):
+def test_cellvalidate_refuses_what_the_program_wont_have(make_form):
     seen, said = [], []
-    monkeypatch.setattr(datatable_module.messagebox, "showwarning", lambda title, message, **kw: said.append(message))
 
     class Form1(Form):
+        def Stock_cellrefused(self, row, column, value, reason):  # (the program says it, as it likes)
+            said.append(reason)
+
         def Stock_cellvalidate(self, row, column, value):
             seen.append((row, column, value))
             if self.Stock.headers[column] == "Qty" and value < 0:
@@ -683,7 +691,7 @@ def test_cellvalidate_refuses_what_the_program_wont_have(make_form, monkeypatch)
     form.root.clipboard_clear()
     form.root.clipboard_append("4\n-1")
     key(form, "v", state=0x4)  # a paste: every cell checked first, so nothing changes
-    assert table["Qty"][:2] == [5, 2] and said[-1] == "Nothing was pasted: row 1: Qty can't be less than 0"
+    assert table["Qty"][:2] == [5, 2] and said[-1] == "Qty can't be less than 0"
     with pytest.raises(ValueError, match="row 1: Qty can't be less than 0"):
         table.paste("4\n-1")  # (from code: the ValueError)
     table[1, "Qty"] = -7  # code isn't checked
@@ -795,12 +803,12 @@ def test_undo_and_redo_the_users_changes(make_form):
     table._move(3, 0)  # the blank row: a new row, with rowadd's default
     key(form, "K", state=0x1)
     key(form, "Return")
-    assert table.rows[3][:3] == ["K", 0, 1]
+    assert table.rows[3][:3] == ["K", None, 1]
     events.clear()
     table.undo()  # the whole new row goes
     assert len(table.rows) == 3 and events == [("delete", 3, "K")]
     table.redo()  # and comes back as it was, default and all
-    assert table.rows[3][:3] == ["K", 0, 1]
+    assert table.rows[3][:3] == ["K", None, 1]
 
     table.sort("Item")  # (rows sorted between: undo still finds its rows)
     table.current = (0, "Item")
@@ -1055,3 +1063,388 @@ def test_typing_into_a_date_or_time_cell_however_it_was_opened(make_form):
     table._editor.insert(0, "Oct 20, 2026")
     key(form, "Tab")
     assert table[0, "Due"] == datetime.date(2026, 10, 20)
+
+
+# ----- data definitions: dicts, empty values, rules -----
+
+DEFINED = [
+    {"name": "Item", "required": True, "max_length": 12},
+    {"name": "Category", "choices": ["Food", "Hardware"]},
+    {"name": "price", "header": "Price", "kind": "money", "min": 0, "default": 0},
+    {"name": "Qty", "kind": "number", "min": 0, "max": 99, "default": 1},
+    {"name": "Code", "unique": True},
+    "Note",
+]
+
+
+def test_columns_defined_by_dicts():
+    from readymade.controls.datatable import DataError, Problem
+
+    item, category, price, qty, code, note = (ColumnKind.of(d) for d in DEFINED)
+    assert (item.required, item.max_length, category.kind, price.label, price.default) == (True, 12, "choice", "Price", D("0.00"))
+    assert note.line() == "Note" and qty.line() is None  # (a line, only for what a line can say)
+    assert qty.definition() == {"name": "Qty", "kind": "number", "default": 1, "min": 0, "max": 99}
+    assert ColumnKind.of('{"name": "Qty", "kind": "number", "min": 0}').min == 0  # (JSON, as the designer's lines)
+    assert ColumnKind.of({"name": "Id", "key": True}).definition() == {"name": "Id", "key": True}
+    assert item.rules(None) == [("required", None, "Item can't be empty")]
+    assert qty.rules(120)[0][:2] == ("max", 99) and item.rules("A rather long name")[0][:2] == ("max_length", 12)
+    for bad, message in (({"name": "Qty", "kind": "number", "requird": True}, "no setting 'requird'"),
+                         ({"name": "X", "kind": "colour"}, "isn't one of"),
+                         ({"name": "X", "decimals": 2}, "decimals is for a number or money"),
+                         ({"name": "X", "kind": "choice"}, "needs choices"),
+                         ({"name": "X", "kind": "number", "min": 5, "max": 1}, "min can't be more than max"),
+                         ({"name": "X", "kind": "number", "default": "lots"}, "isn't a number"),
+                         ({"kind": "number"}, "needs a name")):
+        with pytest.raises(ValueError, match=message):
+            ColumnKind.of(bad)
+    assert issubclass(DataError, ValueError) and str(Problem(1, 2, 3, "max", 2, "too big")) == "too big"
+
+
+def test_empty_values_and_columns_arithmetic():
+    price, qty = Column([D("2.50"), None, D("1.00")], "Price"), Column([2, 3, None], "Qty")
+    assert price * qty == [D("5.00"), None, None]  # (empty in, empty out: a database's NULL)
+    assert (price * qty).sum() == D("5.00") and qty.mean() == 2.5 and qty.min() == 2 and Column([None]).max() is None
+    assert (qty > 2) == [False, True, False] and qty.eq(None) == [False, False, True]
+    assert qty.clip(0, 2) == [2, 2, None] and Column(["a long note", None]).map(lambda s: s[:6]) == ["a long", None]
+    assert qty.map(lambda n: n * 10) == [20, 30, None] and -qty == [-2, -3, None]
+
+
+@pytest.mark.usefixtures("display")
+def test_codes_changes_keep_the_rules(make_form, tmp_path):
+    from readymade.controls.datatable import DataError
+
+    form = make_form(columns=DEFINED)
+    table = form.Stock
+    table.rows = [["Apples", "Food", 1.2, 3, "A1"], {"Item": "Pears", "Code": "P1"}]
+    assert table.rows[1] == ["Pears", None, D("0.00"), 1, "P1", None]  # (defaults for what wasn't given)
+    assert table.headers[2] == "Price" and table.names[2] == "price" and table[0, "Price"] == table[0, "price"]
+    with pytest.raises(DataError) as caught:
+        table["Qty"] = [5, 120]
+    problem, = caught.value.problems
+    assert (problem.row, problem.column, problem.value, problem.rule, problem.limit) == (1, 3, 120, "max", 99)
+    assert str(caught.value) == "Stock: row 1: Qty: 120 is more than 99" and table["Qty"] == [3, 1]  # (nothing changed)
+    with pytest.raises(DataError, match="Code: A1 is in row 0 too"):
+        table[1, "Code"] = "A1"
+    with pytest.raises(DataError, match="Item can't be empty"):
+        table.rows.append({"Code": "Z9"})
+    with pytest.raises(DataError, match=r"row 0: Item: 18 characters, more than 12 \(and 1 more\)"):
+        table.rows = [["A rather long name", "Food", -1]]
+    try:  # a program's own way out: fix what's at fault, then write it
+        table["Qty"] = [5, 120]
+    except DataError as e:
+        for p in e.problems:
+            if p.rule == "max":
+                table[p.row, p.column] = p.limit
+    assert table["Qty"] == [3, 99]
+    table["Qty"] = (table["Qty"] * 2).clip(0, 99)  # (or made to fit before it's written)
+    assert table["Qty"] == [6, 99]
+    (tmp_path / "old.csv").write_text("Item,Qty,Code\nX,500,C1\n,2,C1\n", encoding="utf-8")
+    with pytest.raises(DataError):
+        table.load_csv(tmp_path / "old.csv")
+    with table.unchecked():  # as it is, to fix after
+        table.load_csv(tmp_path / "old.csv")
+    assert [(p.row, p.rule) for p in table.problems()] == [(0, "max"), (0, "unique"), (1, "required"), (1, "unique")]
+    assert [p.rule for p in table.problems(1)] == ["required", "unique"]
+    assert [p.rule for p in table.check("Qty", 150)] == ["max"] and table.check("Code", "C1", row=0)[0].rule == "unique"
+    assert table.check("Code", "C9") == [] and table.check("Qty", None) == []
+    table["Qty"] = [1, 2]  # (a write to Qty: Qty's rules, not the problems already in other columns)
+    assert table["Qty"] == [1, 2]
+    with pytest.raises(ValueError, match="isn't a number"):
+        table.check("Qty", "lots")
+
+
+@pytest.mark.usefixtures("display")
+def test_users_changes_are_kept_and_reported(make_form):
+    refused, invalid = [], []
+
+    class Form1(Form):
+        def Stock_cellrefused(self, row, column, value, reason):
+            refused.append((row, column, value, reason))
+
+        def Stock_rowinvalid(self, row, problems):
+            invalid.append((row, [p.rule for p in problems]))
+            self.Stock.rows[row].backcolor = "#ffe0e0"  # (marked: the program's choice)
+
+    form = make_form(Form1, columns=DEFINED)
+    table = form.Stock
+    table.rows = [["Apples", "Food", 1.2, 3, "A1"], ["Pears", None, 2, 1, "P1"]]
+    table._tree.focus_force()
+    table.current = (0, "Qty")
+    settle(form)
+    key(form, "1")
+    table._editor.insert("end", "50")  # 150: over max, but the user's: kept
+    key(form, "Tab")
+    assert table[0, "Qty"] == 150 and invalid == []  # (not yet: the cursor's still on the row)
+    key(form, "Down")  # off the row: now it's checked
+    assert invalid == [(0, ["max"])] and table.rows[0].backcolor == "#ffe0e0"
+    table.current = (1, "Qty")
+    key(form, "x")
+    key(form, "Return")  # a value that can't be a number: refused, as cellrefused says, the editor still open
+    assert refused == [(1, 3, "x", "Qty: 'x' isn't a number")] and table._editor is not None and table[1, "Qty"] == 1
+    key(form, "Escape")
+    table._move(2, 4)  # a new row, typed column by column: incomplete, the program's to decide
+    key(form, "A", state=0x1)
+    table._editor.insert("end", "1")
+    key(form, "Return")  # (Enter: down, to the blank row: the new row left)
+    assert table.rows[2] == [None, None, D("0.00"), 1, "A1", None]
+    assert invalid[-1] == (2, ["required", "unique"]) and len(invalid) == 2
+    table.current = (2, "Item")
+    table.paste("Figs\nA name too long")  # a paste: its rows checked at once (but the one the cursor's on)
+    assert table["Item"][2:] == ["Figs", "A name too long"] and invalid[-1] == (3, ["max_length"])
+    table.current = (2, "Qty")
+    key(form, "5")
+    table._editor.insert("end", "00")
+    key(form, "Tab")  # 500, on the row the cursor's on...
+    count = len(invalid)
+    form.root.focus_force()  # ...checked when the keyboard leaves the table
+    settle(form)
+    assert len(invalid) == count + 1 and invalid[-1] == (2, ["max", "unique"])
+
+
+def test_the_designer_edits_definitions_as_json_lines():
+    from readymade.ide.editors import _convert
+    from readymade.ide.panels import _display, _line
+
+    lines = 'Item\n{"name": "Qty", "kind": "number", "min": 0}\n\nTotal : money'
+    assert _convert(lines, list) == ["Item", {"name": "Qty", "kind": "number", "min": 0}, "Total : money"]
+    assert _line({"name": "Qty", "min": 0}) == '{"name": "Qty", "min": 0}'
+    assert _display(["Item", {"name": "Qty"}]) == 'Item; {"name": "Qty"}'
+    with pytest.raises(ValueError, match="not a definition"):
+        _convert('{"name": "Qty",', list)
+
+
+# ----- columns from code: a live list, and validators -----
+
+@pytest.mark.usefixtures("display")
+def test_columns_added_changed_and_taken_away_from_code(make_form):
+    from readymade.controls.datatable import DataError
+
+    form = make_form(columns=["Item", "Price : money", "Qty : number"])
+    table = form.Stock
+    table.rows = [["Apples", 1.2, 3], ["Pears", 0.95, None]]
+    table.rows[0].backcolor = "#ffe0e0"
+    cols = table.columns
+    cols.append({"name": "Discount", "kind": "money", "default": 0})  # each row: its default
+    assert table["Discount"] == [D("0.00"), D("0.00")] and cols["Discount"].values == table["Discount"]
+    cols.insert(1, "Note")  # (a line works too)
+    assert table.names == ["Item", "Note", "Price", "Qty", "Discount"] and table.rows[1][1] is None
+    assert table._tree.heading("c1", "text") == "Note" and table.rows[0].backcolor == "#ffe0e0"  # (colors stay)
+    cols["Qty"].max = 50  # one setting
+    cols["Qty"].header = "Quantity"
+    assert cols["Qty"].max == 50 and table.headers[3] == "Quantity" and table._tree.heading("c3", "text") == "Quantity"
+    assert "Quantity" in cols and "Colour" not in cols and len(cols) == 5
+    with pytest.raises(DataError, match="Quantity: 60 is more than 50"):
+        table[0, "Qty"] = 60  # (the new rule holds from now on)
+    cols["Discount"].values = [0.5, 0.25]  # (the same as table["Discount"] = ...)
+    assert table["Discount"] == [D("0.50"), D("0.25")]
+    cols["Price"].kind = "number"  # values converted
+    assert table["Price"] == [1.2, 0.95] and str(table._tree.column("c2", "anchor")) == "e"
+    with pytest.raises(ValueError, match="needs choices"):
+        cols["Note"].kind = "choice"  # (a choice needs choices: refused, nothing changed)
+    assert cols["Note"].kind == "text"
+    cols["Qty"].name = "Count"  # renamed: the view follows
+    assert cols["Count"].max == 50 and table.names[3] == "Count"
+    with pytest.raises(ValueError, match="no setting|min can't be more than max"):
+        cols["Count"].min = 99  # (more than max: refused, nothing changed)
+    assert cols["Count"].min is None
+    with pytest.raises(ValueError, match="same name or header: item"):
+        cols.append("Item")
+    del cols["Note"]  # its values go too
+    assert table.names == ["Item", "Price", "Count", "Discount"] and table.rows[0].tolist()[:2] == ["Apples", 1.2]
+    cols["Count"].max = None  # (no limit now)
+    table[0, "Count"] = 500
+    assert cols == ["Item", "Price : number", {"name": "Count", "kind": "number", "header": "Quantity"},
+                    {"name": "Discount", "kind": "money", "default": 0}]  # (it compares as a list of definitions)
+    assert cols.tolist()[2] == {"name": "Count", "header": "Quantity", "kind": "number"}
+    for _ in range(3):
+        del cols[-1]
+    with pytest.raises(ValueError, match="keeps at least one column"):
+        del cols[0]
+
+
+@pytest.mark.usefixtures("display")
+def test_validators_are_rules_of_the_programs_own(make_form):
+    from readymade.controls.datatable import DataError
+
+    form = make_form(columns=["Item", "Price : money", "Starts : date", "Ends : date"])
+    table = form.Stock
+    table.rows = [["Apples", 1.2, "2026-10-01", "2026-10-05"]]
+    cols = table.columns
+    cols["Price"].validator = lambda price: 0 < price < 1_000_000  # (False: "isn't allowed")
+
+    def ends_after_start(ends, row):  # two arguments: the row too
+        if row["Starts"] is not None and ends < row["Starts"]:
+            return "Ends can't be before Starts"  # (a message: said as is)
+        return True
+
+    cols["Ends"].validator = ends_after_start
+    with pytest.raises(DataError, match="Price: 2,000,000.00 isn't allowed"):
+        table[0, "Price"] = 2_000_000
+    with pytest.raises(DataError, match="Ends can't be before Starts"):
+        table[0, "Ends"] = "2026-09-30"
+    table[0, "Price"] = None  # (empty: not the validator's to judge)
+    with table.unchecked():
+        table.rows.append(["Pears", -1, "2026-10-09", "2026-10-02"])
+    assert [(p.row, p.column, p.rule) for p in table.problems()] == [(1, 1, "validator"), (1, 3, "validator")]
+    assert [p.message for p in table.check("Price", 5_000_000)] == ["Price: 5,000,000.00 isn't allowed"]
+    assert cols["Price"].line() is None and "validator" in cols["Price"].definition()
+    with pytest.raises(ValueError, match="validator must be a function"):
+        cols["Price"].validator = "positive"
+
+
+# ----- hidden columns, filters, find, formulas -----
+
+@pytest.mark.usefixtures("display")
+def test_hidden_columns_are_kept_not_shown(make_form, tmp_path):
+    form = make_form(columns=[{"name": "Id", "kind": "number", "hidden": True}, "Item", "Price : money", "Qty : number"])
+    table = form.Stock
+    table.rows = [[101, "Apples", 1.2, 3], [102, "Pears", 0.95, 2]]
+    assert tuple(table._tree["displaycolumns"]) == ("c1", "c2", "c3") and table["Id"] == [101, 102]
+    table._tree.focus_force()
+    table.current = (0, "Item")
+    settle(form)
+    key(form, "Left")  # (the cursor can't reach it)
+    assert table.current == (0, 1)
+    key(form, "End")
+    key(form, "Tab")  # on to the next row's first shown column
+    assert table.current == (1, 1)
+    table._choose_row(0)
+    table.copy()  # (what's shown)
+    assert form.root.clipboard_get() == "Apples\t1.20\t3"
+    table.save_csv("all.csv")  # (all of it)
+    assert (tmp_path / "all.csv").read_text(encoding="utf-8").splitlines()[1] == "101,Apples,1.20,3"
+    table.columns["Id"].hidden = False
+    assert tuple(table._tree["displaycolumns"]) == ("c0", "c1", "c2", "c3")
+    table.columns["Qty"].hidden = True
+    x, y, width, height = table._tree.bbox("1", "c2")
+    table._click(SimpleNamespace(x=x + width // 2, y=y + height // 2, state=0))  # (the third shown: Price)
+    assert table.current == (1, 2)
+    for name in ("Id", "Item", "Price"):
+        if name != "Price":
+            table.columns[name].hidden = True
+    with pytest.raises(ValueError, match="at least one column"):
+        table.columns["Price"].hidden = True
+
+
+@pytest.mark.usefixtures("display")
+def test_a_filter_shows_some_rows(make_form):
+    form = make_form()
+    table = form.Stock
+    table.rows = [["Apples", 1.2, 3, True, "M"], ["Pears", 0.95, 2, False, "S"], ["Plums", 2.1, 0, True, "L"],
+                  ["Figs", 3, 1, True, "M"]]
+    table.filter = lambda row: row["In stock"]
+    assert table.shown == [0, 2, 3] and not table._tree.exists("1") and len(table.rows) == 4  # (all still there)
+    table._tree.focus_force()
+    table.current = (0, "Item")
+    settle(form)
+    key(form, "Down")  # (past the hidden row)
+    assert table.current == (2, 0)
+    table._move(0, 0)
+    key(form, "Down", state=0x1)  # Shift+Down: the rows shown between
+    assert table._tree.selection() == ("0", "2")
+    table.current = (2, "In stock")
+    key(form, "space")  # unticked: it doesn't fit now, but stays while the cursor's on it...
+    assert table[2, "In stock"] is False and table.shown == [0, 2, 3]
+    key(form, "Down")  # ...and goes when it leaves
+    assert table.shown == [0, 3] and table.current == (3, 3)
+    table[3, "In stock"] = False  # (code's change: at once)
+    assert table.shown == [0]
+    table.select_all()
+    assert table._tree.selection() == ("0",)
+    table.filter = None
+    assert table.shown == [0, 1, 2, 3]
+    with pytest.raises(ValueError, match="filter must be a function"):
+        table.filter = "In stock"
+
+
+@pytest.mark.usefixtures("display")
+def test_find_cells_and_text_conditions(make_form):
+    form = make_form()
+    table = form.Stock
+    table.rows = [["Garden shovel", 12, 1], ["Hammer", 1234.5, 2], ["Snow shovel", 30, 0]]
+    assert list(table.find("shovel")) == [(0, 0), (2, 0)]
+    assert next(table.find("SHOVEL", after=(0, 0))) == (2, 0)  # (find next; case aside)
+    assert next(table.find("shovel", after=(2, 0))) == (0, 0)  # (going round)
+    assert list(table.find("1234.5")) == [(1, 1)]  # (as shown: 1234.50)
+    assert list(table.find(lambda value: value == 0, columns="Qty")) == [(2, 2)]
+    assert list(table.find(30)) == [(2, 1)] and next(table.find("nothing"), None) is None
+    assert table[table["Item"].contains("SHOV"), "Item"] == ["Garden shovel", "Snow shovel"]
+    table.filter = lambda row: row["Qty"]
+    assert list(table.find("shovel")) == [(0, 0)]  # (in the rows shown)
+
+
+def test_a_column_says_what_it_does_instead():
+    totals = Column([D("7.5384"), None], "Running")
+    with pytest.raises(AttributeError, match="no apply\\(\\): map\\(function\\) does that"):
+        totals.apply(int)
+    with pytest.raises(TypeError, match="many values, not one: column.map\\(int\\)"):
+        int(totals)
+    assert totals.map(int) == [7, None] and round(totals, 2) == [D("7.54"), None]
+
+
+def test_a_columns_values_have_no_settings():
+    with pytest.raises(AttributeError, match="no 'formula' to set.*is table.columns\\['Running'\\]"):
+        Column([1, 2], "Running").formula = lambda table: table["Price"]
+
+
+def test_running_totals_and_the_row_above():
+    amounts = Column([10, None, 5, 2], "Amount")
+    assert amounts.cumsum() == [10, None, 15, 17] and amounts.shift() == [None, 10, None, 5]
+    assert amounts.shift(-1) == [None, 5, 2, None] and amounts.shift(9) == [None] * 4
+    assert Column([D("1.10"), D("2.20")]).cumsum() == [D("1.10"), D("3.30")]
+
+
+@pytest.mark.usefixtures("display")
+def test_computed_columns(make_form):
+    changes = []
+
+    class Form1(Form):
+        def Stock_cellchange(self, row, column):
+            changes.append((row, column))
+
+    form = make_form(Form1, columns=["Item", "Price : money", "Qty : number", "Total : money", "Tax : money",
+                                      "Running : money"])
+    table = form.Stock
+    cols = table.columns
+    table.rows = [["Apples", 1.2, 3], ["Pears", 0.95, None], ["Plums", 2.5, 2]]
+    cols["Tax"].formula = lambda row: row["Total"] * 0.1  # (Total isn't a formula yet: empty)
+    assert table["Tax"] == [None, None, None]
+    cols["Total"].formula = lambda row: row["Price"] * row["Qty"]  # a row's own
+    cols["Running"].formula = lambda table: table["Total"].cumsum()  # the whole column at once
+    assert table["Total"] == [D("3.60"), None, D("5.00")]  # (an empty Qty: an empty Total)
+    assert table["Tax"] == [D("0.36"), None, D("0.50")] and table["Running"] == [D("3.60"), None, D("8.60")]
+    table._tree.focus_force()
+    table.current = (1, "Qty")
+    settle(form)
+    key(form, "4")
+    key(form, "Return")  # the user's change: worked out again, then cellchange
+    assert table["Total"] == [D("3.60"), D("3.80"), D("5.00")] and table["Running"][2] == D("12.40")
+    assert changes == [(1, 2)]  # (the formulas' values: no cellchange of their own)
+    table.undo()
+    assert table["Total"][1] is None
+    table[2, "Qty"] = 4  # code's change too
+    assert table["Running"][2] == D("13.60")
+    table.sort("Total", descending=True)  # (order changed: the running total too)
+    assert table["Item"] == ["Plums", "Apples", "Pears"] and table["Running"] == [D("10.00"), D("13.60"), None]
+    table.current = (0, "Total")
+    key(form, "9")  # (the user can't edit a formula's column)
+    assert table._editor is None
+    with pytest.raises(ValueError, match="worked out by its formula"):
+        table[0, "Total"] = 5
+    with pytest.raises(ValueError, match="circular reference: Total \\u2192 Tax \\u2192 Total"):
+        cols["Total"].formula = lambda row: row["Tax"] * 10
+    assert table["Total"][0] == D("10.00")  # (refused: nothing changed)
+    cols.append({"name": "Per", "kind": "number", "formula": lambda row: row["Total"] / row["Qty"]})
+    table[0, "Qty"] = 0  # (a division by 0: empty)
+    assert table[0, "Per"] is None and table[1, "Per"] == 1.2
+    cols.append({"name": "First", "kind": "number", "formula": lambda table: table[0, "Qty"]})  # one value: every row
+    cols.append({"name": "Above", "kind": "number",
+                 "formula": lambda table: [None] + table[:-1, "Qty"].tolist()})  # (a slice, as on the table)
+    assert table["First"] == [table[0, "Qty"]] * 3 and table["Above"] == [None, *table["Qty"][:-1]]
+    with pytest.raises(TypeError, match="a formula's table\\[...\\] takes a column's name"):
+        cols["First"].formula = lambda table: table[0]
+    with pytest.raises(ValueError, match="gave 2 values for 3 rows"):
+        cols["First"].formula = lambda table: table[1:, "Qty"]
+    cols["Total"].formula = None  # (no formula now: its values stay, editable)
+    table[0, "Total"] = 1
+    assert table[0, "Total"] == D("1.00")

@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import functools
+import json
 import shutil
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
@@ -1189,9 +1190,21 @@ class _DetachedPanel:
 _DETACHED = _DetachedPanel()
 
 
+def _item(line):
+    text = line.strip()
+    if text.startswith("{"):
+        try:
+            found = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"{text}: not a definition ({e.msg})") from None
+        if isinstance(found, dict):
+            return found
+    return line
+
+
 def _convert(raw, kind):
-    if kind is list:
-        return [line for line in raw.splitlines() if line.strip()]
+    if kind is list:  # (a line holding a JSON object, a DataTable column's definition, is that dict)
+        return [_item(line) for line in raw.splitlines() if line.strip()]
     if kind is bool:
         if raw not in ("True", "False"):
             raise ValueError("Choose True or False")

@@ -402,11 +402,36 @@
       "anchor": "top left",
       "backcolor": "",
       "columns": [
-        "Item",
-        "Category : Food | Hardware | Garden",
-        "Price : money",
-        "Qty : number",
-        "Taxable : check",
+        {
+          "name": "Item",
+          "required": true,
+          "max_length": 30
+        },
+        {
+          "name": "Category",
+          "choices": [
+            "Food",
+            "Hardware",
+            "Garden"
+          ]
+        },
+        {
+          "name": "Price",
+          "kind": "money",
+          "required": true,
+          "min": 0
+        },
+        {
+          "name": "Qty",
+          "kind": "number",
+          "min": 0,
+          "default": 1
+        },
+        {
+          "name": "Taxable",
+          "kind": "check",
+          "default": true
+        },
         "Total : money, readonly"
       ],
       "cursor": "default",

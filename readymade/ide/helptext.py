@@ -43,7 +43,14 @@ EVENTS = {
     "cellchange": "the user changes a cell (code changing one doesn't run it); row and column are its numbers, "
                   "counting from 0",
     "cellvalidate": "before the user's change to a cell is kept (typed, ticked, chosen, pasted); value is the new "
-                    "one, already its column's kind. Return False, or a message saying why, to refuse it",
+                    "one, already its column's kind. Return False, or a message saying why, to refuse it "
+                    "(cellrefused then says so)",
+    "cellrefused": "the user's change to a cell wasn't kept: it can't be the column's kind (letters for a number), "
+                   "or cellvalidate refused it; reason says why, for the program to tell the user as it likes "
+                   "(the table shows nothing itself)",
+    "rowinvalid": "the cursor left a row the user changed (or a paste changed) that breaks the columns' rules; "
+                  "problems lists them (each: row, column, value, rule, limit, and str(problem) says it). The "
+                  "change is kept: the program decides what to do",
     "rowadd": "the user makes a new row (in the blank row at the bottom); row is its number: a place for defaults",
     "rowdelete": "the user deletes a row (with Delete); row was its number, and values are what it held",
     "rowclick": "the cell cursor moves to another row; row is its number",
