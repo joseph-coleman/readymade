@@ -10,6 +10,11 @@ on:
   push:
     tags: ["v*"]
 
+# Each job's token can only read the code unless the job asks for more below. A job's own
+# permissions replace this list rather than adding to it.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
