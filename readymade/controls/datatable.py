@@ -28,6 +28,7 @@ import io
 from contextlib import contextmanager
 import operator
 import re
+import sqlite3
 import tkinter as tk
 from collections.abc import MutableSequence, Sequence
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
 
+from readymade import data as sql
 from readymade import keys
 from readymade.appearance import CHECK_MARK, check_color
 from readymade.controls.base import _FOCUS_EVENTS, Control, Event, register
@@ -43,6 +45,7 @@ from readymade.controls.dates import (DATETIME_FORMAT, ISO, TIME_FORMAT, DropMon
                                      read_date, read_datetime, read_time, show, to_date, to_datetime, to_time)
 from readymade.controls.traits import Anchored, BackColor, Cursor, Font, ForeColor, TabStop, Tooltip
 from readymade.controls.trees import _TreeLook
+from readymade.data import DataError, Problem  # (the rules' errors: Tk-free, as ConflictError)
 from readymade.menus import primary_mask
 
 _PRIMARY = primary_mask()  # Ctrl in a Tk event's state (⌘ on a Mac), as in Ctrl+click
@@ -308,6 +311,8 @@ class ColumnKind:
                 value = float(value)  # (a Decimal, from a money column)
             except (TypeError, ValueError):
                 raise ValueError(f"{self.name}: {value!r} isn't a number") from None
+        if self.decimals == 0:
+            return round(value)  # (whole numbers, as an INTEGER column's)
         return round(float(value), self.decimals) if self.decimals is not None else value
 
     def show(self, value):
@@ -388,6 +393,13 @@ def _takes_row(function):
     if any(p.kind == p.VAR_POSITIONAL for p in parameters):
         return True
     return len([p for p in parameters if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]) >= 2
+
+
+def _as_text(kind):
+    """A column's definition as text (its name, header and rules kept), for values that aren't
+    its kind: shown as they are."""
+    return ColumnKind(kind.name, header=kind.header, readonly=kind.readonly, required=kind.required,
+                      unique=kind.unique, key=kind.key, hidden=kind.hidden)
 
 
 def _takes_table(function):
@@ -523,23 +535,6 @@ class _RowValues(Sequence):
         return {kind.name: value for kind, value in zip(self._kinds, self._values)}
 
 
-@dataclass(frozen=True)
-class Problem:
-    """A rule a cell breaks: its row and column (numbers), its value, the rule ("required",
-    "min", "max", "max_length", "unique" or "validator"), the rule's limit (min's least value, say: None
-    for required and unique), and what's wrong, for a person (str(problem) says it too)."""
-
-    row: int
-    column: int
-    value: object
-    rule: str
-    limit: object
-    message: str
-
-    def __str__(self):
-        return self.message
-
-
 class _Refused(ValueError):
     """The user's change (a paste, say) refused: a value that can't be its column's kind, or
     one cellvalidate turned down. Nothing changed."""
@@ -547,18 +542,6 @@ class _Refused(ValueError):
     def __init__(self, row, column, value, reason):
         self.row, self.column, self.value, self.reason = row, column, value, reason
         super().__init__(f"row {row}: {reason}")
-
-
-class DataError(ValueError):
-    """Code's change to a DataTable breaks its columns' rules: nothing was changed. problems
-    lists each cell at fault (a Problem: row, column, value, rule, limit, message), to fix
-    and try again."""
-
-    def __init__(self, table, problems):
-        self.problems = list(problems)
-        first = self.problems[0]
-        more = f" (and {len(self.problems) - 1} more)" if len(self.problems) > 1 else ""
-        super().__init__(f"{table}: row {first.row}: {first.message}{more}")
 
 
 _WHEN_FORMATS = {"date": ISO, "time": TIME_FORMAT, "datetime": DATETIME_FORMAT}  # each kind's usual format
@@ -1061,8 +1044,13 @@ class Rows(MutableSequence):
             new = [table._convert_row(v) for v in values]
             after[index] = new
         else:
+            row = table._data[table._row_at(index)]
             new = [table._convert_row(values)]
             after[table._row_at(index)] = new[0]
+            table._enforce(after, new)
+            row[:] = new[0]  # (the same row, its values changed: its colors stay, and a database's row it is)
+            table._refresh()
+            return
         table._enforce(after, new)
         table._data[:] = after
         table._refresh()
@@ -1283,6 +1271,11 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     and redo() from code, can_undo and can_redo for an Edit menu. A row's backcolor and
     forecolor are set from code (self.Stock.rows[2].backcolor = "#ffe0e0"), and stay with it.
 
+    load_sql() fills it from an SQLite database (a table's rows, or a query's; the columns made
+    from the table's definition), and save_sql() saves the changes back, every row kept, the
+    columns' changes too (a column added, renamed...). changed and changes() say what's changed
+    since, and revert() takes it all back.
+
     The columns share its width out (none narrower than its header), and scroll sideways when
     they don't fit. autosize_columns() fits some or all to what they hold, and widths sets
     them; those keep their widths, and the others share what's left."""
@@ -1302,6 +1295,8 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
 
     def create_widget(self, parent):
         self._data, self._kinds = [], []
+        self._origins = []  # each column's in the database (sql.Binding says): its name there, None (new), sql.OWN
+        self._binding = None  # where load_sql() read the rows from (a sql.Binding), to save them back
         self._cur = (0, 0)
         self._anchor = 0  # where Shift+arrows start choosing rows from
         self._editor = None
@@ -1394,6 +1389,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         for row in self._data:  # (the same row lists, changed: their colors stay)
             row[:] = [self._keep(kinds[i], row[i]) if i < len(old) else kinds[i].blank() for i in range(len(kinds))]
         self._kinds = kinds
+        self._origins = (self._origins + [None] * len(kinds))[:len(kinds)]  # (as the values: by place)
         self._forget()
         self._show_columns()
 
@@ -1507,6 +1503,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         index = kinds.index(kind) if kinds.count(kind) == 1 else min(max(index, 0), len(kinds) - 1)
         for row in self._data:
             row.insert(index, kind.blank())  # (each row: its default, or empty)
+        self._origins.insert(index, None)
         self._kinds = kinds
         self._forget_steps()
         self._show_columns()
@@ -1519,6 +1516,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         self._check_names(kinds)
         for row in self._data:
             del row[index]
+        del self._origins[index]
         self._kinds = kinds
         self._forget_steps()
         self._show_columns()
@@ -1542,7 +1540,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         settings = self._kinds[index].definition()
         if setting == "kind":  # (a new kind keeps what still fits it: no choices for a number)
             fits = {**{k: set() for k in _KINDS}, "choice": {"choices"}, "number": {"decimals", "min", "max"},
-                    "money": {"decimals", "min", "max"}, "date": {"format", "min", "max"},
+                    "money": {"min", "max"}, "date": {"format", "min", "max"},  # (money: its own 2 places)
                     "time": {"format", "step", "min", "max"}, "datetime": {"format", "min", "max"},
                     "text": {"max_length"}}
             for only in ("choices", "decimals", "format", "step", "max_length", "min", "max"):
@@ -1888,6 +1886,245 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             writer.writerow([k.name for k in self._kinds])
             for row in self._data:
                 writer.writerow([k.text(v) for k, v in zip(self._kinds, row)])
+
+    # ----- a database: SQLite -----
+
+    def load_sql(self, db, source, params=(), table=None, columns="schema"):
+        """Replace the rows with a database's: db is an SQLite file (a path from the program's
+        folder, or a full path; the table keeps it open) or a sqlite3 connection of the
+        program's own. source is a table's name, or a query: "SELECT * FROM items WHERE qty
+        < ?", with params for its ?s; table says which table a query's rows are saved to.
+
+        columns="schema" makes the columns from the table's: each column's kind from its type
+        (INTEGER, REAL, DECIMAL(10,2) as money, DATE, BOOLEAN as a check...), required from NOT
+        NULL, unique, key, default. A key the database numbers (INTEGER PRIMARY KEY) is
+        readonly, empty on a new row till it's saved; a table with no key has a hidden rowid
+        column (last). columns="keep" keeps the columns as they are, filling those the table
+        has (by name): the others are the program's own, not saved (the key's added, hidden,
+        if it isn't there).
+
+        The rules aren't checked: problems() says what breaks them. A value that isn't its
+        column's kind (SQLite keeps anything anywhere: text in a number column) makes that
+        column text, so all's shown as it is; the list returned says what was (each a
+        Mismatch: row, column, value, declared). save_sql() writes the changes back."""
+        if columns not in ("schema", "keep"):
+            raise ValueError(f'columns is "schema" (the table\'s) or "keep" (the table\'s own), not {columns!r}')
+        connection, owned, path = self._database(db, must_exist=True)
+        try:
+            reading = sql.read(connection, source, params, table)
+        except Exception:
+            if owned and not self._bound_to(path):
+                connection.close()
+            raise
+        names = {name.lower(): j for j, name in enumerate(reading.names)}
+        if columns == "schema":
+            found = [(definition, origin, j) for j, (definition, origin) in enumerate(reading.definitions())
+                     if definition is not None]
+            kinds = [ColumnKind.of(definition) for definition, _, _ in found]
+            origins = [origin for _, origin, _ in found]
+            places = [j for _, _, j in found]
+        else:
+            kinds, origins, places = list(self._kinds), [], []
+            schema = reading.schema
+            for kind in kinds:
+                j = names.get(kind.name.lower())
+                places.append(j)
+                saved = j is not None and schema is not None and (schema.column(kind.name) is not None
+                                                                     or kind.name.lower() == sql.AUTONUMBER)
+                origins.append(reading.names[j] if saved else sql.OWN)
+            for key in schema.keys if schema is not None else ():
+                if key.lower() not in {o.lower() for o in origins if isinstance(o, str)}:  # (hidden: it's the database's)
+                    kinds.append(ColumnKind.of({**sql.definition_of(schema, key), "hidden": True}))
+                    origins.append(reading.names[names[key.lower()]])
+                    places.append(names[key.lower()])
+        self._check_names(kinds)
+        rows = [[None if j is None else raw[j] for j in places] for raw in reading.rows]
+        mismatches = []
+        for c, kind in enumerate(kinds):
+            if places[c] is None:
+                for row in rows:
+                    row[c] = kind.blank()
+                continue
+            try:
+                values = [sql.from_db(kind, row[c]) for row in rows]
+            except ValueError:
+                declared = reading.schema.column(kind.name) if reading.schema is not None else None
+                declared = declared.declared if declared is not None else ""
+                for r, row in enumerate(rows):
+                    try:
+                        sql.from_db(kind, row[c])
+                    except ValueError:
+                        mismatches.append(sql.Mismatch(r, kind.name, row[c], declared))
+                kinds[c] = kind = _as_text(kind)
+                values = [None if isinstance(row[c], bytes) else sql.from_db(kind, row[c]) for row in rows]
+            for row, value in zip(rows, values):
+                row[c] = value
+        raw = {}
+        for row, values in zip(rows, reading.rows):
+            raw[id(row)] = {o.lower(): values[places[c]] for c, o in enumerate(origins) if isinstance(o, str)}
+        if self._binding is not None and self._binding.connection is not connection:
+            self._binding.close()
+        self._binding = sql.Binding(connection, owned, reading.schema, source, params)
+        self._binding.path = path
+        self._kinds, self._origins, self._data = kinds, origins, rows
+        self._binding.remember(kinds, origins, rows, raw)
+        self._touched.clear()
+        self._forget()
+        self._show_columns()
+        return mismatches
+
+    def save_sql(self, db=None, table=None, replace=False, overwrite=False):
+        """Save the changes since load_sql() (or the last save) to the database: the rows
+        added, edited and deleted, and the columns' changes (a column added, renamed or
+        deleted; a kind or rule changed), every other row kept. A new column with a formula
+        isn't added (it's worked out), nor are the program's own (columns="keep"'s). It's all
+        or nothing: DataError (nothing saved) if a row written breaks a rule (problems() says
+        all), ConflictError if rows written were changed in the database since they were
+        loaded (by another program, or user: overwrite=True writes over them), and a database
+        error (sqlite3.IntegrityError, say, a foreign key not there) names the row. The rows
+        saved are read back: a new row's autonumbered key is filled in.
+
+        save_sql(db, "table") writes all the rows to a new table instead, made from the
+        columns' definitions (ValueError if it's there already, unless replace=True drops it
+        first; db as load_sql has it, or None: the one loaded from). The DataTable then
+        belongs to the new table: save_sql() saves there. (Where the rows came from, it's a
+        save_sql(): unless replace=True, which makes it again.)"""
+        if (db is None and table is None) or (not replace and self._is_bound_table(db, table)):
+            self._save_changes(overwrite)
+        else:
+            self._save_to(db, table, replace)
+
+    def _save_changes(self, overwrite):
+        binding = self._binding
+        if binding is None:
+            raise ValueError(f"{self.name}'s rows weren't loaded from a database: save_sql(db, \"table\") makes a "
+                             "new table of them")
+        changes = binding.changes(self._kinds, self._origins, self._data)
+        problems = self._problems_in(self._data, changes.added + changes.edited)
+        if problems:
+            raise DataError(self.name, problems)
+        raw, origins = binding.save(self._kinds, self._origins, self._data, overwrite)
+        self._saved(raw, origins)
+
+    def _save_to(self, db, table, replace):
+        if not table:
+            raise ValueError("save_sql(db, \"table\"): the table to make")
+        if db is None:
+            if self._binding is None:
+                raise ValueError(f"{self.name}'s rows weren't loaded from a database: save_sql(db, \"{table}\") "
+                                 "says which")
+            connection, owned, path = self._binding.connection, self._binding.owned, self._binding.path
+        else:
+            connection, owned, path = self._database(db, must_exist=False)
+        problems = self._problems_in(self._data)
+        if problems:
+            raise DataError(self.name, problems)
+        columns = [c for c, (kind, origin) in enumerate(zip(self._kinds, self._origins))
+                   if origin is not sql.OWN and kind.formula is None and kind.name.lower() != sql.AUTONUMBER]
+        if not columns:
+            raise ValueError(f"{self.name} has no columns to save: they're worked out, or the program's own")
+        try:
+            raw, schema = sql.create(connection, table, self._kinds, self._data, columns, replace)
+        except Exception:
+            if owned and not self._bound_to(path):
+                connection.close()
+            raise
+        if self._binding is not None and self._binding.connection is not connection:
+            self._binding.close()
+        origins = [kind.name if c in columns else (None if origin is not sql.OWN else origin)
+                   for c, (kind, origin) in enumerate(zip(self._kinds, self._origins))]
+        for c, kind in enumerate(self._kinds):
+            if kind.name.lower() == sql.AUTONUMBER:
+                origins[c] = sql.AUTONUMBER if schema.autonumber == sql.AUTONUMBER else sql.OWN
+        keep_widths = True
+        if schema.autonumber == sql.AUTONUMBER and sql.AUTONUMBER not in origins:  # (no key: rowid's it, hidden)
+            keep_widths = False
+            self._kinds.append(ColumnKind.of(sql.definition_of(schema, sql.AUTONUMBER)))
+            origins.append(sql.AUTONUMBER)
+            for row in self._data:
+                row.append(None)
+        self._binding = sql.Binding(connection, owned, schema, table)
+        self._binding.path = path
+        self._saved(raw, origins, keep_widths)
+
+    def _saved(self, raw, origins, keep_widths=None):
+        """The rows read back after a save: their values as the database has them now (a new
+        row's key, numbered), and how they are now, to find the next changes. keep_widths:
+        the columns shown again (keeping their widths, or not); None: they're as they were."""
+        self._origins = origins
+        for row in self._data:
+            values = raw.get(id(row))
+            if values is None:
+                continue
+            for c, (kind, origin) in enumerate(zip(self._kinds, origins)):
+                if isinstance(origin, str) and origin.lower() in values:
+                    try:
+                        row[c] = sql.from_db(kind, values[origin.lower()])
+                    except ValueError:
+                        pass  # (kept as it is here)
+        self._binding.remember(self._kinds, origins, self._data, raw)
+        if keep_widths is not None:
+            self._show_columns(keep_widths=keep_widths)
+        else:
+            self._refresh()
+
+    def _database(self, db, must_exist):
+        """(a connection, whether it's the table's own to close, its path) for db: a sqlite3
+        connection, or a path (the table's connection to it already, if it has one)."""
+        if isinstance(db, sqlite3.Connection):
+            return db, False, None
+        path = self._path(db).resolve()
+        if self._bound_to(path):
+            return self._binding.connection, True, path
+        return (sql.connect(path) if must_exist else sql.open_database(path)), True, path
+
+    def _bound_to(self, path):
+        binding = self._binding
+        return path is not None and binding is not None and getattr(binding, "path", None) == path
+
+    def _is_bound_table(self, db, table):
+        """Whether save_sql(db, table) names where the rows came from (so it's a save there)."""
+        binding = self._binding
+        if binding is None or table is None or binding.table is None or table.lower() != binding.table.lower():
+            return False
+        if db is None or db is binding.connection:
+            return True
+        return not isinstance(db, sqlite3.Connection) and self._bound_to(self._path(db).resolve())
+
+    @property
+    def database(self):
+        """The sqlite3 connection load_sql() read from (None if it didn't): for the program's
+        own queries, self.Items.database.execute("SELECT ...")."""
+        return self._binding.connection if self._binding is not None else None
+
+    @property
+    def changed(self):
+        """Whether anything's changed since load_sql() (or the last save_sql()): for a "Save
+        changes?" when the program closes."""
+        return bool(self.changes())
+
+    def changes(self):
+        """What's changed since load_sql() (or the last save_sql()): .added and .edited (row
+        numbers), .deleted (the rows deleted, as they were loaded: dicts by column name),
+        .columns (("add", name), ("rename", old, new), ("drop", name), ("change", name)).
+        False if nothing has."""
+        if self._binding is None:
+            return sql.Changes()
+        return self._binding.changes(self._kinds, self._origins, self._data)
+
+    def revert(self):
+        """Put the rows (and columns) back as they were loaded (or last saved): changes since
+        are forgotten."""
+        binding = self._binding
+        if binding is None:
+            raise ValueError(f"{self.name}'s rows weren't loaded from a database: there's nothing to go back to")
+        for loaded in binding.loaded.values():
+            loaded.row[:] = loaded.values
+        self._kinds, self._origins = list(binding.kinds), list(binding.origins)
+        self._data = [loaded.row for loaded in binding.loaded.values()]
+        self._touched.clear()
+        self._forget_steps()
+        self._show_columns()
 
     # ----- the rules: required, min, max, max_length, unique -----
 

@@ -82,6 +82,9 @@ The repository's `examples` folder has projects to open in the IDE (`readymade e
 - **datatable**: an order sheet in a DataTable: typed columns, as a database table has,
   edited like a spreadsheet; totals worked out with Column arithmetic, numpy-style slicing
   and conditions, CSV files, sorting.
+- **sqlite**: an inventory in an SQLite database: a DataTable's columns made from a table's,
+  the user's changes saved back (every row kept, the columns too), and what happens when
+  someone else changed a row first.
 - **dates**: a planner with a Calendar, DatePickers (one with a time, one that can be empty),
   a TimePicker, and a DataTable with date and time columns.
 - **debugging**: a shopping basket with mistakes in it, and a walkthrough of the debugger.

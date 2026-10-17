@@ -47,6 +47,7 @@ from readymade.controls.image import Image
 from readymade.controls.canvas import Canvas
 from readymade.controls.grid import Grid
 from readymade.controls.timer import Timer
+from readymade.data import ConflictError
 # isort: on
 
 __all__ = [
@@ -57,5 +58,5 @@ __all__ = [
     "Picture", "Ranged", "TabIndex", "TabStop", "Tooltip", "VAligned", "WidgetText",
     "Label", "TextBox", "Frame", "TabStrip", "Button", "CheckBox", "OptionButton", "ComboBox", "ListBox", "TreeView",
     "ListView", "DataTable", "Calendar", "DatePicker", "TimePicker", "ScrollBar", "Slider", "UpDown", "ProgressBar", "Image", "Canvas", "Grid", "Timer",
-    "Node", "ListItem", "Column", "Block", "DataError", "Problem",
+    "Node", "ListItem", "Column", "Block", "DataError", "ConflictError", "Problem",
 ]
