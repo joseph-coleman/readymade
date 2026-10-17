@@ -478,10 +478,12 @@ class Binding:
 
     def _edited_columns(self, kinds, origins, row, loaded):
         """The columns of a loaded row changed since: its database columns', and new ones'
-        (not their default: what a new column gives every row)."""
+        (not their default: what a new column gives every row). Temporary ones aren't saved."""
         place = self._loaded_place()
         found = []
         for i, (kind, origin) in enumerate(zip(kinds, origins)):
+            if kind.temporary:
+                continue
             if origin is None and kind.formula is None:
                 if row[i] != kind.default:
                     found.append(i)
@@ -513,15 +515,16 @@ class Binding:
         renames, alters = [], {}
         place = self._loaded_place()
         for kind, origin in zip(kinds, origins):
-            if not isinstance(origin, str) or origin.lower() == AUTONUMBER:
-                continue
+            if not isinstance(origin, str) or origin.lower() == AUTONUMBER or kind.temporary:
+                continue  # (a temporary one's left as it is in the database)
             if kind.name.lower() != origin.lower():
                 renames.append((origin, kind.name))
             if origin.lower() in place:
-                changes = _altered(self.kinds[place[origin.lower()]], kind, self.schema.strict)
+                changes = altered(self.kinds[place[origin.lower()]], kind, self.schema.strict)
                 if changes:
                     alters[kind.name] = changes
-        adds = [i for i, (kind, origin) in enumerate(zip(kinds, origins)) if origin is None and kind.formula is None]
+        adds = [i for i, (kind, origin) in enumerate(zip(kinds, origins))
+                if origin is None and kind.formula is None and not kind.temporary]
         for i in adds:  # (ADD COLUMN can't make a column NOT NULL or UNIQUE: a rebuild does)
             kind = kinds[i]
             changes = {k: True for k, wanted in (("notnull", kind.required), ("unique", kind.unique)) if wanted}
@@ -559,6 +562,8 @@ class Binding:
         for kind, origin in zip(kinds, origins):
             if not isinstance(origin, str) or origin.lower() not in place:
                 continue
+            if origin.lower() in keys and kind.temporary:
+                raise ValueError(f"{kind.name} is {schema.name}'s key: it can't be temporary")
             if origin.lower() in keys and kind.name in alters:
                 raise ValueError(f"{kind.name} is {schema.name}'s key: its kind and rules stay as they are")
             if origin.lower() != AUTONUMBER and kind.key != self.kinds[place[origin.lower()]].key:
@@ -574,8 +579,8 @@ class Binding:
             self._check_conflicts(plan, overwrite)
             self._change_columns(plan, kinds)
             found = self._write_rows(plan, kinds, origins, data)
-            now = [kind.name if (isinstance(origin, str) and origin.lower() != AUTONUMBER) or i in adds else origin
-                   for i, (kind, origin) in enumerate(zip(kinds, origins))]
+            now = [kind.name if (isinstance(origin, str) and origin.lower() != AUTONUMBER and not kind.temporary)
+                   or i in adds else origin for i, (kind, origin) in enumerate(zip(kinds, origins))]
             raw = self._read_back(now, data, found, everything=structure)
         self.schema = read_schema(self.connection, schema.name)
         return raw, now
@@ -624,7 +629,8 @@ class Binding:
         renamed = {old.lower(): new for old, new in plan.renames}
         keys = [renamed.get(k.lower(), k) for k in schema.keys]  # (the key's names now)
         where = " AND ".join(f"{quote(k)} = ?" for k in keys)
-        writable = [i for i, origin in enumerate(origins) if isinstance(origin, str) and origin.lower() != AUTONUMBER]
+        writable = [i for i, origin in enumerate(origins)
+                    if isinstance(origin, str) and origin.lower() != AUTONUMBER and not kinds[i].temporary]
         writable += plan.adds
         numbered = (schema.autonumber or "").lower()  # (the database's: not written over)
         key_columns = {kinds[i].name.lower(): i for i in writable
@@ -697,7 +703,7 @@ def _run(connection, sql, values, what):
         raise type(e)(f"{what}: {e}") from e
 
 
-def _altered(was, now, strict):
+def altered(was, now, strict=False):
     """What's changed between two definitions of a column, as the database keeps it: its
     declared type, NOT NULL, UNIQUE, DEFAULT ({} if nothing: a header, a format, a choice's
     choices, min and max are the DataTable's own)."""

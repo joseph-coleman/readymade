@@ -262,13 +262,25 @@ def test_a_save_waits_for_another_programs(make_table, shop, monkeypatch):
 def test_revert(make_table, shop):
     table = make_table()
     table.load_sql(shop, "items")
+    table.columns["id"].hidden = True  # (how it shows: these stay)
+    table.columns["name"].header = "Item"
+    table.columns["qty"].max = 1000
     table[0, "qty"] = 99
     del table.rows[2]
     table.rows.append({"name": "Fork"})
     table.columns.append("Notes")
+    table.columns["price"].kind = "number"  # (what the database would see: these go back)
+    table.columns["added"].name = "when"
     table.revert()
     assert table.names == ["id", "name", "price", "qty", "added", "ok"] and len(table.rows) == 3
     assert table[0, "qty"] == 3 and table[2, "name"] == "Spade" and not table.changed
+    assert table.columns["id"].hidden and table.headers[1] == "Item" and table.columns["qty"].max == 1000
+    assert table.columns["price"].kind == "money" and table[0, "price"] == D("12.50")
+
+    table.columns["qty"].decimals = None  # (INTEGER to REAL: the database would see it)
+    table.columns["price"].decimals = 0  # (DECIMAL either way, but 12.50 would be 13: the values would change)
+    table.revert()
+    assert table.columns["qty"].decimals == 0 and table.columns["price"].decimals == 2 and not table.changed
 
 
 # ----- saving the columns' changes: every row kept -----
@@ -418,4 +430,36 @@ def test_a_key_of_text_edited(make_table, tmp_path):
     with table.unchecked():
         table[1, "code"] = "C"  # (two the same: the rules say so first)
     with pytest.raises(DataError, match="unique|is in row"):
+        table.save_sql()
+
+
+@pytest.mark.usefixtures("display")
+def test_temporary_columns_arent_saved(make_table, shop, tmp_path):
+    table = make_table()
+    table.load_sql(shop, "items")
+    table.columns.append({"name": "picked", "kind": "check", "temporary": True})  # (bookkeeping)
+    table.columns["qty"].temporary = True  # (the database's, but its edits here aren't saved)
+    table.columns["qty"].name = "count"  # (nor its new name)
+    table[0, "picked"] = True
+    table[0, "count"] = 99
+    assert not table.changed and table.changes().columns == []
+    table[1, "price"] = 5
+    table.save_sql()
+    assert rows_of(shop) == [("Rake", 12.5, 3), ("Hoe", 5, 0), ("Spade", 20, 5)]
+    assert "picked" not in [row[1] for row in sqlite3.connect(shop).execute("PRAGMA table_info(items)")]
+    assert table[0, "picked"] is True and table[0, "count"] == 99  # (kept here, not read back over)
+    assert table.columns["picked"].definition() == {"name": "picked", "kind": "check", "temporary": True}
+
+    table.save_sql(tmp_path / "copy.db", "items")  # (a new table: without them)
+    assert [row[1] for row in table.database.execute("PRAGMA table_info(items)")] == ["id", "name", "price", "added",
+                                                                                        "ok"]
+    table.columns["picked"].temporary = False  # (saved from now on: added, its values written)
+    assert table.changes().columns == [("add", "picked")]
+    table.save_sql()
+    assert rows_of(tmp_path / "copy.db", "SELECT name, picked FROM items") == [("Rake", 1), ("Hoe", None),
+                                                                                ("Spade", None)]
+
+    table.load_sql(shop, "items")
+    table.columns["id"].temporary = True
+    with pytest.raises(ValueError, match="can't be temporary"):
         table.save_sql()

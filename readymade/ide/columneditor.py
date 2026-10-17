@@ -27,7 +27,7 @@ FITS = {
     "check": (),
     "choice": ("choices",),
 }
-FLAGS = ("required", "unique", "key", "readonly", "hidden")
+FLAGS = ("required", "unique", "key", "readonly", "hidden", "temporary")
 _FIELDS = ("name", "header", "kind", "decimals", "format", "step", "max_length", "min", "max", "default")
 
 
@@ -92,6 +92,7 @@ class ColumnsEditor(Dialog):
 
     def __init__(self, app, title, definitions, apply):
         super().__init__(app, title, resizable=True, padding=8)
+        self.withdraw()  # (out of sight while it's made, measured and placed: shown once, not jumping about)
         self.apply = apply
         self.columns = [_fields_of(ColumnKind.of(d)) for d in definitions] or [_fields_of(ColumnKind("Column1"))]
         self._loading = False
@@ -156,12 +157,23 @@ class ColumnsEditor(Dialog):
             ttk.Button(buttons, text=label, command=command).pack(side=tk.LEFT, padx=(0, 4))
         self.add_buttons(enter=False, help=lambda: helptext.dialog("columns"))
         self._show_list(0)
-        self._steady_size()
-        self.grab_set()
+        self._steady_size(over=app.root)
+        self.deiconify()
+        self._grab()
 
-    def _steady_size(self):
+    def _grab(self):
+        """The keyboard and mouse to the dialog alone, once it's on the screen (a grab needs it
+        to be: on X11 that's a moment after deiconify())."""
+        try:
+            self.grab_set()
+        except tk.TclError:
+            if self.winfo_exists():
+                self.after(10, self._grab)
+
+    def _steady_size(self, over):
         """As big as the tallest and widest kind's settings need (time's, datetime's), so the
-        dialog doesn't jump about as the kind changes. (Tk sizes a window to what it holds.)"""
+        dialog doesn't jump about as the kind changes (Tk sizes a window to what it holds);
+        placed over the middle of over (the IDE's window). Measured while it's hidden."""
         at = self.chosen()
         kind = self.columns[at]["kind"] if at is not None else "text"
         width = height = 0
@@ -174,7 +186,9 @@ class ColumnsEditor(Dialog):
         self._fit_to_kind(kind)
         self.problem.configure(text=said)
         self.minsize(width, height)
-        self.geometry(f"{width}x{height}")
+        x = over.winfo_rootx() + (over.winfo_width() - width) // 2
+        y = over.winfo_rooty() + (over.winfo_height() - height) // 3
+        self.geometry(f"{width}x{height}+{max(x, 0)}+{max(y, 0)}")
 
     # ----- the list -----
 

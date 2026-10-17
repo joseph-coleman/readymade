@@ -114,6 +114,7 @@ def test_revert_low_stock_and_closing(form, program):
     items[0, "In stock"] = 1
     form.RevertButton_click()
     assert items[0, "In stock"] == 12 and form.text == "Inventory"
+    assert items.columns["id"].hidden and items.columns["Category"].kind == "choice"  # (as Form_load made them)
     form.LowStock.value = True
     form.LowStock_click()
     assert [items[r, "Item"] for r in items.shown] == ["Hose, 25 ft", "Box of nails", "Chef's knife"]

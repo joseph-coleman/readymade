@@ -578,7 +578,7 @@ class PropertiesPanel(ttk.Frame):
                 self.app.set_property(obj, prop, text)
                 self.update_values()
 
-            ColumnsEditor(self.app.app, f"{obj}.{prop}", value, apply).center_on(self.app.app.root)
+            ColumnsEditor(self.app.app, f"{obj}.{prop}", value, apply)  # (it places itself, over the IDE)
             return
         dialog = Dialog(self.app.app, f"{obj}.{prop}", resizable=True, padding=8)
         hint = "One item per line:" if isinstance(value, list) else "Text:"

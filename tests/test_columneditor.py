@@ -104,6 +104,10 @@ def test_the_dialogs_own_rules(app):
     dialog.apply = given.append
     dialog.ok()
     assert given == ["A : number 2"]  # (a line, where one says it all)
+    dialog = ColumnsEditor(app, "T.columns", ["A"], given.append)
+    dialog.vars["temporary"].set(True)  # (beside Hidden: never saved to a database)
+    dialog.ok()
+    assert given[-1] == '{"name": "A", "temporary": true}'
 
 
 def test_help_and_a_size_that_stays_put(app):
@@ -120,4 +124,22 @@ def test_help_and_a_size_that_stays_put(app):
         dialog.vars["kind"].set(kind)
         dialog.update()
         assert (dialog.winfo_width(), dialog.winfo_height()) == size, kind
+    dialog.cancel()
+
+
+def test_measured_out_of_sight_then_shown_once(app, monkeypatch):
+    seen = []
+    fit = ColumnsEditor._fit_to_kind
+    monkeypatch.setattr(ColumnsEditor, "_fit_to_kind",
+                        lambda self, kind=None: (seen.append(self.winfo_viewable()), fit(self, kind))[1])
+    app.root.update()
+    dialog = ColumnsEditor(app, "T.columns", ["A", "B : number"], lambda text: None)
+    from readymade.ide.columneditor import KINDS
+    hidden = seen.count(0)  # (each kind tried while it's hidden, no jumping about on the screen; shown after)
+    assert hidden > len(KINDS) and seen == [0] * hidden + [1] * (len(seen) - hidden)
+    assert dialog.winfo_viewable() and dialog.grab_current() is dialog
+    dialog.update()
+    root = app.root
+    middle = dialog.winfo_rootx() + dialog.winfo_width() // 2
+    assert abs(middle - (root.winfo_rootx() + root.winfo_width() // 2)) <= 2  # (over the middle of the IDE)
     dialog.cancel()

@@ -42,6 +42,8 @@ In code, they're Python dicts, the same: `self.Items.columns = [{"name": "Qty", 
   or `choice` (`choices`, a list, says it's one); `decimals` for a number or money, `format`
   for a date or time, `step` for a time's minutes.
 - `readonly`: the user can't edit it (code still can).
+- `hidden`: kept, but not shown. `temporary`: the program's own, for its bookkeeping, never
+  saved to a database (see examples/sqlite). Both are written to a CSV file.
 - `default`: a new row's value. Without one, a new cell is empty (None).
 - The rules: `required` (it can't be empty), `min` and `max`, `max_length` (text),
   `unique` (no two rows alike), and `key` (required and unique: what tells rows apart).

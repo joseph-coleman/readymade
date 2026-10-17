@@ -52,6 +52,19 @@ readonly, and not saved. Without `table=`, the rows can be shown but not saved.
 the designer and fills those the table has, by name. The others (a "Picked" tick, say) are the
 program's own and aren't saved. If the key isn't among them, it's added, hidden.
 
+**Temporary columns.** A column added in code is saved like any other: the table gets a new
+column. For one that's only the program's bookkeeping, say so:
+
+```python
+self.Items.columns.append({"name": "Picked", "kind": "check", "temporary": True})
+```
+
+A temporary column is never added to the database, and its values are never written, nor
+does it count as a change. It's a setting like any other (Temporary, in the Columns dialog):
+`columns["Picked"].temporary = False` later, and the next save adds it. One of the
+database's own columns made temporary stays in the database as it is, and its edits here
+aren't saved.
+
 **Values that aren't their column's kind.** SQLite keeps whatever it's given in any column,
 so an `INTEGER` column can hold the text `lots`. Nothing is lost or changed: the column is
 loaded as text, and `load_sql()` returns what didn't fit, so the program can say so (here, in
@@ -63,7 +76,10 @@ column's type in the database).
 `self.Items.changed` says whether anything has changed since loading (or the last save), and
 `changes()` says what: `.edited` and `.added` (row numbers), `.deleted` (the deleted rows, as
 they were loaded) and `.columns`. Here `show_changes()` puts them in the status line, with a
-`*` in the title, after each change. `revert()` puts everything back as it was loaded. The
+`*` in the title, after each change. `revert()` puts the rows back as they were loaded, and
+undoes the changes to the columns the database would see (a column added, deleted or
+renamed, a new kind or rule). What only changes how a column shows stays, such as `id`
+hidden and Category's choices here. The
 rows are compared with how they were loaded, so an edit undone (Ctrl+Z) is no change at all.
 
 ## Saving
@@ -119,7 +135,7 @@ foreign keys and the columns the DataTable didn't load stay as they were.
 
 Some changes are only the DataTable's: a header, hidden, a format, choices, min and max. The
 database doesn't change for those. A new column with a `formula` isn't added either, since
-it's worked out. The table's key stays as it is.
+it's worked out, nor is a `temporary` one. The table's key stays as it is.
 
 ## A new table
 

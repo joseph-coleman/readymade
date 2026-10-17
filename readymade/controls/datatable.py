@@ -66,7 +66,7 @@ _CURRENCY = "$\u20ac\u00a3\u00a5 "  # (what a pasted amount may have around it: 
 _KINDS = ("text", "number", "money", "date", "time", "datetime", "check", "choice")
 KINDS = _KINDS  # the kinds a column can be
 SETTINGS = ("name", "header", "kind", "decimals", "format", "choices", "step", "readonly", "required", "default",
-            "min", "max", "max_length", "unique", "key", "validator", "hidden", "formula")  # what a definition can say
+            "min", "max", "max_length", "unique", "key", "validator", "hidden", "temporary", "formula")  # what a definition can say
 
 
 @dataclass(frozen=True)
@@ -93,6 +93,7 @@ class ColumnKind:
     key: bool = False  # what tells rows apart (required and unique), for a database
     validator: object = None  # a rule of the program's own: validator(value), or (value, row) (code only)
     hidden: bool = False  # kept, but not shown (a database's key, say)
+    temporary: bool = False  # the program's own (bookkeeping): never saved to a database
     formula: object = None  # worked out: formula(row), or formula(table) for the whole column (code only)
 
     @property
@@ -158,7 +159,8 @@ class ColumnKind:
         for setting, function in (("validator", validator), ("formula", formula)):
             if function is not None and not callable(function):
                 raise ValueError(f"{name}: {setting} must be a function (or a lambda), not {function!r}")
-        column = cls(name, kind, validator=validator, hidden=bool(definition.get("hidden", False)), formula=formula, decimals=None if decimals is None else int(decimals),
+        column = cls(name, kind, validator=validator, hidden=bool(definition.get("hidden", False)),
+                     temporary=bool(definition.get("temporary", False)), formula=formula, decimals=None if decimals is None else int(decimals),
                      choices=tuple(str(c) for c in choices or ()), readonly=bool(definition.get("readonly", False)),
                      format=_check_format(format), header=str(definition.get("header", "") or ""), step=int(step),
                      required=bool(definition.get("required", False)) or key,
@@ -210,7 +212,7 @@ class ColumnKind:
         defaults, a header, a step: then it's a dict)."""
         if (self.header or self.step != 30 or self.required or self.default is not None or self.min is not None
                 or self.max is not None or self.max_length is not None or self.unique or self.key
-                or self.validator is not None or self.hidden or self.formula is not None):
+                or self.validator is not None or self.hidden or self.temporary or self.formula is not None):
             return None
         kind = {"text": "", "check": "check", "choice": " | ".join(self.choices),
                 "number": "number" + (f" {self.decimals}" if self.decimals is not None else ""),
@@ -399,7 +401,7 @@ def _as_text(kind):
     """A column's definition as text (its name, header and rules kept), for values that aren't
     its kind: shown as they are."""
     return ColumnKind(kind.name, header=kind.header, readonly=kind.readonly, required=kind.required,
-                      unique=kind.unique, key=kind.key, hidden=kind.hidden)
+                      unique=kind.unique, key=kind.key, hidden=kind.hidden, temporary=kind.temporary)
 
 
 def _takes_table(function):
@@ -1977,7 +1979,9 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         """Save the changes since load_sql() (or the last save) to the database: the rows
         added, edited and deleted, and the columns' changes (a column added, renamed or
         deleted; a kind or rule changed), every other row kept. A new column with a formula
-        isn't added (it's worked out), nor are the program's own (columns="keep"'s). It's all
+        isn't added (it's worked out), nor are the program's own (columns="keep"'s), nor a
+        temporary one (columns["Picked"].temporary = True: bookkeeping; one of the database's,
+        temporary, keeps what the database has, its edits here not saved). It's all
         or nothing: DataError (nothing saved) if a row written breaks a rule (problems() says
         all), ConflictError if rows written were changed in the database since they were
         loaded (by another program, or user: overwrite=True writes over them), and a database
@@ -2020,7 +2024,8 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         if problems:
             raise DataError(self.name, problems)
         columns = [c for c, (kind, origin) in enumerate(zip(self._kinds, self._origins))
-                   if origin is not sql.OWN and kind.formula is None and kind.name.lower() != sql.AUTONUMBER]
+                   if origin is not sql.OWN and kind.formula is None and not kind.temporary
+                   and kind.name.lower() != sql.AUTONUMBER]
         if not columns:
             raise ValueError(f"{self.name} has no columns to save: they're worked out, or the program's own")
         try:
@@ -2057,7 +2062,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
             if values is None:
                 continue
             for c, (kind, origin) in enumerate(zip(self._kinds, origins)):
-                if isinstance(origin, str) and origin.lower() in values:
+                if isinstance(origin, str) and origin.lower() in values and not kind.temporary:
                     try:
                         row[c] = sql.from_db(kind, values[origin.lower()])
                     except ValueError:
@@ -2113,18 +2118,41 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
         return self._binding.changes(self._kinds, self._origins, self._data)
 
     def revert(self):
-        """Put the rows (and columns) back as they were loaded (or last saved): changes since
-        are forgotten."""
+        """Put the rows back as they were loaded (or last saved), and the columns: those added
+        since go, those deleted come back, and a rename, a new kind or rule is undone. What
+        only shows differently stays as it is now (hidden, a header, choices, a format, min
+        and max...): what the program set up after loading, say."""
         binding = self._binding
         if binding is None:
             raise ValueError(f"{self.name}'s rows weren't loaded from a database: there's nothing to go back to")
-        for loaded in binding.loaded.values():
-            loaded.row[:] = loaded.values
-        self._kinds, self._origins = list(binding.kinds), list(binding.origins)
-        self._data = [loaded.row for loaded in binding.loaded.values()]
+        loaded = list(binding.loaded.values())
+        kinds = list(binding.kinds)
+        strict = binding.schema.strict if binding.schema is not None else False
+        now = {self._origin_key(kind, origin): kind for kind, origin in zip(self._kinds, self._origins)}
+        for c, (kind, origin) in enumerate(zip(binding.kinds, binding.origins)):
+            current = now.get(self._origin_key(kind, origin))
+            if current is None or (origin is not sql.OWN and (current.name != kind.name
+                                                              or sql.altered(kind, current, strict))):
+                continue
+            if all(self._keep(current, row.values[c]) == row.values[c] for row in loaded):  # (the values as they were)
+                kinds[c] = current
+        try:
+            self._check_names(kinds)
+        except ValueError:
+            kinds = list(binding.kinds)
+        for row in loaded:
+            row.row[:] = [self._keep(kind, value) for kind, value in zip(kinds, row.values)]
+        self._kinds, self._origins = kinds, list(binding.origins)
+        self._data = [row.row for row in loaded]
         self._touched.clear()
         self._forget_steps()
         self._show_columns()
+
+    @staticmethod
+    def _origin_key(kind, origin):
+        """What a column's found by, from before to now: its database column, or (the program's
+        own) its name."""
+        return origin.lower() if isinstance(origin, str) else ("own", kind.name) if origin is sql.OWN else id(kind)
 
     # ----- the rules: required, min, max, max_length, unique -----
 
