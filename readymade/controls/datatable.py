@@ -61,6 +61,7 @@ _CURRENCY = "$\u20ac\u00a3\u00a5 "  # (what a pasted amount may have around it: 
 # ----- columns: what each holds -----
 
 _KINDS = ("text", "number", "money", "date", "time", "datetime", "check", "choice")
+KINDS = _KINDS  # the kinds a column can be
 SETTINGS = ("name", "header", "kind", "decimals", "format", "choices", "step", "readonly", "required", "default",
             "min", "max", "max_length", "unique", "key", "validator", "hidden", "formula")  # what a definition can say
 
@@ -561,6 +562,7 @@ class DataError(ValueError):
 
 
 _WHEN_FORMATS = {"date": ISO, "time": TIME_FORMAT, "datetime": DATETIME_FORMAT}  # each kind's usual format
+FORMATS = _WHEN_FORMATS  # (the dates' and times' usual formats, by kind)
 _WHAT = {"date": "date", "time": "time", "datetime": "date and time"}
 _EARLIEST = {"date": datetime.date.min, "time": datetime.time.min, "datetime": datetime.datetime.min}
 
@@ -1296,6 +1298,7 @@ class DataTable(_TreeLook, BackColor, ForeColor, Font, TabStop, Cursor, Tooltip,
     extra_props = {"columns": ["Name", "Amount : number"], "editable": True, "addable": True, "deletable": True,
                    "sortable": True, "enter_moves": "down"}
     prop_choices = {"enter_moves": ENTER_MOVES}
+    prop_dialogs = {"columns": "columns"}  # (the designer's Columns dialog, not lines to type)
 
     def create_widget(self, parent):
         self._data, self._kinds = [], []

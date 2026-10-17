@@ -295,6 +295,14 @@ class FormEditor(Editor):
         spec = self.design.control(self.selected if obj == MULTIPLE else obj)
         return REGISTRY[spec["type"]].file_props.get(prop) if spec else None
 
+    def dialog_for(self, obj, prop):
+        """The designer's dialog of its own for a list property ("columns", a DataTable's), or
+        None for the usual: a line for each item."""
+        if obj in (FORM, MULTIPLE):
+            return None
+        spec = self.design.control(obj)
+        return REGISTRY[spec["type"]].prop_dialogs.get(prop) if spec else None
+
     def chooser_for(self, obj, prop):
         """How the Properties panel's "..." button helps choose a value: "file", "color",
         "font", or None for no button."""
@@ -442,7 +450,9 @@ class FormEditor(Editor):
                     self.surface.refresh_control(obj)
                     raise
                 if prop in _TIDIED:  # keep what the control made of it: "auto,250" is saved as "auto, 250"
-                    spec[prop] = getattr(self.surface.controls[obj], prop)
+                    tidied = getattr(self.surface.controls[obj], prop)
+                    # (a DataTable's columns are a live list: the plain one, for the .form file)
+                    spec[prop] = tidied.tolist() if hasattr(tidied, "tolist") else tidied
                 if prop in REGISTRY[spec["type"]].recreate_props:
                     # Rebuild the rows (the text row changes editor) without committing their old values.
                     self.properties.clear()

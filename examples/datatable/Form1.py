@@ -20,14 +20,6 @@ class Form1(Form):
         self.Items.autosize_columns("Item")  # wide enough for the longest; the rest share what's left
         self.work_out_totals()
 
-        # Programatic example of adding a new column, defaulting to type string
-        # and then adding a formula for the column to show calculations 
-        # using various python techniques: list comprehensions and map
-        self.Items.columns.append("Running")
-        self.Items.columns["Running"].formula = lambda table: [round(x, 2) for x in (table["Qty"] * table["Price"] * (1 + TAX_RATE * table["Taxable"] ) ).cumsum() ]
-        #self.Items.columns["Running"].formula = lambda table: round( (table["Qty"] * table["Price"] * (1 + TAX_RATE * table["Taxable"] ) ).cumsum()  , 2)
-        #self.Items.columns["Running"].formula = lambda table: ((table["Qty"] * table["Price"] * (1 + TAX_RATE * table["Taxable"] ) ).cumsum()).map( lambda f: round(f,2) )
-
     def work_out_totals(self):
         """The order's totals (each row's, its formula sees to). A column is a Column: sum() and
         the like work on every value at once, as a spreadsheet's do."""

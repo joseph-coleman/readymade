@@ -20,9 +20,12 @@ are empty, as nothing was given for them.
 
 ## The columns
 
-Select the table in the designer and look at `columns` in the Properties panel: each column's
-definition, one per line. A simple one is a line (`Total : money, readonly`); one with more to
-say is a dict, as JSON:
+Select the table in the designer and click the `...` beside `columns` in the Properties panel:
+the **Columns** dialog lists the columns on the left (Add, Delete, Move Up and Down), and the
+chosen one's settings on the right, those that fit its kind (decimal places for money, a
+format for a date, choices for a choice...). Each is checked as you type, and OK won't take
+one that's wrong. In the .form file, a simple column is a line (`Total : money, readonly`),
+and one with more to say is a dict, as JSON:
 
     {"name": "Item", "required": true, "max_length": 30}
     {"name": "Category", "choices": ["Food", "Hardware", "Garden"]}

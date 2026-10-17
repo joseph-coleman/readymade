@@ -123,6 +123,9 @@ class Control:
 
     # Properties holding a file path, and the files to offer for them: {prop: {label: patterns}}.
     file_props: dict[str, dict[str, str]] = {}
+    # A list property the designer edits in a dialog of its own, not as lines: {property: dialog}
+    # (a DataTable's columns: "columns").
+    prop_dialogs: dict[str, str] = {}
     # With no backcolor of its own, a label-like control shows its container's color.
     inherits_backcolor = False
 

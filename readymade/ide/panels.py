@@ -571,6 +571,15 @@ class PropertiesPanel(ttk.Frame):
         if self.app is None or obj is None:
             return
         value = dict(self.app.props_for(obj))[prop]
+        if self.app.dialog_for(obj, prop) == "columns":  # (a DataTable's: the Columns dialog)
+            from readymade.ide.columneditor import ColumnsEditor
+
+            def apply(text):
+                self.app.set_property(obj, prop, text)
+                self.update_values()
+
+            ColumnsEditor(self.app.app, f"{obj}.{prop}", value, apply).center_on(self.app.app.root)
+            return
         dialog = Dialog(self.app.app, f"{obj}.{prop}", resizable=True, padding=8)
         hint = "One item per line:" if isinstance(value, list) else "Text:"
         ttk.Label(dialog.body, text=hint).pack(anchor="w", pady=(0, 2))
